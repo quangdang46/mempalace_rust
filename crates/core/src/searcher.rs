@@ -45,6 +45,7 @@ pub async fn search_memories(
     wing: Option<&str>,
     room: Option<&str>,
     n_results: usize,
+    embedding_model: Option<&str>,
 ) -> anyhow::Result<SearchResponse> {
     let palace_db = PalaceDb::open(palace_path).context("Failed to open palace database")?;
 
@@ -69,8 +70,9 @@ pub async fn search(
     wing: Option<&str>,
     room: Option<&str>,
     n_results: usize,
+    embedding_model: Option<&str>,
 ) -> anyhow::Result<i32> {
-    let response = search_memories(query, palace_path, wing, room, n_results).await?;
+    let response = search_memories(query, palace_path, wing, room, n_results, embedding_model).await?;
 
     if response.results.is_empty() {
         eprintln!("\n  No results found for: \"{}\"", query);

@@ -129,9 +129,12 @@ impl PalaceDb {
         Ok(())
     }
 
-    /// Force flush documents to disk. Call after batch operations.
     pub fn flush(&mut self) -> anyhow::Result<()> {
         self.save()
+    }
+
+    pub fn complete_test_setup(&mut self) -> anyhow::Result<()> {
+        self.flush()
     }
 
     fn save(&self) -> anyhow::Result<()> {

@@ -105,6 +105,10 @@ enum Commands {
         /// Number of results
         #[arg(long, default_value = "5")]
         results: usize,
+
+        /// Embedding model: "naive" (default, word overlap), "multilingual" for cross-lingual support
+        #[arg(long)]
+        embedding: Option<String>,
     },
 
     /// Show L0 + L1 wake-up context (~600-900 tokens).
@@ -515,9 +519,19 @@ fn cmd_search(
     room: Option<&str>,
     results: usize,
     palace_arg: Option<&str>,
+    embedding: Option<&str>,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    runtime().block_on(searcher::search(query, &palace_path, wing, room, results))?;
+    let config = Config::load().ok();
+    let model = embedding.or_else(|| config.as_ref().map(|c| c.embedding_model.as_str()));
+    runtime().block_on(searcher::search(
+        query,
+        &palace_path,
+        wing,
+        room,
+        results,
+        model,
+    ))?;
     Ok(())
 }
 
@@ -825,7 +839,10 @@ fn cmd_mine_device(wing: Option<&str>, dry_run: bool, palace_arg: Option<&str>) 
         let result = runtime().block_on(miner::mine(path, &palace_path, Some(wing_name), None));
         match result {
             Ok(r) => {
-                println!("    {} files, {} chunks", r.files_processed, r.chunks_created);
+                println!(
+                    "    {} files, {} chunks",
+                    r.files_processed, r.chunks_created
+                );
                 total_mined += r.chunks_created;
             }
             Err(e) => {
@@ -973,12 +990,14 @@ pub fn run() -> Result<()> {
             wing,
             room,
             results,
+            embedding,
         } => cmd_search(
             query,
             wing.as_deref(),
             room.as_deref(),
             *results,
             palace_arg,
+            embedding.as_deref(),
         )?,
         Commands::WakeUp { wing } => cmd_wakeup(wing.as_deref(), palace_arg)?,
         Commands::Compress {
@@ -1088,6 +1107,7 @@ mod tests {
                 wing,
                 room,
                 results,
+                embedding: _,
             } => {
                 assert_eq!(query, "rust async");
                 assert_eq!(wing, Some("tech".to_string()));

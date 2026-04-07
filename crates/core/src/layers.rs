@@ -572,6 +572,7 @@ mod tests {
             ],
         )
         .unwrap();
+        db.complete_test_setup().unwrap();
         db
     }
 
