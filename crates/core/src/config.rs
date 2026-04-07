@@ -83,14 +83,14 @@ fn default_hall_keywords() -> HashMap<String, Vec<String>> {
     );
     m.insert(
         "identity".to_string(),
-        vec!["identity", "name", "who am i", "persona", "self"]
+        ["identity", "name", "who am i", "persona", "self"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
     );
     m.insert(
         "family".to_string(),
-        vec![
+        [
             "family", "kids", "children", "daughter", "son", "parent", "mother", "father",
         ]
         .iter()
@@ -99,7 +99,7 @@ fn default_hall_keywords() -> HashMap<String, Vec<String>> {
     );
     m.insert(
         "creative".to_string(),
-        vec![
+        [
             "game", "gameplay", "player", "app", "design", "art", "music", "story",
         ]
         .iter()
