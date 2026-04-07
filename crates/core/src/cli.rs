@@ -164,6 +164,13 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Start the MCP server for AI tool integration.
+    Mcp {
+        /// Run in read-only mode (no write operations)
+        #[arg(long)]
+        read_only: bool,
+    },
 }
 
 #[derive(Clone, Default, Debug)]
@@ -1014,6 +1021,9 @@ pub fn run() -> Result<()> {
         Commands::Status {} => cmd_status(palace_arg)?,
         Commands::MineDevice { wing, dry_run } => {
             cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
+        }
+        Commands::Mcp { read_only } => {
+            crate::mcp_server::run_server(*read_only)?
         }
     }
 
