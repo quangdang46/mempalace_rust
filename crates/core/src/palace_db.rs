@@ -148,6 +148,79 @@ impl PalaceDb {
     pub fn count(&self) -> usize {
         self.documents.len()
     }
+
+    /// Get all documents, optionally filtered by wing and/or room.
+    /// Returns results sorted by importance (from metadata or distance).
+    pub fn get_all(
+        &self,
+        wing: Option<&str>,
+        room: Option<&str>,
+        limit: usize,
+    ) -> Vec<QueryResult> {
+        let mut entries: Vec<(&String, &DocumentEntry)> = self
+            .documents
+            .iter()
+            .filter(|(_, entry)| {
+                if let Some(w) = wing {
+                    let entry_wing = entry
+                        .metadata
+                        .get("wing")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if entry_wing != w {
+                        return false;
+                    }
+                }
+                if let Some(r) = room {
+                    let entry_room = entry
+                        .metadata
+                        .get("room")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if entry_room != r {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
+
+        // Sort by importance metadata if available, otherwise by order added
+        entries.sort_by(|(id_a, entry_a), (id_b, entry_b)| {
+            let imp_a = entry_a
+                .metadata
+                .get("importance")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.5);
+            let imp_b = entry_b
+                .metadata
+                .get("importance")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.5);
+            imp_b
+                .partial_cmp(&imp_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| id_a.cmp(id_b))
+        });
+
+        entries.truncate(limit);
+
+        let query_results: Vec<QueryResult> = entries
+            .into_iter()
+            .map(|(id, entry)| {
+                QueryResult {
+                    ids: vec![id.clone()],
+                    documents: vec![entry.content.clone()],
+                    distances: vec![0.0],
+                    metadatas: vec![entry.metadata.clone()],
+                }
+            })
+            .collect();
+
+        query_results
+    }
 }
 
 fn naive_similarity(query: &str, content: &str) -> f64 {
