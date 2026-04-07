@@ -135,7 +135,11 @@ fn check_drawer_inventory(palace_path: &Path) -> anyhow::Result<CheckResult> {
     let mut wing_counts: HashMap<String, usize> = HashMap::new();
 
     for r in &results {
-        if let Some(w) = r.metadatas.first().and_then(|m| m.get("wing")).and_then(|v| v.as_str())
+        if let Some(w) = r
+            .metadatas
+            .first()
+            .and_then(|m| m.get("wing"))
+            .and_then(|v| v.as_str())
         {
             *wing_counts.entry(w.to_string()).or_insert(0) += 1;
         }
@@ -165,7 +169,8 @@ fn check_orphan_drawers(palace_path: &Path) -> anyhow::Result<CheckResult> {
 
     let mut orphans = Vec::new();
     for r in &results {
-        if let Some(source) = r.metadatas
+        if let Some(source) = r
+            .metadatas
             .first()
             .and_then(|m| m.get("source_file"))
             .and_then(|v| v.as_str())
@@ -209,7 +214,11 @@ fn check_duplicate_drawers(palace_path: &Path) -> anyhow::Result<CheckResult> {
 
     for r in &results {
         let content = r.documents.first().cloned().unwrap_or_default();
-        let short = if content.len() > 100 { &content[..100] } else { &content };
+        let short = if content.len() > 100 {
+            &content[..100]
+        } else {
+            &content
+        };
         let key = short.to_string();
         if content_set.contains(&key) {
             duplicates.push(short.to_string());

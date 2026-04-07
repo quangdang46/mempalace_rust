@@ -198,13 +198,15 @@ impl Miner {
         let chunks_added = chunks.len();
 
         // Batch insert all chunks for this file in a single call
-        let drawer_ids: Vec<String> = chunks.iter()
+        let drawer_ids: Vec<String> = chunks
+            .iter()
             .map(|(_chunk_content, chunk_index)| {
                 Self::generate_drawer_id(&self.wing, &room, &source_file, *chunk_index)
             })
             .collect();
 
-        let ids_and_docs: Vec<(&str, &str)> = drawer_ids.iter()
+        let ids_and_docs: Vec<(&str, &str)> = drawer_ids
+            .iter()
             .zip(chunks.iter())
             .map(|(id, (content, _))| (id.as_str(), content.as_str()))
             .collect();

@@ -82,7 +82,8 @@ fn is_url(s: &str) -> bool {
 }
 
 fn is_code_or_emoji(s: &str) -> bool {
-    s.chars().any(|c| matches!(c, '`' | '*' | '_' | '#' | '{' | '}' | '[' | ']' | '\\'))
+    s.chars()
+        .any(|c| matches!(c, '`' | '*' | '_' | '#' | '{' | '}' | '[' | ']' | '\\'))
 }
 
 fn should_skip(token: &str, known_names: &HashSet<String>) -> bool {
@@ -140,11 +141,12 @@ fn edit_distance(a: &str, b: &str) -> usize {
                 prev[j] + 1,
                 std::cmp::min(
                     curr[j - 1] + 1,
-                    prev[j - 1] + if a_chars[i - 1] == b_chars[j - 1] {
-                        0
-                    } else {
-                        1
-                    },
+                    prev[j - 1]
+                        + if a_chars[i - 1] == b_chars[j - 1] {
+                            0
+                        } else {
+                            1
+                        },
                 ),
             );
         }
@@ -212,7 +214,12 @@ pub fn correct_spelling(text: &str, known_names: &HashSet<String>) -> String {
         }
 
         // Only correct lowercase words
-        if stripped.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+        if stripped
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
+        {
             result.push_str(&token);
             continue;
         }

@@ -306,12 +306,18 @@ fn try_soulforge_jsonl(content: &str) -> Option<String> {
         if let Ok(v) = serde_json::from_str::<Value>(l) {
             if let Some(obj) = v.as_object() {
                 // Check for SoulForge-specific fields
-                if obj.contains_key("segments") || obj.contains_key("toolCalls") || obj.contains_key("durationMs") {
+                if obj.contains_key("segments")
+                    || obj.contains_key("toolCalls")
+                    || obj.contains_key("durationMs")
+                {
                     return true;
                 }
                 // Also check message content for segments array or toolCalls
                 if let Some(msg) = obj.get("message").and_then(|m| m.as_object()) {
-                    if msg.contains_key("segments") || msg.contains_key("toolCalls") || msg.contains_key("durationMs") {
+                    if msg.contains_key("segments")
+                        || msg.contains_key("toolCalls")
+                        || msg.contains_key("durationMs")
+                    {
                         return true;
                     }
                 }
@@ -338,9 +344,7 @@ fn try_soulforge_jsonl(content: &str) -> Option<String> {
                 // Extract text from segments array
                 let parts: Vec<String> = segments
                     .iter()
-                    .filter_map(|seg| {
-                        seg.as_object()?.get("text")?.as_str().map(String::from)
-                    })
+                    .filter_map(|seg| seg.as_object()?.get("text")?.as_str().map(String::from))
                     .collect();
                 let text = parts.join(" ");
                 if !text.is_empty() {
@@ -364,7 +368,9 @@ fn try_soulforge_jsonl(content: &str) -> Option<String> {
         }
 
         // Determine role - SoulForge has user/assistant markers
-        let role = entry.get("role").and_then(|r| r.as_str())
+        let role = entry
+            .get("role")
+            .and_then(|r| r.as_str())
             .or_else(|| entry.get("type").and_then(|t| t.as_str()))
             .unwrap_or("");
 
@@ -404,7 +410,9 @@ fn try_soulforge_jsonl(content: &str) -> Option<String> {
             "system" => continue,
             _ => {
                 // If role is unknown, alternate based on position
-                if messages.is_empty() || messages.last().map(|m| m.0 == "assistant").unwrap_or(false) {
+                if messages.is_empty()
+                    || messages.last().map(|m| m.0 == "assistant").unwrap_or(false)
+                {
                     messages.push(("user".to_string(), final_text));
                 } else {
                     messages.push(("assistant".to_string(), final_text));
@@ -493,12 +501,18 @@ pub fn detect_format(content: &str) -> Option<String> {
         if let Ok(v) = serde_json::from_str::<Value>(l) {
             if let Some(obj) = v.as_object() {
                 // Top-level markers
-                if obj.contains_key("segments") || obj.contains_key("toolCalls") || obj.contains_key("durationMs") {
+                if obj.contains_key("segments")
+                    || obj.contains_key("toolCalls")
+                    || obj.contains_key("durationMs")
+                {
                     return true;
                 }
                 // Also check inside "message" object
                 if let Some(msg) = obj.get("message").and_then(|m| m.as_object()) {
-                    if msg.contains_key("segments") || msg.contains_key("toolCalls") || msg.contains_key("durationMs") {
+                    if msg.contains_key("segments")
+                        || msg.contains_key("toolCalls")
+                        || msg.contains_key("durationMs")
+                    {
                         return true;
                     }
                 }

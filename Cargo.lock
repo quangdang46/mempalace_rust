@@ -809,6 +809,7 @@ dependencies = [
  "anyhow",
  "charset",
  "chrono",
+ "clap",
  "directories",
  "hex",
  "mockall",

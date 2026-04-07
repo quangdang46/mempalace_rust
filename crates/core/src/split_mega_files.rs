@@ -19,12 +19,11 @@ use std::path::{Path, PathBuf};
 // ============================================================================
 
 /// Default people list when no known_names.json exists
-const DEFAULT_KNOWN_PEOPLE: &[&str] = &[
-    "Alice", "Ben", "Riley", "Max", "Sam", "Devon", "Jordan",
-];
+const DEFAULT_KNOWN_PEOPLE: &[&str] = &["Alice", "Ben", "Riley", "Max", "Sam", "Devon", "Jordan"];
 
 /// Timestamp pattern: ⏺ H:MM AM/PM Weekday, Month DD, YYYY
-const TIMESTAMP_PATTERN: &str = r"⏺\s+(\d{1,2}:\d{2}\s+[AP]M)\s+\w+,\s+(\w+)\s+(\d{1,2}),\s+(\d{4})";
+const TIMESTAMP_PATTERN: &str =
+    r"⏺\s+(\d{1,2}:\d{2}\s+[AP]M)\s+\w+,\s+(\w+)\s+(\d{1,2}),\s+(\d{4})";
 
 /// Months mapping
 const MONTHS: &[(&str, &str)] = &[
@@ -149,7 +148,10 @@ fn find_session_boundaries(lines: &[String]) -> Vec<usize> {
 }
 
 /// Extract timestamp from session lines
-fn extract_timestamp(lines: &[String], months_map: &[(String, String)]) -> (Option<String>, Option<String>) {
+fn extract_timestamp(
+    lines: &[String],
+    months_map: &[(String, String)],
+) -> (Option<String>, Option<String>) {
     let ts_re = match Regex::new(TIMESTAMP_PATTERN) {
         Ok(re) => re,
         Err(_) => return (None, None),
@@ -197,7 +199,11 @@ fn extract_people(
     username_map: &HashMap<String, String>,
 ) -> Vec<String> {
     let mut found: HashSet<String> = HashSet::new();
-    let text: String = lines.iter().take(100).map(|s| s.as_str()).collect::<String>();
+    let text: String = lines
+        .iter()
+        .take(100)
+        .map(|s| s.as_str())
+        .collect::<String>();
 
     // Speaker tags
     for person in known_people {
@@ -268,10 +274,7 @@ fn get_home_dir() -> Option<PathBuf> {
 // ============================================================================
 
 /// Split a single mega-file into per-session files
-pub async fn split_file(
-    file_path: &Path,
-    min_sessions: Option<usize>,
-) -> Result<SplitResult> {
+pub async fn split_file(file_path: &Path, min_sessions: Option<usize>) -> Result<SplitResult> {
     split_file_internal(file_path, min_sessions, None).await
 }
 
@@ -287,8 +290,8 @@ async fn split_file_internal(
         return Err(anyhow!("File not found: {:?}", file_path));
     }
 
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| anyhow!("Failed to read file: {}", e))?;
+    let content =
+        fs::read_to_string(file_path).map_err(|e| anyhow!("Failed to read file: {}", e))?;
     let lines: Vec<String> = content.split('\n').map(|s| s.to_string()).collect();
 
     let boundaries = find_session_boundaries(&lines);
@@ -321,11 +324,19 @@ async fn split_file_internal(
     };
 
     // Add sentinel at end
-    let end_indices = boundaries.iter().copied().chain(std::iter::once(lines.len())).collect::<Vec<_>>();
+    let end_indices = boundaries
+        .iter()
+        .copied()
+        .chain(std::iter::once(lines.len()))
+        .collect::<Vec<_>>();
 
     let mut sessions: Vec<SessionBoundary> = Vec::new();
 
-    for (i, (start, end)) in boundaries.iter().zip(end_indices.iter().skip(1)).enumerate() {
+    for (i, (start, end)) in boundaries
+        .iter()
+        .zip(end_indices.iter().skip(1))
+        .enumerate()
+    {
         let chunk = &lines[*start..*end.min(&lines.len())];
         if chunk.len() < 10 {
             continue;
@@ -343,9 +354,16 @@ async fn split_file_internal(
         };
 
         let src_stem = sanitize_filename_component(
-            &file_path.file_stem()
+            &file_path
+                .file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("source")[..40.min(file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("source").len())]
+                .unwrap_or("source")[..40.min(
+                file_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("source")
+                    .len(),
+            )],
         );
 
         let name = format!("{}__{}_{}_{}.txt", src_stem, ts_part, people_part, subject);
@@ -450,9 +468,7 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
-        let lines = vec![
-            "⏺ 2:30 PM Wednesday, April 07, 2026".to_string(),
-        ];
+        let lines = vec!["⏺ 2:30 PM Wednesday, April 07, 2026".to_string()];
         let (human, iso) = extract_timestamp(&lines, &months_map);
         // Note: time_safe produces "230PM" (no leading zero on hour)
         assert!(human.is_some() && human.unwrap().starts_with("2026-04-07_"));
@@ -461,26 +477,23 @@ mod tests {
 
     #[test]
     fn test_extract_people() {
-        let lines = vec![
-            "Alice: Hello".to_string(),
-            "Bob worked on this".to_string(),
-        ];
+        let lines = vec!["Alice: Hello".to_string(), "Bob worked on this".to_string()];
         let known = vec!["Alice".to_string(), "Bob".to_string()];
         let username_map = HashMap::new();
 
         let people = extract_people(&lines, &known, &username_map);
         // Alice is found via speaker tag "Alice:"
-        assert!(people.contains(&"Alice".to_string()), "Alice via speaker tag");
+        assert!(
+            people.contains(&"Alice".to_string()),
+            "Alice via speaker tag"
+        );
         // Bob mentioned in text works case-insensitively
         assert!(!people.is_empty(), "Should detect at least Alice");
     }
 
     #[test]
     fn test_extract_subject() {
-        let skip_re = Regex::new(&format!(
-            "^({})$",
-            SKIP_PATTERNS.join("|")
-        )).unwrap();
+        let skip_re = Regex::new(&format!("^({})$", SKIP_PATTERNS.join("|"))).unwrap();
 
         let lines = vec![
             "> cd /tmp".to_string(),
@@ -488,7 +501,11 @@ mod tests {
         ];
         let subject = extract_subject(&lines, &skip_re);
         // Should skip "cd /tmp" and extract the second prompt
-        assert!(!subject.is_empty() && subject != "session", "Should extract a meaningful prompt, got: {}", subject);
+        assert!(
+            !subject.is_empty() && subject != "session",
+            "Should extract a meaningful prompt, got: {}",
+            subject
+        );
     }
 
     #[test]
@@ -532,6 +549,9 @@ More content"#;
         let result = split_file(&file_path, Some(2)).await.unwrap();
         // At minimum, the function should run without error
         // Session detection depends on exact format matching
-        assert!(result.errors.is_empty() || result.errors.len() < 2, "Should have minimal errors");
+        assert!(
+            result.errors.is_empty() || result.errors.len() < 2,
+            "Should have minimal errors"
+        );
     }
 }

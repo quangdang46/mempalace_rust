@@ -166,7 +166,9 @@ impl std::str::FromStr for MiningMode {
             "projects" | "project" => Ok(MiningMode::Projects),
             "convos" | "convo" | "conversations" => Ok(MiningMode::Convos),
             "auto" => Ok(MiningMode::Auto),
-            _ => Err(format!("Unknown mining mode: {s}. Use 'projects', 'convos', or 'auto'.")),
+            _ => Err(format!(
+                "Unknown mining mode: {s}. Use 'projects', 'convos', or 'auto'."
+            )),
         }
     }
 }
@@ -275,13 +277,21 @@ fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
         if !confirmed.people.is_empty() {
             println!(
                 "  People: {:?}",
-                confirmed.people.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
+                confirmed
+                    .people
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect::<Vec<_>>()
             );
         }
         if !confirmed.projects.is_empty() {
             println!(
                 "  Projects: {:?}",
-                confirmed.projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
+                confirmed
+                    .projects
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect::<Vec<_>>()
             );
         }
     } else {
@@ -350,7 +360,10 @@ fn detect_mining_mode(dir: &PathBuf) -> MiningMode {
             has_project_markers += 1;
         } else if path.is_file() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if matches!(ext.to_lowercase().as_str(), "rs" | "py" | "js" | "ts" | "go" | "java" | "txt" | "md") {
+            if matches!(
+                ext.to_lowercase().as_str(),
+                "rs" | "py" | "js" | "ts" | "go" | "java" | "txt" | "md"
+            ) {
                 has_project_markers += 1;
             }
         }
@@ -399,8 +412,7 @@ fn cmd_mine(
             }
         }
         MiningMode::Convos => {
-            let result =
-                runtime().block_on(mine_conversations(dir, &palace_path, wing, extract));
+            let result = runtime().block_on(mine_conversations(dir, &palace_path, wing, extract));
             match result {
                 Ok(convo_result) => {
                     print_convo_result(&convo_result);
@@ -427,7 +439,8 @@ fn cmd_mine(
                     }
                 }
                 MiningMode::Convos => {
-                    let result = runtime().block_on(mine_conversations(dir, &palace_path, wing, extract));
+                    let result =
+                        runtime().block_on(mine_conversations(dir, &palace_path, wing, extract));
                     match result {
                         Ok(convo_result) => print_convo_result(&convo_result),
                         Err(e) => {
@@ -451,13 +464,7 @@ fn cmd_search(
     palace_arg: Option<&str>,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    runtime().block_on(searcher::search(
-        query,
-        &palace_path,
-        wing,
-        room,
-        results,
-    ))?;
+    runtime().block_on(searcher::search(query, &palace_path, wing, room, results))?;
     Ok(())
 }
 
@@ -484,21 +491,19 @@ fn cmd_compress(
     let palace_path = resolve_palace_path(palace_arg)?;
 
     // Try to load entity config if not provided
-    let config_path = config_path
-        .map(PathBuf::from)
-        .or_else(|| {
-            let p1 = PathBuf::from("entities.json");
-            if p1.exists() {
-                Some(p1)
+    let config_path = config_path.map(PathBuf::from).or_else(|| {
+        let p1 = PathBuf::from("entities.json");
+        if p1.exists() {
+            Some(p1)
+        } else {
+            let p2 = palace_path.join("entities.json");
+            if p2.exists() {
+                Some(p2)
             } else {
-                let p2 = palace_path.join("entities.json");
-                if p2.exists() {
-                    Some(p2)
-                } else {
-                    None
-                }
+                None
             }
-        });
+        }
+    });
 
     if let Some(ref cp) = config_path {
         if cp.exists() {
@@ -642,7 +647,12 @@ fn cmd_split(
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| e.path().extension().map(|ext| ext == "txt").unwrap_or(false))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "txt")
+                .unwrap_or(false)
+        })
         .map(|e| e.path().to_path_buf())
         .collect();
 
@@ -693,20 +703,21 @@ fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
     // Expand path for display
-    let display_path = if palace_path.starts_with("~/") || palace_path.to_string_lossy().contains("~") {
-        if let Ok(home) = std::env::var("HOME") {
-            let path_str = palace_path.to_string_lossy();
-            if path_str.starts_with("~/") {
-                PathBuf::from(home).join(&path_str[2..])
+    let display_path =
+        if palace_path.starts_with("~/") || palace_path.to_string_lossy().contains("~") {
+            if let Ok(home) = std::env::var("HOME") {
+                let path_str = palace_path.to_string_lossy();
+                if path_str.starts_with("~/") {
+                    PathBuf::from(home).join(&path_str[2..])
+                } else {
+                    PathBuf::from(path_str.replace("~", &home))
+                }
             } else {
-                PathBuf::from(path_str.replace("~", &home))
+                palace_path.clone()
             }
         } else {
             palace_path.clone()
-        }
-    } else {
-        palace_path.clone()
-    };
+        };
 
     println!();
     println!("{}", "=".repeat(55));
@@ -822,7 +833,13 @@ pub fn run() -> Result<()> {
             wing,
             room,
             results,
-        } => cmd_search(query, wing.as_deref(), room.as_deref(), *results, palace_arg)?,
+        } => cmd_search(
+            query,
+            wing.as_deref(),
+            room.as_deref(),
+            *results,
+            palace_arg,
+        )?,
         Commands::WakeUp { wing } => cmd_wakeup(wing.as_deref(), palace_arg)?,
         Commands::Compress {
             wing,
@@ -868,8 +885,7 @@ mod tests {
 
     #[test]
     fn test_cli_args_parse_init() {
-        let args =
-            Cli::try_parse_from(["mempalace", "init", "/tmp/test", "--yes"]).unwrap();
+        let args = Cli::try_parse_from(["mempalace", "init", "/tmp/test", "--yes"]).unwrap();
         match args.command {
             Commands::Init { dir, yes } => {
                 assert_eq!(dir, PathBuf::from("/tmp/test"));
