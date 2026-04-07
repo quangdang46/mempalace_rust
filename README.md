@@ -79,16 +79,16 @@ mpr status
 
 Three mining modes: **projects** (code and docs), **convos** (conversation exports), and **general** (auto-classifies into decisions, preferences, milestones, problems, and emotional context). Supports **8+ chat formats** — Claude Code JSONL, Claude.ai JSON, ChatGPT JSON, Slack JSON, Codex CLI JSONL, SoulForge JSONL, OpenCode SQLite, plain text, and more. Everything stays on your machine.
 
-### Auto-install MCP for your tools
+### Auto-config MCP during install
+
+The `install.sh` script automatically detects your installed AI tools and registers `mpr` as an MCP server — no manual config editing needed:
 
 ```bash
-# Detects your installed AI tools and registers MemPalace as an MCP server
-mpr install-mcp
-
-# Supports: Claude Code, Codex, Cursor, Windsurf, VS Code, Gemini, OpenCode, Amp, Droid
+curl -fsSL https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh | bash
+# → builds mpr, detects Claude Code / Cursor / Windsurf / ..., injects MCP config into each
 ```
 
-No manual config editing. Detects your providers, injects the MCP config, done.
+Supports: Claude Code, Codex, Cursor, Windsurf, VS Code, Gemini, OpenCode, Amp, Droid
 
 ---
 
@@ -99,10 +99,10 @@ After the one-time setup (install → init → mine), you don't run MemPalace co
 ### With Claude, ChatGPT, Cursor (MCP-compatible tools)
 
 ```bash
-# Option A: Auto-install (detects and configures all installed tools)
-mpr install-mcp
+# Already done during install — just use your AI tool
+# install.sh auto-detected and configured MCP for you
 
-# Option B: Manual for Claude Code
+# Or manually for Claude Code:
 claude mcp add mpr -- mpr mcp
 ```
 
@@ -448,10 +448,9 @@ Letta charges $20–200/mo for agent-managed memory. MemPalace does it with a wi
 ## MCP Server
 
 ```bash
-# Auto-detect and install into all your AI tools
-mpr install-mcp
+# Already configured by install.sh — detected your AI tools automatically
 
-# Or manually for Claude Code
+# Or manually for Claude Code:
 claude mcp add mpr -- mpr mcp
 ```
 
@@ -499,7 +498,7 @@ The AI learns AAAK and the memory protocol automatically from the `mpr_status` r
 
 ### Supported MCP Providers
 
-`mpr install-mcp` auto-detects and configures:
+`install.sh` auto-detects these providers during install:
 
 | Provider | Config Path | Scope |
 |----------|------------|-------|
@@ -581,6 +580,8 @@ echo "y" | mpr init ~/projects/myapp    # also works
 **Auto-detect mining mode** — `mpr mine --auto` scans the target directory and figures out whether it contains project files or conversation exports. No `--mode` flag needed.
 
 **Machine-wide discovery** — `mpr mine-device` scans known paths (`~/.claude/`, `~/.codex/sessions/`, `~/.cursor/`, etc.) and mines all discovered AI tool sessions in one command.
+
+**Auto MCP install** — `install.sh` detects all installed AI tools (Claude Code, Codex, Cursor, Windsurf, VS Code, Gemini, OpenCode, Amp, Droid) and injects the `mpr` MCP server config into each. Zero manual config editing. Just `curl | bash` and start using your AI tool — it already has MemPalace available.
 
 ### XDG Base Directory
 
@@ -706,12 +707,6 @@ mpr compress --wing myapp                   # AAAK compress
 mpr doctor                                  # palace health check
 mpr status                                  # palace overview
 
-# MCP
-mpr install-mcp                             # auto-install into AI tools
-mpr install-mcp --list                      # show detected providers
-mpr install-mcp --dry-run                   # preview changes
-mpr uninstall-mcp                           # remove from all providers
-
 # MCP server mode
 mpr mcp                                     # run as MCP stdio server
 ```
@@ -791,8 +786,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | Constants centralization | P1 | Planned | No magic numbers — chunk sizes, search defaults in one place |
 | Security hardening | P1 | Planned | Input validation, read-only MCP mode, no error leaks |
 | MCP best practices | P1 | Planned | Tool annotations, structured output, actionable errors |
-| CI/CD + `install.sh` | P1 | Planned | 5-target cross-compile, curl-pipe installer |
-| Auto-install MCP (`install-mcp`) | P1 | Planned | Detect + configure 9 AI tool providers |
+| CI/CD + `install.sh` + MCP auto-install | P1 | Planned | 5-target cross-compile, curl-pipe installer, auto-detect 9 AI tool providers |
 | Test suite | P2 | Planned | Port all Python tests + Rust-native integration tests |
 
 #### Upstream PRs & Enhancements
