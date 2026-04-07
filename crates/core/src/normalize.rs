@@ -35,6 +35,9 @@ fn try_normalize_json(content: &str) -> Option<String> {
     if let Some(normalized) = try_soulforge_jsonl(content) {
         return Some(normalized);
     }
+    if let Some(normalized) = try_aider_md(content) {
+        return Some(normalized);
+    }
 
     let Ok(data) = serde_json::from_str::<Value>(content) else {
         return None;
@@ -427,6 +430,79 @@ fn try_soulforge_jsonl(content: &str) -> Option<String> {
     None
 }
 
+/// Try to parse Aider .aider.chat.history.md format.
+/// Format: Lines starting with "> " are user turns, other lines are assistant responses.
+/// Detected by: presence of "# Aider Chat History" header or "> " quoted lines.
+fn try_aider_md(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+
+    // Check for Aider format markers
+    let has_header =
+        trimmed.contains("Aider Chat History") || trimmed.contains("aider.chat.history");
+    let has_quoted_lines = trimmed
+        .lines()
+        .filter(|l| l.trim().starts_with("> "))
+        .count()
+        >= 2;
+
+    if !has_header && !has_quoted_lines {
+        return None;
+    }
+
+    let mut messages: Vec<(String, String)> = Vec::new();
+    let mut current_assistant = String::new();
+
+    for line in content.lines() {
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() {
+            continue;
+        }
+
+        if trimmed_line.starts_with("> ") {
+            // Save previous assistant message if any
+            if !current_assistant.is_empty() {
+                messages.push((
+                    "assistant".to_string(),
+                    current_assistant.trim().to_string(),
+                ));
+                current_assistant.clear();
+            }
+
+            // User message (strip the "> " prefix)
+            let user_text = trimmed_line[2..].trim().to_string();
+            if !user_text.is_empty() {
+                messages.push(("user".to_string(), user_text));
+            }
+        } else if trimmed_line.starts_with("#") {
+            // Skip markdown headers
+            continue;
+        } else if trimmed_line.starts_with("```") {
+            // Skip code blocks markers
+            continue;
+        } else {
+            // Accumulate as assistant response
+            if !current_assistant.is_empty() {
+                current_assistant.push('\n');
+            }
+            current_assistant.push_str(trimmed_line);
+        }
+    }
+
+    // Don't forget the last assistant message
+    if !current_assistant.is_empty() {
+        messages.push((
+            "assistant".to_string(),
+            current_assistant.trim().to_string(),
+        ));
+    }
+
+    if messages.len() >= 2 {
+        Some(messages_to_transcript(&messages))
+    } else {
+        None
+    }
+}
+
 fn extract_content_to_string(content: &Value) -> String {
     match content {
         Value::String(s) => s.trim().to_string(),
@@ -522,6 +598,13 @@ pub fn detect_format(content: &str) -> Option<String> {
     });
     if has_soulforge {
         return Some("soulforge_jsonl".to_string());
+    }
+
+    // Check for Aider markdown format
+    let has_aider =
+        trimmed.contains("Aider Chat History") || trimmed.contains("aider.chat.history");
+    if has_aider {
+        return Some("aider_md".to_string());
     }
 
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
