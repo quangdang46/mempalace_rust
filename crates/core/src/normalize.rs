@@ -29,6 +29,9 @@ fn try_normalize_json(content: &str) -> Option<String> {
     if let Some(normalized) = try_claude_code_jsonl(content) {
         return Some(normalized);
     }
+    if let Some(normalized) = try_codex_jsonl(content) {
+        return Some(normalized);
+    }
 
     let Ok(data) = serde_json::from_str::<Value>(content) else {
         return None;
@@ -227,6 +230,67 @@ fn try_slack_json(data: &Value) -> Option<String> {
     None
 }
 
+fn try_codex_jsonl(content: &str) -> Option<String> {
+    let lines: Vec<&str> = content
+        .trim()
+        .split('\n')
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+
+    // Detect Codex format via session_meta presence
+    let has_session_meta = lines.iter().any(|l| {
+        if let Ok(v) = serde_json::from_str::<Value>(l) {
+            if let Some(obj) = v.as_object() {
+                if let Some(t) = obj.get("type").and_then(|v| v.as_str()) {
+                    return t == "session_meta";
+                }
+            }
+        }
+        false
+    });
+
+    if !has_session_meta {
+        return None;
+    }
+
+    let mut messages: Vec<(String, String)> = Vec::new();
+
+    for line in lines {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let entry = entry.as_object()?;
+        let msg_type = entry.get("type")?.as_str()?;
+
+        // Only extract event_msg entries, skip response_item
+        if msg_type != "event_msg/user_message" && msg_type != "event_msg/agent_message" {
+            continue;
+        }
+
+        let text = entry
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        if text.is_empty() {
+            continue;
+        }
+
+        match msg_type {
+            "event_msg/user_message" => messages.push(("user".to_string(), text)),
+            "event_msg/agent_message" => messages.push(("assistant".to_string(), text)),
+            _ => continue,
+        }
+    }
+
+    if messages.len() >= 2 {
+        return Some(messages_to_transcript(&messages));
+    }
+    None
+}
+
 fn extract_content_to_string(content: &Value) -> String {
     match content {
         Value::String(s) => s.trim().to_string(),
@@ -279,28 +343,60 @@ fn messages_to_transcript(messages: &[(String, String)]) -> String {
 
 pub fn detect_format(content: &str) -> Option<String> {
     let trimmed = content.trim();
+    let lines: Vec<&str> = content.split('\n').collect();
+
+    // Check for Codex JSONL by scanning all lines for session_meta
+    let has_session_meta = lines.iter().any(|l| {
+        if let Ok(v) = serde_json::from_str::<Value>(l) {
+            if let Some(obj) = v.as_object() {
+                if let Some(t) = obj.get("type").and_then(|v| v.as_str()) {
+                    return t == "session_meta";
+                }
+            }
+        }
+        false
+    });
+    if has_session_meta {
+        return Some("codex_jsonl".to_string());
+    }
 
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        // Try parsing as single JSON first
         if let Ok(data) = serde_json::from_str::<Value>(trimmed) {
-            if data.get("type").and_then(|v| v.as_str()) == Some("conversation") {
-                return Some("claude_code_jsonl".to_string());
+            if let Some(obj) = data.as_object() {
+                if let Some(t) = obj.get("type").and_then(|v| v.as_str()) {
+                    if t == "conversation" {
+                        return Some("claude_code_jsonl".to_string());
+                    }
+                }
+                if obj.get("messages").is_some() || obj.get("chat_messages").is_some() {
+                    return Some("claude_ai_json".to_string());
+                }
+                if obj.get("mapping").is_some() {
+                    return Some("chatgpt_json".to_string());
+                }
             }
-            if data.get("messages").is_some() || data.get("chat_messages").is_some() {
-                return Some("claude_ai_json".to_string());
+            if let Some(arr) = data.as_array() {
+                if let Some(first) = arr.first() {
+                    if first.get("type").and_then(|v| v.as_str()) == Some("message") {
+                        return Some("slack_json".to_string());
+                    }
+                }
             }
-            if data.get("mapping").is_some() {
-                return Some("chatgpt_json".to_string());
-            }
-            if data.is_array() {
-                let first = data.as_array()?.first()?;
-                if first.get("type").and_then(|v| v.as_str()) == Some("message") {
-                    return Some("slack_json".to_string());
+        } else if !lines.is_empty() {
+            // Try parsing first line as JSON (for JSONL formats)
+            if let Ok(first) = serde_json::from_str::<Value>(lines[0].trim()) {
+                if let Some(obj) = first.as_object() {
+                    if let Some(t) = obj.get("type").and_then(|v| v.as_str()) {
+                        if t == "conversation" {
+                            return Some("claude_code_jsonl".to_string());
+                        }
+                    }
                 }
             }
         }
     }
 
-    let lines: Vec<&str> = content.split('\n').collect();
     let quote_count = lines.iter().filter(|l| l.trim().starts_with('>')).count();
     if quote_count >= 3 {
         return Some("transcript".to_string());
@@ -340,6 +436,46 @@ mod tests {
     fn test_empty_content() {
         let result = normalize(std::path::Path::new("test.txt"), "").unwrap();
         assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_codex_jsonl() {
+        let content = r#"{"type":"session_meta","sessionId":"abc123","model":"gpt-4"}
+{"type":"event_msg/user_message","text":"Hello Codex"}
+{"type":"event_msg/agent_message","text":"Hello from Codex agent"}"#;
+        let result = normalize(std::path::Path::new("test.jsonl"), content).unwrap();
+        assert!(result.contains("> Hello Codex"));
+        assert!(result.contains("Hello from Codex agent"));
+    }
+
+    #[test]
+    fn test_codex_jsonl_skips_response_items() {
+        // response_item entries should be skipped
+        let content = r#"{"type":"session_meta","sessionId":"abc123","model":"gpt-4"}
+{"type":"event_msg/user_message","text":"Hello"}
+{"type":"response_item","text":"Should be skipped"}
+{"type":"event_msg/agent_message","text":"Real response"}"#;
+        let result = normalize(std::path::Path::new("test.jsonl"), content).unwrap();
+        assert!(result.contains("> Hello"));
+        assert!(result.contains("Real response"));
+        assert!(!result.contains("Should be skipped"));
+    }
+
+    #[test]
+    fn test_codex_jsonl_rejects_non_codex() {
+        // Other JSONL format should not be detected as Codex
+        let content = r#"{"type":"event","data":"something"}"#;
+        let result = detect_format(content);
+        // Should not be codex (no session_meta)
+        assert_ne!(result, Some("codex_jsonl".to_string()));
+    }
+
+    #[test]
+    fn test_detect_format_codex() {
+        let content = r#"{"type":"session_meta","sessionId":"abc123"}
+{"type":"event_msg/user_message","text":"Hello"}"#;
+        let result = detect_format(content);
+        assert_eq!(result, Some("codex_jsonl".to_string()));
     }
 
     #[test]
