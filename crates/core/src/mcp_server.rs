@@ -666,10 +666,8 @@ fn tool_feedback(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
         outcome: String,
     }
     let input: Input = parse_args(args)?;
-    let kg = crate::knowledge_graph::KnowledgeGraph::open(
-        &state.palace_path.join("knowledge.db"),
-    )
-    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+    let kg = crate::knowledge_graph::KnowledgeGraph::open(&state.palace_path.join("knowledge.db"))
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
     kg.record_feedback(&input.drawer_id, &input.query, &input.outcome)
         .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
     ok_json(serde_json::json!({

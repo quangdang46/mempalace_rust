@@ -928,7 +928,11 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
             // Has person ratio but not enough signals — downgrade to uncertain
             let mut sigs = scores.person_signals.clone();
             sigs.push(format!("appears {}x — not enough signal types", frequency));
-            (EntityType::Uncertain, (0.4 - common_name_penalty).max(0.2), sigs)
+            (
+                EntityType::Uncertain,
+                (0.4 - common_name_penalty).max(0.2),
+                sigs,
+            )
         } else if person_ratio <= 0.3 {
             let conf = (0.5 + (1.0 - person_ratio) * 0.5).min(0.99);
             let sigs = if scores.project_signals.is_empty() {
@@ -1511,14 +1515,12 @@ mod tests {
         Bob wrote the script. Bob wrote the script. Bob wrote the script.
         "#;
         let candidates = extract_candidates(text);
-        assert!(candidates.contains_key("Alice") && candidates.contains_key("Bob"),
-            "Both names should pass frequency threshold");
+        assert!(
+            candidates.contains_key("Alice") && candidates.contains_key("Bob"),
+            "Both names should pass frequency threshold"
+        );
         let result = detect_from_content(text);
-        let names: Vec<&str> = result
-            .people
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
+        let names: Vec<&str> = result.people.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"Alice"), "Alice should be detected");
         assert!(names.contains(&"Bob"), "Bob should be detected");
     }

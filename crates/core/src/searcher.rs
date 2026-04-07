@@ -72,7 +72,8 @@ pub async fn search(
     n_results: usize,
     embedding_model: Option<&str>,
 ) -> anyhow::Result<i32> {
-    let response = search_memories(query, palace_path, wing, room, n_results, embedding_model).await?;
+    let response =
+        search_memories(query, palace_path, wing, room, n_results, embedding_model).await?;
 
     if response.results.is_empty() {
         eprintln!("\n  No results found for: \"{}\"", query);

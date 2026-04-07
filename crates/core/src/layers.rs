@@ -793,7 +793,8 @@ mod tests {
         db.add(
             &[("test1", "Test memory content")],
             &[&[("wing", "personal"), ("room", "general")]],
-        ).unwrap();
+        )
+        .unwrap();
         db.flush().unwrap();
         drop(db);
 
@@ -813,7 +814,8 @@ mod tests {
         db.add(
             &[("recall1", "Personal memory about family")],
             &[&[("wing", "personal"), ("room", "family")]],
-        ).unwrap();
+        )
+        .unwrap();
         db.flush().unwrap();
         drop(db);
 
@@ -832,7 +834,8 @@ mod tests {
         db.add(
             &[("search1", "Rust programming language implementation")],
             &[&[("wing", "technical"), ("room", "rust")]],
-        ).unwrap();
+        )
+        .unwrap();
         db.flush().unwrap();
         drop(db);
 

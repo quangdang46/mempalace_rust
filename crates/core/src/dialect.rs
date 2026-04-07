@@ -71,7 +71,9 @@ pub fn compress(text: &str, people_map: &HashMap<String, String>) -> String {
     }
 
     // Remove filler words
-    let fillers = ["the ", "a ", "an ", "that ", "this ", "it ", "is ", "was ", "were ", "are "];
+    let fillers = [
+        "the ", "a ", "an ", "that ", "this ", "it ", "is ", "was ", "were ", "are ",
+    ];
     for filler in fillers {
         result = result.replace(filler, "");
     }
@@ -234,7 +236,10 @@ mod tests {
         let decompressed = decompress(&compressed, &people);
 
         // Decompressed should be shorter than original (was compressed)
-        assert!(compressed.len() < text.len(), "Compression should reduce length");
+        assert!(
+            compressed.len() < text.len(),
+            "Compression should reduce length"
+        );
         // Decompressed should expand back
         assert!(decompressed.contains("Lead Developer") || decompressed.contains("lead"));
     }

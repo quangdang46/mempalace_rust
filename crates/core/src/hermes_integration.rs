@@ -91,11 +91,19 @@ impl HermesMemoryProvider for MemPalaceHermesProvider {
 
         let mut db = PalaceDb::open(&self.palace_path)?;
         let timestamp = chrono::Utc::now().to_rfc3339();
-        let drawer_id = format!("hermes_{}_{}", role.replace(' ', "_"), timestamp.replace(':', "_"));
+        let drawer_id = format!(
+            "hermes_{}_{}",
+            role.replace(' ', "_"),
+            timestamp.replace(':', "_")
+        );
 
         db.add(
             &[(&drawer_id, content)],
-            &[&[("role", role), ("wing", "hermes"), ("timestamp", &timestamp)]],
+            &[&[
+                ("role", role),
+                ("wing", "hermes"),
+                ("timestamp", &timestamp),
+            ]],
         )?;
         db.flush()?;
         Ok(())
@@ -105,14 +113,14 @@ impl HermesMemoryProvider for MemPalaceHermesProvider {
         use crate::palace_db::PalaceDb;
 
         // Use get_all for now since query is async - simple wing filter + text match
-        let results = PalaceDb::open(&self.palace_path)?
-            .get_all(Some("hermes"), None, limit);
+        let results = PalaceDb::open(&self.palace_path)?.get_all(Some("hermes"), None, limit);
 
         let query_lower = query.to_lowercase();
         let filtered: Vec<MemoryEntry> = results
             .into_iter()
             .filter(|r| {
-                r.documents.first()
+                r.documents
+                    .first()
                     .map(|d| d.to_lowercase().contains(&query_lower))
                     .unwrap_or(false)
             })
@@ -139,8 +147,11 @@ impl HermesMemoryProvider for MemPalaceHermesProvider {
     }
 
     fn recent_turns(&self, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
-        let results = crate::palace_db::PalaceDb::open(&self.palace_path)?
-            .get_all(Some("hermes"), None, limit);
+        let results = crate::palace_db::PalaceDb::open(&self.palace_path)?.get_all(
+            Some("hermes"),
+            None,
+            limit,
+        );
 
         Ok(results
             .into_iter()

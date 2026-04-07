@@ -485,7 +485,12 @@ impl KnowledgeGraph {
 
     /// Record a retrieval feedback outcome for a drawer.
     /// outcome: "helpful", "unhelpful", or "neutral"
-    pub fn record_feedback(&self, drawer_id: &str, query: &str, outcome: &str) -> anyhow::Result<()> {
+    pub fn record_feedback(
+        &self,
+        drawer_id: &str,
+        query: &str,
+        outcome: &str,
+    ) -> anyhow::Result<()> {
         self.conn.execute(
             "INSERT INTO episodes (drawer_id, query, outcome) VALUES (?1, ?2, ?3)",
             params![drawer_id, query, outcome],
@@ -665,16 +670,19 @@ mod tests {
         assert_eq!(kg.helpfulness_score("drawer_1").unwrap(), 1.0);
 
         // Helpful feedback
-        kg.record_feedback("drawer_1", "test query", "helpful").unwrap();
+        kg.record_feedback("drawer_1", "test query", "helpful")
+            .unwrap();
         assert!(kg.helpfulness_score("drawer_1").unwrap() > 1.0);
 
         // Unhelpful feedback
-        kg.record_feedback("drawer_2", "test query", "unhelpful").unwrap();
+        kg.record_feedback("drawer_2", "test query", "unhelpful")
+            .unwrap();
         assert!(kg.helpfulness_score("drawer_2").unwrap() < 1.0);
 
         // Mixed feedback
         kg.record_feedback("drawer_3", "query1", "helpful").unwrap();
-        kg.record_feedback("drawer_3", "query2", "unhelpful").unwrap();
+        kg.record_feedback("drawer_3", "query2", "unhelpful")
+            .unwrap();
         let score = kg.helpfulness_score("drawer_3").unwrap();
         assert!(score > 0.5 && score < 1.5);
 
