@@ -162,6 +162,30 @@ impl KnowledgeGraph {
             return Ok(existing_id);
         }
 
+        // Auto-resolve conflicts: if same subject+predicate has different object,
+        // invalidate the old triple first
+        let conflicting: Result<String, _> = self.conn.query_row(
+            "SELECT id FROM triples WHERE subject=?1 AND predicate=?2 AND valid_to IS NULL AND object<>?3",
+            params![sub_id, pred, obj_id],
+            |row| row.get(0),
+        );
+
+        if let Ok(conflict_id) = conflicting {
+            // Invalidate the conflicting triple with current timestamp
+            let now = chrono::Utc::now().to_rfc3339();
+            self.conn.execute(
+                "UPDATE triples SET valid_to=?1 WHERE id=?2",
+                params![now, conflict_id],
+            )?;
+            // Log conflict resolution - triple_id not yet assigned, use format
+            tracing::info!(
+                "Auto-resolved conflict: invalidated {} for subject={} predicate={}",
+                conflict_id,
+                subject,
+                predicate
+            );
+        }
+
         let now = chrono::Utc::now().to_rfc3339();
         let triple_id = format!("t_{}_{}_{}_{}", sub_id, pred, obj_id, &now[..8]);
 
@@ -658,5 +682,52 @@ mod tests {
         let history = kg.get_feedback("drawer_1").unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].1, "helpful");
+    }
+
+    #[test]
+    fn test_auto_resolve_conflicts() {
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+
+        // Add first triple
+        kg.add_triple(
+            "Alice",
+            "works_at",
+            "Acme",
+            Some("2020-01-01"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Query should find Alice at Acme
+        let results = kg.query_entity("Alice", None, "outgoing").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object, "Acme");
+        assert!(results[0].current);
+
+        // Add conflicting triple (same subject+predicate, different object)
+        kg.add_triple(
+            "Alice",
+            "works_at",
+            "NewCo",
+            Some("2023-01-01"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Query should now find only NewCo
+        let results = kg.query_entity("Alice", None, "outgoing").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object, "NewCo");
+        assert!(results[0].current);
+
+        // But timeline should show both
+        let timeline = kg.timeline(Some("Alice")).unwrap();
+        assert_eq!(timeline.len(), 2);
     }
 }
