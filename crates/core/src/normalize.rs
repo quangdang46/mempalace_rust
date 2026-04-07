@@ -433,6 +433,76 @@ fn try_soulforge_jsonl(content: &str) -> Option<String> {
 /// Try to parse Aider .aider.chat.history.md format.
 /// Format: Lines starting with "> " are user turns, other lines are assistant responses.
 /// Detected by: presence of "# Aider Chat History" header or "> " quoted lines.
+/// Try to parse OpenCode SQLite database format.
+/// Reads sessions from an OpenCode session SQLite database file.
+/// Detected by: file extension is .db or .sqlite and contains OpenCode schema.
+pub fn try_opencode_sqlite(content: &str) -> Option<String> {
+    // This is a placeholder - actual implementation would need rusqlite
+    // For now, return None to indicate this format isn't supported
+    let _ = content;
+    None
+}
+
+/// Try to parse OpenCode SQLite database from file path.
+/// Returns transcript format for sessions found.
+pub fn normalize_opencode_db(db_path: &std::path::Path) -> Option<String> {
+    let conn = rusqlite::Connection::open(db_path).ok()?;
+
+    // Query the session table to get conversation history
+    let mut stmt = conn
+        .prepare("SELECT id, dir, created_at, updated_at FROM sessions ORDER BY created_at")
+        .ok()?;
+
+    let sessions: Vec<(i64, String, String, String)> = stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .ok()?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if sessions.is_empty() {
+        return None;
+    }
+
+    let mut messages: Vec<(String, String)> = Vec::new();
+
+    for (session_id, _dir, _created, _updated) in sessions {
+        // Try to get messages for this session
+        if let Ok(mut msg_stmt) =
+            conn.prepare("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id")
+        {
+            let rows = msg_stmt
+                .query_map([session_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .ok()?;
+
+            for row in rows.flatten() {
+                let (role, content) = row;
+                if content.trim().is_empty() {
+                    continue;
+                }
+                match role.as_str() {
+                    "user" | "human" => {
+                        messages.push(("user".to_string(), content.trim().to_string()));
+                    }
+                    "assistant" | "ai" | "bot" => {
+                        messages.push(("assistant".to_string(), content.trim().to_string()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if messages.len() >= 2 {
+        Some(messages_to_transcript(&messages))
+    } else {
+        None
+    }
+}
+
 fn try_aider_md(content: &str) -> Option<String> {
     let trimmed = content.trim();
 
