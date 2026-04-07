@@ -4,6 +4,10 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use walkdir::WalkDir;
 
+const CHUNK_SIZE: usize = 800;
+const CHUNK_OVERLAP: usize = 100;
+const MIN_CHUNK_SIZE: usize = 50;
+
 static READABLE_EXTENSIONS: &[&str] = &[
     ".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml", ".html", ".css",
     ".java", ".go", ".rs", ".rb", ".sh", ".csv", ".sql", ".toml",
@@ -23,10 +27,6 @@ static SKIP_DIRS: &[&str] = &[
     ".mempalace",
     ".target",
 ];
-
-const CHUNK_SIZE: usize = 800;
-const CHUNK_OVERLAP: usize = 100;
-const MIN_CHUNK_SIZE: usize = 50;
 
 static SKIP_FILES: &[&str] = &[
     "mempalace.yaml",

@@ -1,8 +1,7 @@
+use crate::constants::DEFAULT_N_RESULTS;
 use crate::palace_db::{PalaceDb, QueryResult};
 use anyhow::Context;
 use std::path::Path;
-
-pub const DEFAULT_N_RESULTS: usize = 5;
 
 #[derive(Debug, Clone)]
 pub struct SearchResult {
