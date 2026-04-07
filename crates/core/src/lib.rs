@@ -10,6 +10,7 @@ pub mod layers;
 pub mod miner;
 pub mod normalize;
 pub mod onboarding;
+pub mod mcp_server;
 pub mod palace_db;
 pub mod palace_graph;
 pub mod room_detector_local;
