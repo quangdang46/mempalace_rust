@@ -209,13 +209,11 @@ impl PalaceDb {
 
         let query_results: Vec<QueryResult> = entries
             .into_iter()
-            .map(|(id, entry)| {
-                QueryResult {
-                    ids: vec![id.clone()],
-                    documents: vec![entry.content.clone()],
-                    distances: vec![0.0],
-                    metadatas: vec![entry.metadata.clone()],
-                }
+            .map(|(id, entry)| QueryResult {
+                ids: vec![id.clone()],
+                documents: vec![entry.content.clone()],
+                distances: vec![0.0],
+                metadatas: vec![entry.metadata.clone()],
             })
             .collect();
 

@@ -69,9 +69,8 @@ static SINGLE_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b([A-Z][a-zA-Z]{1,19})\b").unwrap()
 });
 
-static MULTI_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b").unwrap()
-});
+static MULTI_WORD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b").unwrap());
 
 static PRONOUN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     PRONOUN_PATTERNS_STATIC
@@ -89,10 +88,7 @@ fn build_name_patterns(name: &str) -> CompiledNamePatterns {
             .iter()
             .map(|t| {
                 let p = t.replace("{name}", &n);
-                RegexBuilder::new(&p)
-                    .multi_line(true)
-                    .build()
-                    .unwrap()
+                RegexBuilder::new(&p).multi_line(true).build().unwrap()
             })
             .collect(),
         person_verbs: PERSON_VERB_TEMPLATES
@@ -109,22 +105,18 @@ fn build_name_patterns(name: &str) -> CompiledNamePatterns {
                 Regex::new(&p).unwrap()
             })
             .collect(),
-        direct: RegexBuilder::new(&format!(
-            r"\bhey\s+{n}\b|\bthanks?\s+{n}\b|\bhi\s+{n}\b"
-        ))
-        .case_insensitive(true)
-        .build()
-        .unwrap(),
+        direct: RegexBuilder::new(&format!(r"\bhey\s+{n}\b|\bthanks?\s+{n}\b|\bhi\s+{n}\b"))
+            .case_insensitive(true)
+            .build()
+            .unwrap(),
         versioned: RegexBuilder::new(&format!(r"\b{n}[-v]\w+"))
             .case_insensitive(true)
             .build()
             .unwrap(),
-        code_ref: RegexBuilder::new(&format!(
-            r"\b{n}\.(py|js|ts|yaml|yml|json|sh)\b"
-        ))
-        .case_insensitive(true)
-        .build()
-        .unwrap(),
+        code_ref: RegexBuilder::new(&format!(r"\b{n}\.(py|js|ts|yaml|yml|json|sh)\b"))
+            .case_insensitive(true)
+            .build()
+            .unwrap(),
     }
 }
 
@@ -143,90 +135,526 @@ struct CompiledNamePatterns {
 
 const STOPWORDS_PHASE: &[&str] = &[
     // Articles, conjunctions, prepositions
-    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from",
-    "as", "is", "was", "are", "were", "be", "been", "being",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "with",
+    "by",
+    "from",
+    "as",
+    "is",
+    "was",
+    "are",
+    "were",
+    "be",
+    "been",
+    "being",
     // Auxiliaries
-    "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might",
-    "must", "shall", "can",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "can",
     // Pronouns
-    "this", "that", "these", "those", "it", "its", "they", "them", "their", "we", "our", "you",
-    "your", "i", "my", "me", "he", "she", "his", "her",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "its",
+    "they",
+    "them",
+    "their",
+    "we",
+    "our",
+    "you",
+    "your",
+    "i",
+    "my",
+    "me",
+    "he",
+    "she",
+    "his",
+    "her",
     // Question words
-    "who", "what", "when", "where", "why", "how", "which",
+    "who",
+    "what",
+    "when",
+    "where",
+    "why",
+    "how",
+    "which",
     // Adverbs
-    "if", "then", "so", "not", "no", "yes", "ok", "okay", "just", "very", "really", "also",
-    "already", "still", "even", "only", "here", "there", "now", "too", "up", "out", "about", "like",
+    "if",
+    "then",
+    "so",
+    "not",
+    "no",
+    "yes",
+    "ok",
+    "okay",
+    "just",
+    "very",
+    "really",
+    "also",
+    "already",
+    "still",
+    "even",
+    "only",
+    "here",
+    "there",
+    "now",
+    "too",
+    "up",
+    "out",
+    "about",
+    "like",
     // Verbs
-    "use", "get", "got", "make", "made", "take", "put", "come", "go", "see", "know", "think",
-    "return", "print",
+    "use",
+    "get",
+    "got",
+    "make",
+    "made",
+    "take",
+    "put",
+    "come",
+    "go",
+    "see",
+    "know",
+    "think",
+    "return",
+    "print",
     // Programming
-    "def", "class", "import", "from", "new", "true", "false", "none", "null",
+    "def",
+    "class",
+    "import",
+    "from",
+    "new",
+    "true",
+    "false",
+    "none",
+    "null",
     // General nouns
-    "step", "usage", "run", "check", "find", "add", "set", "list", "args", "dict", "str", "int",
-    "bool", "path", "file", "type", "name", "note", "example", "option", "result", "error",
-    "warning", "info", "every", "each", "more", "less", "next", "last", "first", "second",
-    "stack", "layer", "mode", "test", "stop", "start", "copy", "move", "source", "target",
-    "output", "input", "data", "item", "key", "value", "returns", "raises", "yields", "self",
-    "cls", "kwargs",
+    "step",
+    "usage",
+    "run",
+    "check",
+    "find",
+    "add",
+    "set",
+    "list",
+    "args",
+    "dict",
+    "str",
+    "int",
+    "bool",
+    "path",
+    "file",
+    "type",
+    "name",
+    "note",
+    "example",
+    "option",
+    "result",
+    "error",
+    "warning",
+    "info",
+    "every",
+    "each",
+    "more",
+    "less",
+    "next",
+    "last",
+    "first",
+    "second",
+    "stack",
+    "layer",
+    "mode",
+    "test",
+    "stop",
+    "start",
+    "copy",
+    "move",
+    "source",
+    "target",
+    "output",
+    "input",
+    "data",
+    "item",
+    "key",
+    "value",
+    "returns",
+    "raises",
+    "yields",
+    "self",
+    "cls",
+    "kwargs",
     // Abstract/prose words
-    "world", "well", "want", "topic", "choose", "social", "cars", "phones", "healthcare", "ex",
-    "machina", "deus", "human", "humans", "people", "things", "something", "nothing",
-    "everything", "anything", "someone", "everyone", "anyone", "way", "time", "day", "life",
-    "place", "thing", "part", "kind", "sort", "case", "point", "idea", "fact", "sense",
-    "question", "answer", "reason", "number", "version", "system",
+    "world",
+    "well",
+    "want",
+    "topic",
+    "choose",
+    "social",
+    "cars",
+    "phones",
+    "healthcare",
+    "ex",
+    "machina",
+    "deus",
+    "human",
+    "humans",
+    "people",
+    "things",
+    "something",
+    "nothing",
+    "everything",
+    "anything",
+    "someone",
+    "everyone",
+    "anyone",
+    "way",
+    "time",
+    "day",
+    "life",
+    "place",
+    "thing",
+    "part",
+    "kind",
+    "sort",
+    "case",
+    "point",
+    "idea",
+    "fact",
+    "sense",
+    "question",
+    "answer",
+    "reason",
+    "number",
+    "version",
+    "system",
     // Greetings
-    "hey", "hi", "hello", "thanks", "thank", "right", "let",
+    "hey",
+    "hi",
+    "hello",
+    "thanks",
+    "thank",
+    "right",
+    "let",
     // UI/action words
-    "click", "hit", "press", "tap", "drag", "drop", "open", "close", "save", "load", "launch",
-    "install", "download", "upload", "scroll", "select", "enter", "submit", "cancel", "confirm",
-    "delete", "copy", "paste", "type", "write", "read", "search", "find", "show", "hide",
+    "click",
+    "hit",
+    "press",
+    "tap",
+    "drag",
+    "drop",
+    "open",
+    "close",
+    "save",
+    "load",
+    "launch",
+    "install",
+    "download",
+    "upload",
+    "scroll",
+    "select",
+    "enter",
+    "submit",
+    "cancel",
+    "confirm",
+    "delete",
+    "copy",
+    "paste",
+    "type",
+    "write",
+    "read",
+    "search",
+    "find",
+    "show",
+    "hide",
     // Technical dir names
-    "desktop", "documents", "downloads", "users", "home", "library", "applications", "system",
-    "preferences", "settings", "terminal",
+    "desktop",
+    "documents",
+    "downloads",
+    "users",
+    "home",
+    "library",
+    "applications",
+    "system",
+    "preferences",
+    "settings",
+    "terminal",
     // Abstract concepts
-    "actor", "vector", "remote", "control", "duration", "fetch", "agents", "tools", "others",
-    "guards", "ethics", "regulation", "learning", "thinking", "memory", "language",
-    "intelligence", "technology", "society", "culture", "future", "history", "science", "model",
-    "models", "network", "networks", "training", "inference",
+    "actor",
+    "vector",
+    "remote",
+    "control",
+    "duration",
+    "fetch",
+    "agents",
+    "tools",
+    "others",
+    "guards",
+    "ethics",
+    "regulation",
+    "learning",
+    "thinking",
+    "memory",
+    "language",
+    "intelligence",
+    "technology",
+    "society",
+    "culture",
+    "future",
+    "history",
+    "science",
+    "model",
+    "models",
+    "network",
+    "networks",
+    "training",
+    "inference",
 ];
 
-static STOPWORDS: LazyLock<std::collections::HashSet<&'static str>> = LazyLock::new(|| {
-    STOPWORDS_PHASE.iter().copied().collect()
-});
+static STOPWORDS: LazyLock<std::collections::HashSet<&'static str>> =
+    LazyLock::new(|| STOPWORDS_PHASE.iter().copied().collect());
 
 /// Common first names that should not be detected as entities unless they appear with
 /// strong person signals.
 const COMMON_FIRST_NAMES: &[&str] = &[
-    "James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "William",
-    "Barbara", "David", "Elizabeth", "Richard", "Susan", "Joseph", "Jessica", "Thomas", "Sarah",
-    "Charles", "Karen", "Christopher", "Nancy", "Daniel", "Lisa", "Matthew", "Margaret",
-    "Anthony", "Betty", "Mark", "Sandra", "Donald", "Ashley", "Steven", "Dorothy", "Paul",
-    "Kimberly", "Andrew", "Emily", "Joshua", "Donna", "Kenneth", "Michelle", "Kevin", "Carol",
-    "Brian", "Amanda", "George", "Melissa", "Timothy", "Deborah", "Ronald", "Stephanie",
-    "Edward", "Rebecca", "Jason", "Sharon", "Jeffrey", "Laura", "Ryan", "Cynthia",
-    "Jacob", "Kathleen", "Gary", "Amy", "Nicholas", "Angela", "Eric", "Shirley",
-    "Jonathan", "Anna", "Stephen", "Brenda", "Larry", "Pamela", "Justin", "Nicole",
-    "Scott", "Emma", "Brandon", "Helen", "Benjamin", "Samantha", "Samuel", "Katherine",
-    "Raymond", "Christine", "Gregory", "Debra", "Frank", "Rachel", "Alexander", "Carolyn",
-    "Patrick", "Janet", "Jack", "Catherine", "Dennis", "Maria", "Jerry", "Heather",
-    "Tyler", "Diane", "Aaron", "Ruth", "Jose", "Julie", "Adam", "Olivia", "Nathan", "Joyce",
-    "Henry", "Virginia", "Zachary", "Victoria", "Gabriel", "Kelly", "Wayne", "Lauren",
-    "Ethan", "Christina", "Jordan", "Joan", "Luke", "Evelyn", "Jayden", "Judith", "Carter",
-    "Megan", "Oliver", "Andrea", "Julian", "Cheryl", "Wyatt", "Hannah", "Sebastian", "Martha",
-    "Christian", "Gloria", "Dylan", "Teresa", "Elijah", "Ann", "Liam", "Sara", "Matthew",
-    "Madison", "Jackson", "Francesca", "Sebastian", "Kathryn", "Aiden", "Janice", "Levi",
-    "Jean", "Isaac", "Abigail", "Caleb", "Alice", "Ryan", "Sofia", "Nick", "Ava",
-    "Bob", "Emily", "Tom", "Luna", "Sam", "Ivy", "Max", "Grace", "Dan", "Chloe",
-    "Alex", "Penelope", "Chris", "Riley", "Jamie", "Aria", "Taylor", "Layla", "Morgan",
-    "Ellie", "Cameron", "Stella", "Robin", "Nora", "Quinn", "Lily", "Aria", "Pearl",
+    "James",
+    "Mary",
+    "John",
+    "Patricia",
+    "Robert",
+    "Jennifer",
+    "Michael",
+    "Linda",
+    "William",
+    "Barbara",
+    "David",
+    "Elizabeth",
+    "Richard",
+    "Susan",
+    "Joseph",
+    "Jessica",
+    "Thomas",
+    "Sarah",
+    "Charles",
+    "Karen",
+    "Christopher",
+    "Nancy",
+    "Daniel",
+    "Lisa",
+    "Matthew",
+    "Margaret",
+    "Anthony",
+    "Betty",
+    "Mark",
+    "Sandra",
+    "Donald",
+    "Ashley",
+    "Steven",
+    "Dorothy",
+    "Paul",
+    "Kimberly",
+    "Andrew",
+    "Emily",
+    "Joshua",
+    "Donna",
+    "Kenneth",
+    "Michelle",
+    "Kevin",
+    "Carol",
+    "Brian",
+    "Amanda",
+    "George",
+    "Melissa",
+    "Timothy",
+    "Deborah",
+    "Ronald",
+    "Stephanie",
+    "Edward",
+    "Rebecca",
+    "Jason",
+    "Sharon",
+    "Jeffrey",
+    "Laura",
+    "Ryan",
+    "Cynthia",
+    "Jacob",
+    "Kathleen",
+    "Gary",
+    "Amy",
+    "Nicholas",
+    "Angela",
+    "Eric",
+    "Shirley",
+    "Jonathan",
+    "Anna",
+    "Stephen",
+    "Brenda",
+    "Larry",
+    "Pamela",
+    "Justin",
+    "Nicole",
+    "Scott",
+    "Emma",
+    "Brandon",
+    "Helen",
+    "Benjamin",
+    "Samantha",
+    "Samuel",
+    "Katherine",
+    "Raymond",
+    "Christine",
+    "Gregory",
+    "Debra",
+    "Frank",
+    "Rachel",
+    "Alexander",
+    "Carolyn",
+    "Patrick",
+    "Janet",
+    "Jack",
+    "Catherine",
+    "Dennis",
+    "Maria",
+    "Jerry",
+    "Heather",
+    "Tyler",
+    "Diane",
+    "Aaron",
+    "Ruth",
+    "Jose",
+    "Julie",
+    "Adam",
+    "Olivia",
+    "Nathan",
+    "Joyce",
+    "Henry",
+    "Virginia",
+    "Zachary",
+    "Victoria",
+    "Gabriel",
+    "Kelly",
+    "Wayne",
+    "Lauren",
+    "Ethan",
+    "Christina",
+    "Jordan",
+    "Joan",
+    "Luke",
+    "Evelyn",
+    "Jayden",
+    "Judith",
+    "Carter",
+    "Megan",
+    "Oliver",
+    "Andrea",
+    "Julian",
+    "Cheryl",
+    "Wyatt",
+    "Hannah",
+    "Sebastian",
+    "Martha",
+    "Christian",
+    "Gloria",
+    "Dylan",
+    "Teresa",
+    "Elijah",
+    "Ann",
+    "Liam",
+    "Sara",
+    "Matthew",
+    "Madison",
+    "Jackson",
+    "Francesca",
+    "Sebastian",
+    "Kathryn",
+    "Aiden",
+    "Janice",
+    "Levi",
+    "Jean",
+    "Isaac",
+    "Abigail",
+    "Caleb",
+    "Alice",
+    "Ryan",
+    "Sofia",
+    "Nick",
+    "Ava",
+    "Bob",
+    "Emily",
+    "Tom",
+    "Luna",
+    "Sam",
+    "Ivy",
+    "Max",
+    "Grace",
+    "Dan",
+    "Chloe",
+    "Alex",
+    "Penelope",
+    "Chris",
+    "Riley",
+    "Jamie",
+    "Aria",
+    "Taylor",
+    "Layla",
+    "Morgan",
+    "Ellie",
+    "Cameron",
+    "Stella",
+    "Robin",
+    "Nora",
+    "Quinn",
+    "Lily",
+    "Aria",
+    "Pearl",
     // Tech/OSS names that often appear in code but aren't entities
-    "Alice", "Bob", "Charlie", "Dave", "Eve", "Frank", "Grace", "Heidi", "Ivan", "Judy",
-    "Mallory", "Oscar", "Peggy", "Trent", "Walter", "Victor", "Emma", "John", "Mike",
+    "Alice",
+    "Bob",
+    "Charlie",
+    "Dave",
+    "Eve",
+    "Frank",
+    "Grace",
+    "Heidi",
+    "Ivan",
+    "Judy",
+    "Mallory",
+    "Oscar",
+    "Peggy",
+    "Trent",
+    "Walter",
+    "Victor",
+    "Emma",
+    "John",
+    "Mike",
 ];
 
-static COMMON_NAMES_SET: LazyLock<std::collections::HashSet<&'static str>> = LazyLock::new(|| {
-    COMMON_FIRST_NAMES.iter().copied().collect()
-});
+static COMMON_NAMES_SET: LazyLock<std::collections::HashSet<&'static str>> =
+    LazyLock::new(|| COMMON_FIRST_NAMES.iter().copied().collect());
 
 const PRONOUN_PATTERNS_STATIC: &[&str] = &[
     r"\bshe\b",
@@ -405,8 +833,7 @@ fn score_entity(name: &str, text: &str, lines: &[&str]) -> ScoredEntity {
     let versioned = patterns.versioned.find_iter(text).count();
     if versioned > 0 {
         project_score += (versioned * 3) as i32;
-        project_signals
-            .push(format!("versioned/hyphenated ({}x)", versioned));
+        project_signals.push(format!("versioned/hyphenated ({}x)", versioned));
     }
 
     // Code file reference (weight 3)
@@ -458,8 +885,7 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
     };
 
     // Require TWO different signal categories to confidently classify as a person.
-    let mut signal_categories: std::collections::HashSet<&str> =
-        std::collections::HashSet::new();
+    let mut signal_categories: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for s in &scores.person_signals {
         if s.contains("dialogue") {
             signal_categories.insert("dialogue");
@@ -486,10 +912,7 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
         } else if person_ratio >= 0.7 {
             // Has person ratio but not enough signals — downgrade to uncertain
             let mut sigs = scores.person_signals.clone();
-            sigs.push(format!(
-                "appears {}x — not enough signal types",
-                frequency
-            ));
+            sigs.push(format!("appears {}x — not enough signal types", frequency));
             (EntityType::Uncertain, 0.4, sigs)
         } else if person_ratio <= 0.3 {
             let conf = (0.5 + (1.0 - person_ratio) * 0.5).min(0.99);
@@ -523,7 +946,13 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
 // TWO-PASS DETECT
 // =============================================================================
 
-fn detect_entities_two_pass(text: &str) -> (Vec<ClassifiedEntity>, Vec<ClassifiedEntity>, Vec<ClassifiedEntity>) {
+fn detect_entities_two_pass(
+    text: &str,
+) -> (
+    Vec<ClassifiedEntity>,
+    Vec<ClassifiedEntity>,
+    Vec<ClassifiedEntity>,
+) {
     let lines: Vec<&str> = text.lines().collect();
     let candidates = extract_candidates(text);
 
@@ -692,7 +1121,10 @@ mod tests {
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"Alice"), "Alice (said) should be detected");
         assert!(names.contains(&"Bob"), "Bob (asked) should be detected");
-        assert!(names.contains(&"Charlie"), "Charlie (wrote) should be detected");
+        assert!(
+            names.contains(&"Charlie"),
+            "Charlie (wrote) should be detected"
+        );
         assert!(names.contains(&"Dave"), "Dave (thinks) should be detected");
         assert!(names.contains(&"Eve"), "Eve (loves) should be detected");
     }
@@ -715,10 +1147,22 @@ mod tests {
         "#;
         let people = detect_people(text);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
-        assert!(names.contains(&"Alice"), "Alice (direct address) should be detected");
-        assert!(names.contains(&"Bob"), "Bob (direct address) should be detected");
-        assert!(names.contains(&"Charlie"), "Charlie (direct address) should be detected");
-        assert!(names.contains(&"Dave"), "Dave (direct address) should be detected");
+        assert!(
+            names.contains(&"Alice"),
+            "Alice (direct address) should be detected"
+        );
+        assert!(
+            names.contains(&"Bob"),
+            "Bob (direct address) should be detected"
+        );
+        assert!(
+            names.contains(&"Charlie"),
+            "Charlie (direct address) should be detected"
+        );
+        assert!(
+            names.contains(&"Dave"),
+            "Dave (direct address) should be detected"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -776,9 +1220,18 @@ mod tests {
         "#;
         let projects = detect_projects(text);
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
-        assert!(names.contains(&"Phoenix"), "Phoenix (building) should be detected");
-        assert!(names.contains(&"Atlas"), "Atlas (shipped) should be detected");
-        assert!(names.contains(&"Gateway"), "Gateway (deploying architecture) should be detected");
+        assert!(
+            names.contains(&"Phoenix"),
+            "Phoenix (building) should be detected"
+        );
+        assert!(
+            names.contains(&"Atlas"),
+            "Atlas (shipped) should be detected"
+        );
+        assert!(
+            names.contains(&"Gateway"),
+            "Gateway (deploying architecture) should be detected"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -798,11 +1251,7 @@ mod tests {
         "#;
         let result = detect_from_content(text);
         // Collect all entity names into a flat Vec<String>
-        let mut all_names: Vec<String> = result
-            .people
-            .iter()
-            .map(|p| p.name.clone())
-            .collect();
+        let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
 
         // James, Mary, Robert, Lisa, Tom appear in lower-context sentences
@@ -827,11 +1276,7 @@ mod tests {
         "#;
         let result = detect_from_content(text);
         // "System" is a stopword so should not be detected
-        let mut all_names: Vec<String> = result
-            .people
-            .iter()
-            .map(|p| p.name.clone())
-            .collect();
+        let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
         assert!(
             !all_names.iter().any(|n| n.as_str() == "System"),
@@ -851,22 +1296,23 @@ mod tests {
         Bob ran the script. Bob ran the script. Bob ran the script.
         "#;
         let people = detect_people(text);
-        assert!(
-            !people.is_empty(),
-            "Should detect at least some people"
-        );
+        assert!(!people.is_empty(), "Should detect at least some people");
         // Alice has direct address signals, should rank higher than Bob
         if people.len() >= 2 {
             let alice_conf = people
                 .iter()
                 .find(|p| p.name == "Alice")
                 .map(|p| p.confidence);
-            let bob_conf = people.iter().find(|p| p.name == "Bob").map(|p| p.confidence);
+            let bob_conf = people
+                .iter()
+                .find(|p| p.name == "Bob")
+                .map(|p| p.confidence);
             if let (Some(ac), Some(bc)) = (alice_conf, bob_conf) {
                 assert!(
                     ac > bc,
                     "Alice (direct address) confidence {} should exceed Bob (action) confidence {}",
-                    ac, bc
+                    ac,
+                    bc
                 );
             }
         }
@@ -906,11 +1352,7 @@ mod tests {
         We need better memory management.
         "#;
         let result = detect_from_content(text);
-        let mut all_names: Vec<String> = result
-            .people
-            .iter()
-            .map(|p| p.name.clone())
-            .collect();
+        let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
         // These are single occurrences, so they shouldn't pass the 3x threshold
         assert!(
@@ -997,11 +1439,7 @@ mod tests {
         We love Memory Palace for studying.
         "#;
         let result = detect_from_content(text);
-        let mut all_names: Vec<String> = result
-            .people
-            .iter()
-            .map(|p| p.name.clone())
-            .collect();
+        let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
         // "Memory Palace" (multi-word) should be extracted as one candidate
         // It should NOT appear as separate "Memory" and "Palace"
@@ -1024,10 +1462,7 @@ mod tests {
         "#;
         let people = detect_people(text);
         let alice = people.iter().find(|p| p.name == "Alice");
-        assert!(
-            alice.is_some(),
-            "Alice should be detected"
-        );
+        assert!(alice.is_some(), "Alice should be detected");
         let ctx = alice.unwrap().context.clone();
         // Context should include signal information
         assert!(

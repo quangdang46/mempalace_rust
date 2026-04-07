@@ -10,8 +10,8 @@
 //! Seeds the entity_registry with confirmed data so MemPalace knows your world
 //! from minute one — before a single session is indexed.
 
-use crate::entity_registry::EntityRegistry;
 use crate::entity_detector::{detect_from_content, PersonEntity};
+use crate::entity_registry::EntityRegistry;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -19,13 +19,7 @@ use std::path::{Path, PathBuf};
 // Default wing taxonomies by mode
 // ---------------------------------------------------------------------------
 
-pub const DEFAULT_WINGS_WORK: &[&str] = &[
-    "projects",
-    "clients",
-    "team",
-    "decisions",
-    "research",
-];
+pub const DEFAULT_WINGS_WORK: &[&str] = &["projects", "clients", "team", "decisions", "research"];
 
 pub const DEFAULT_WINGS_PERSONAL: &[&str] = &[
     "family",
@@ -63,7 +57,10 @@ impl Mode {
     pub fn default_wings(&self) -> Vec<String> {
         match self {
             Mode::Work => DEFAULT_WINGS_WORK.iter().map(|s| s.to_string()).collect(),
-            Mode::Personal => DEFAULT_WINGS_PERSONAL.iter().map(|s| s.to_string()).collect(),
+            Mode::Personal => DEFAULT_WINGS_PERSONAL
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             Mode::Combo => DEFAULT_WINGS_COMBO.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -152,10 +149,7 @@ pub fn generate_aaak_bootstrap(
     std::fs::write(&registry_path, registry_lines.join("\n"))?;
 
     // Critical facts bootstrap
-    let personal_people: Vec<_> = people
-        .iter()
-        .filter(|p| p.context == "personal")
-        .collect();
+    let personal_people: Vec<_> = people.iter().filter(|p| p.context == "personal").collect();
     let work_people: Vec<_> = people.iter().filter(|p| p.context == "work").collect();
 
     let mut facts_lines = vec![
@@ -258,8 +252,14 @@ pub fn quick_setup(
     )?;
 
     let mut result = HashMap::new();
-    result.insert("registry_path".to_string(), registry_path.to_string_lossy().to_string());
-    result.insert("facts_path".to_string(), facts_path.to_string_lossy().to_string());
+    result.insert(
+        "registry_path".to_string(),
+        registry_path.to_string_lossy().to_string(),
+    );
+    result.insert(
+        "facts_path".to_string(),
+        facts_path.to_string_lossy().to_string(),
+    );
     result.insert("summary".to_string(), summary);
 
     Ok(result)
@@ -274,10 +274,8 @@ pub fn auto_detect_from_directory(
     directory: &Path,
     known_people: &[PersonEntity],
 ) -> Vec<PersonEntity> {
-    let known_names: std::collections::HashSet<String> = known_people
-        .iter()
-        .map(|p| p.name.to_lowercase())
-        .collect();
+    let known_names: std::collections::HashSet<String> =
+        known_people.iter().map(|p| p.name.to_lowercase()).collect();
 
     // Collect text from readable files
     let mut all_text = String::new();
@@ -289,7 +287,10 @@ pub fn auto_detect_from_directory(
         if entry.file_type().is_file() {
             if let Some(ext) = entry.path().extension() {
                 let ext_str = ext.to_string_lossy().to_lowercase();
-                if matches!(ext_str.as_str(), "txt" | "md" | "py" | "js" | "ts" | "rs" | "go") {
+                if matches!(
+                    ext_str.as_str(),
+                    "txt" | "md" | "py" | "js" | "ts" | "rs" | "go"
+                ) {
                     if let Ok(content) = std::fs::read_to_string(entry.path()) {
                         all_text.push_str(&content);
                         all_text.push('\n');
@@ -303,9 +304,7 @@ pub fn auto_detect_from_directory(
     detection
         .people
         .into_iter()
-        .filter(|p| {
-            !known_names.contains(&p.name.to_lowercase()) && p.confidence >= 0.7
-        })
+        .filter(|p| !known_names.contains(&p.name.to_lowercase()) && p.confidence >= 0.7)
         .collect()
 }
 
@@ -380,19 +379,20 @@ mod tests {
         let config_path = temp_dir.path().join("registry.json");
 
         let people = vec![
-            ("Alice".to_string(), "personal".to_string(), "friend".to_string()),
-            ("Bob".to_string(), "work".to_string(), "colleague".to_string()),
+            (
+                "Alice".to_string(),
+                "personal".to_string(),
+                "friend".to_string(),
+            ),
+            (
+                "Bob".to_string(),
+                "work".to_string(),
+                "colleague".to_string(),
+            ),
         ];
         let projects = vec!["ProjectX".to_string()];
 
-        let result = quick_setup(
-            &config_path,
-            Mode::Personal,
-            people,
-            projects,
-            None,
-        )
-        .unwrap();
+        let result = quick_setup(&config_path, Mode::Personal, people, projects, None).unwrap();
 
         assert!(result.contains_key("registry_path"));
         assert!(result.contains_key("facts_path"));

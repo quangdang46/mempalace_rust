@@ -29,7 +29,10 @@ impl Layer0 {
                 .join(".mempalace")
                 .join("identity.txt")
         });
-        Self { path, cached_text: None }
+        Self {
+            path,
+            cached_text: None,
+        }
     }
 
     /// Return the identity text, or a sensible default.
@@ -91,7 +94,11 @@ impl Layer1 {
             for (i, doc) in qr.documents.iter().enumerate() {
                 let meta = qr.metadatas.get(i).cloned().unwrap_or_default();
                 let importance = self.extract_importance(&meta);
-                entries.push(DrawerEntry { importance, doc: doc.clone(), meta });
+                entries.push(DrawerEntry {
+                    importance,
+                    doc: doc.clone(),
+                    meta,
+                });
             }
         }
 
@@ -100,13 +107,20 @@ impl Layer1 {
         }
 
         entries.sort_by(|a, b| {
-            b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal)
+            b.importance
+                .partial_cmp(&a.importance)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         entries.truncate(self.max_drawers);
 
         let mut by_room: HashMap<String, Vec<&DrawerEntry>> = HashMap::new();
         for entry in &entries {
-            let room = entry.meta.get("room").and_then(|v| v.as_str()).unwrap_or("general").to_string();
+            let room = entry
+                .meta
+                .get("room")
+                .and_then(|v| v.as_str())
+                .unwrap_or("general")
+                .to_string();
             by_room.entry(room).or_default().push(entry);
         }
 
@@ -122,9 +136,15 @@ impl Layer1 {
             total_len += room_line.len();
 
             for entry in &by_room[room] {
-                let source = entry.meta.get("source_file")
+                let source = entry
+                    .meta
+                    .get("source_file")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| Path::new(s).file_name().map(|n| n.to_string_lossy().to_string()))
+                    .and_then(|s| {
+                        Path::new(s)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                    })
                     .unwrap_or_default();
 
                 let snippet = truncate_snippet(&entry.doc, 200);
@@ -176,17 +196,28 @@ impl Layer2 {
     }
 
     /// Retrieve drawers filtered by wing and/or room.
-    pub fn retrieve(&self, palace_db: &PalaceDb, wing: Option<&str>, room: Option<&str>, n_results: usize) -> String {
+    pub fn retrieve(
+        &self,
+        palace_db: &PalaceDb,
+        wing: Option<&str>,
+        room: Option<&str>,
+        n_results: usize,
+    ) -> String {
         let results = palace_db.get_all(wing, room, n_results);
 
         let docs: Vec<String> = results.iter().flat_map(|qr| qr.documents.clone()).collect();
-        let metas: Vec<HashMap<String, serde_json::Value>> = results.iter().flat_map(|qr| qr.metadatas.clone()).collect();
+        let metas: Vec<HashMap<String, serde_json::Value>> =
+            results.iter().flat_map(|qr| qr.metadatas.clone()).collect();
 
         if docs.is_empty() {
             let mut label = String::new();
-            if let Some(w) = wing { label.push_str(&format!("wing={}", w)); }
+            if let Some(w) = wing {
+                label.push_str(&format!("wing={}", w));
+            }
             if let Some(r) = room {
-                if !label.is_empty() { label.push_str(" "); }
+                if !label.is_empty() {
+                    label.push_str(" ");
+                }
                 label.push_str(&format!("room={}", r));
             }
             return if label.is_empty() {
@@ -199,9 +230,14 @@ impl Layer2 {
         let mut lines = vec![format!("## L2 — ON-DEMAND ({} drawers)", docs.len())];
         for (doc, meta) in docs.iter().zip(metas.iter()).take(n_results) {
             let room_name = meta.get("room").and_then(|v| v.as_str()).unwrap_or("?");
-            let source = meta.get("source_file")
+            let source = meta
+                .get("source_file")
                 .and_then(|v| v.as_str())
-                .and_then(|s| Path::new(s).file_name().map(|n| n.to_string_lossy().to_string()))
+                .and_then(|s| {
+                    Path::new(s)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                })
                 .unwrap_or_default();
 
             let snippet = truncate_snippet(doc, 300);
@@ -229,8 +265,17 @@ impl Layer3 {
     }
 
     /// Semantic search, returns compact result text.
-    pub async fn search(&self, palace_db: &PalaceDb, query: &str, wing: Option<&str>, room: Option<&str>, n_results: usize) -> String {
-        let hits = self.search_raw(palace_db, query, wing, room, n_results).await;
+    pub async fn search(
+        &self,
+        palace_db: &PalaceDb,
+        query: &str,
+        wing: Option<&str>,
+        room: Option<&str>,
+        n_results: usize,
+    ) -> String {
+        let hits = self
+            .search_raw(palace_db, query, wing, room, n_results)
+            .await;
         if hits.is_empty() {
             return "No results found.".to_string();
         }
@@ -253,7 +298,14 @@ impl Layer3 {
     }
 
     /// Return raw SearchHit structs instead of formatted text.
-    pub async fn search_raw(&self, palace_db: &PalaceDb, query: &str, wing: Option<&str>, room: Option<&str>, n_results: usize) -> Vec<SearchHit> {
+    pub async fn search_raw(
+        &self,
+        palace_db: &PalaceDb,
+        query: &str,
+        wing: Option<&str>,
+        room: Option<&str>,
+        n_results: usize,
+    ) -> Vec<SearchHit> {
         let results = match palace_db.query(query, wing, room, n_results).await {
             Ok(r) => r,
             Err(_) => return Vec::new(),
@@ -270,8 +322,16 @@ impl Layer3 {
                     text: doc.clone(),
                     wing: meta.get("wing").and_then(|v| v.as_str().map(String::from)),
                     room: meta.get("room").and_then(|v| v.as_str().map(String::from)),
-                    source_file: meta.get("source_file")
-                        .and_then(|v| v.as_str().map(|s| Path::new(s).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| s.to_string())))
+                    source_file: meta
+                        .get("source_file")
+                        .and_then(|v| {
+                            v.as_str().map(|s| {
+                                Path::new(s)
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| s.to_string())
+                            })
+                        })
                         .unwrap_or_else(|| "?".to_string()),
                     similarity,
                     metadata: meta,
@@ -355,30 +415,54 @@ impl MemoryStack {
     }
 
     /// Deep L3 semantic search.
-    pub async fn search(&self, query: &str, wing: Option<&str>, room: Option<&str>, n_results: usize) -> String {
+    pub async fn search(
+        &self,
+        query: &str,
+        wing: Option<&str>,
+        room: Option<&str>,
+        n_results: usize,
+    ) -> String {
         let palace_db = match PalaceDb::open(&self.palace_path) {
             Ok(db) => db,
             Err(e) => return format!("No palace found: {}", e),
         };
-        self.l3.search(&palace_db, query, wing, room, n_results).await
+        self.l3
+            .search(&palace_db, query, wing, room, n_results)
+            .await
     }
 
     /// Status of all layers.
     pub fn status(&self) -> LayerStatus {
         let identity_exists = self.identity_path.exists();
         let token_estimate = identity_exists
-            .then(|| std::fs::read_to_string(&self.identity_path).map(|s| s.len() / 4).unwrap_or(0))
+            .then(|| {
+                std::fs::read_to_string(&self.identity_path)
+                    .map(|s| s.len() / 4)
+                    .unwrap_or(0)
+            })
             .unwrap_or(0);
 
-        let total_drawers = PalaceDb::open(&self.palace_path).map(|db| db.count()).unwrap_or(0);
+        let total_drawers = PalaceDb::open(&self.palace_path)
+            .map(|db| db.count())
+            .unwrap_or(0);
 
         LayerStatus {
             palace_path: self.palace_path.clone(),
             identity_path: self.identity_path.clone(),
-            l0_identity: IdentityStatus { path: self.identity_path.clone(), exists: identity_exists, tokens: token_estimate },
-            l1_essential: EssentialStatus { description: "Auto-generated from top palace drawers".to_string() },
-            l2_on_demand: OnDemandStatus { description: "Wing/room filtered retrieval".to_string() },
-            l3_deep_search: DeepSearchStatus { description: "Full semantic search via PalaceDb".to_string() },
+            l0_identity: IdentityStatus {
+                path: self.identity_path.clone(),
+                exists: identity_exists,
+                tokens: token_estimate,
+            },
+            l1_essential: EssentialStatus {
+                description: "Auto-generated from top palace drawers".to_string(),
+            },
+            l2_on_demand: OnDemandStatus {
+                description: "Wing/room filtered retrieval".to_string(),
+            },
+            l3_deep_search: DeepSearchStatus {
+                description: "Full semantic search via PalaceDb".to_string(),
+            },
             total_drawers,
         }
     }
@@ -386,8 +470,11 @@ impl MemoryStack {
 
 fn truncate_snippet(text: &str, max_len: usize) -> String {
     let snippet = text.trim().replace('\n', " ");
-    if snippet.len() <= max_len { snippet }
-    else { format!("{}...", &snippet[..max_len.saturating_sub(3)]) }
+    if snippet.len() <= max_len {
+        snippet
+    } else {
+        format!("{}...", &snippet[..max_len.saturating_sub(3)])
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -401,10 +488,24 @@ pub struct LayerStatus {
     pub total_drawers: usize,
 }
 
-#[derive(Debug, serde::Serialize)] pub struct IdentityStatus { pub path: PathBuf, pub exists: bool, pub tokens: usize }
-#[derive(Debug, serde::Serialize)] pub struct EssentialStatus { pub description: String }
-#[derive(Debug, serde::Serialize)] pub struct OnDemandStatus { pub description: String }
-#[derive(Debug, serde::Serialize)] pub struct DeepSearchStatus { pub description: String }
+#[derive(Debug, serde::Serialize)]
+pub struct IdentityStatus {
+    pub path: PathBuf,
+    pub exists: bool,
+    pub tokens: usize,
+}
+#[derive(Debug, serde::Serialize)]
+pub struct EssentialStatus {
+    pub description: String,
+}
+#[derive(Debug, serde::Serialize)]
+pub struct OnDemandStatus {
+    pub description: String,
+}
+#[derive(Debug, serde::Serialize)]
+pub struct DeepSearchStatus {
+    pub description: String,
+}
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -421,20 +522,56 @@ mod tests {
         let mut db = PalaceDb::open(&palace_path).unwrap();
         db.add(
             &[
-                ("id1", "I had a wonderful breakfast this morning with my family"),
-                ("id2", "Working on the Rust implementation of the memory palace"),
-                ("id3", "Feeling excited about the new project launch next week"),
-                ("id4", "Technical discussion about async programming in Rust"),
-                ("id5", "Remember to call mom about the family reunion planning"),
+                (
+                    "id1",
+                    "I had a wonderful breakfast this morning with my family",
+                ),
+                (
+                    "id2",
+                    "Working on the Rust implementation of the memory palace",
+                ),
+                (
+                    "id3",
+                    "Feeling excited about the new project launch next week",
+                ),
+                (
+                    "id4",
+                    "Technical discussion about async programming in Rust",
+                ),
+                (
+                    "id5",
+                    "Remember to call mom about the family reunion planning",
+                ),
             ],
             &[
-                &[("wing", "personal"), ("room", "morning"), ("importance", "0.9")],
-                &[("wing", "technical"), ("room", "rust"), ("importance", "0.8")],
-                &[("wing", "personal"), ("room", "emotions"), ("importance", "0.7")],
-                &[("wing", "technical"), ("room", "rust"), ("importance", "0.6")],
-                &[("wing", "personal"), ("room", "family"), ("importance", "0.85")],
+                &[
+                    ("wing", "personal"),
+                    ("room", "morning"),
+                    ("importance", "0.9"),
+                ],
+                &[
+                    ("wing", "technical"),
+                    ("room", "rust"),
+                    ("importance", "0.8"),
+                ],
+                &[
+                    ("wing", "personal"),
+                    ("room", "emotions"),
+                    ("importance", "0.7"),
+                ],
+                &[
+                    ("wing", "technical"),
+                    ("room", "rust"),
+                    ("importance", "0.6"),
+                ],
+                &[
+                    ("wing", "personal"),
+                    ("room", "family"),
+                    ("importance", "0.85"),
+                ],
             ],
-        ).unwrap();
+        )
+        .unwrap();
         db
     }
 
@@ -518,7 +655,8 @@ mod tests {
                 &[("wing", "test"), ("room", "general"), ("importance", "0.8")],
                 &[("wing", "test"), ("room", "general"), ("importance", "0.7")],
             ],
-        ).unwrap();
+        )
+        .unwrap();
         let l1 = Layer1::new(None);
         let text = l1.generate(&db);
         assert!(text.contains("..."));
@@ -633,7 +771,9 @@ mod tests {
         let db = create_test_palace_db(temp_dir.path());
         let palace_path = temp_dir.path().join("palace");
         let l3 = Layer3::new();
-        let hits = l3.search_raw(&db, "project", Some("personal"), None, 5).await;
+        let hits = l3
+            .search_raw(&db, "project", Some("personal"), None, 5)
+            .await;
         for hit in hits {
             let wing = hit.wing.as_deref().unwrap_or("");
             assert_eq!(wing, "personal");

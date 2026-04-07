@@ -5,8 +5,8 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 static READABLE_EXTENSIONS: &[&str] = &[
-    ".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml", ".html",
-    ".css", ".java", ".go", ".rs", ".rb", ".sh", ".csv", ".sql", ".toml",
+    ".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml", ".html", ".css",
+    ".java", ".go", ".rs", ".rb", ".sh", ".csv", ".sql", ".toml",
 ];
 
 static SKIP_DIRS: &[&str] = &[
@@ -87,23 +87,23 @@ impl Miner {
     }
 
     fn detect_room(&self, filepath: &Path, _content: &str) -> String {
-        let project_path = filepath.parent().unwrap_or(filepath);        
+        let project_path = filepath.parent().unwrap_or(filepath);
         if let Ok(relative) = filepath.strip_prefix(project_path) {
             let relative_str = relative.to_string_lossy().to_lowercase();
             let filename = filepath
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_lowercase())
                 .unwrap_or_default();
-            
+
             for room in &self.rooms {
                 let room_name_lower = room.name.to_lowercase();
-                
+
                 if relative_str.contains(&room_name_lower) || room_name_lower.contains(&filename) {
                     return room.name.clone();
                 }
             }
         }
-        
+
         "general".to_string()
     }
 
@@ -122,7 +122,7 @@ impl Miner {
 
             if end < content.len() {
                 let slice = &content[start..end];
-                
+
                 if let Some(newline_pos) = slice.rfind("\n\n") {
                     if newline_pos > CHUNK_SIZE / 2 {
                         let actual_end = start + newline_pos;
@@ -135,7 +135,7 @@ impl Miner {
                         continue;
                     }
                 }
-                
+
                 if let Some(newline_pos) = slice.rfind('\n') {
                     if newline_pos > CHUNK_SIZE / 2 {
                         let actual_end = start + newline_pos;
@@ -177,12 +177,12 @@ impl Miner {
 
     pub async fn mine_file(&mut self, filepath: &Path) -> anyhow::Result<usize> {
         let source_file = filepath.to_string_lossy().to_string();
-        
+
         let content = match std::fs::read_to_string(filepath) {
             Ok(c) => c,
             Err(_) => return Ok(0),
         };
-        
+
         let content = content.trim();
         if content.len() < MIN_CHUNK_SIZE {
             return Ok(0);
@@ -199,7 +199,7 @@ impl Miner {
 
         for (chunk_content, chunk_index) in &chunks {
             let drawer_id = Self::generate_drawer_id(&self.wing, &room, &source_file, *chunk_index);
-            
+
             self.palace_db.add(
                 &[(drawer_id.as_str(), chunk_content.as_str())],
                 &[&[
@@ -279,11 +279,13 @@ pub fn load_config(project_dir: &Path) -> anyhow::Result<(String, Vec<RoomMappin
     let content = std::fs::read_to_string(config_path)?;
     let config: Config = serde_json::from_str(&content)?;
 
-    let rooms = config.rooms.unwrap_or_else(|| vec![RoomMapping {
-        name: "general".to_string(),
-        description: "All project files".to_string(),
-        keywords: vec![],
-    }]);
+    let rooms = config.rooms.unwrap_or_else(|| {
+        vec![RoomMapping {
+            name: "general".to_string(),
+            description: "All project files".to_string(),
+            keywords: vec![],
+        }]
+    });
 
     Ok((config.wing, rooms))
 }
@@ -295,13 +297,13 @@ pub async fn mine(
 ) -> anyhow::Result<MiningResult> {
     let (wing, rooms) = load_config(project_dir)?;
     let wing = wing_override.unwrap_or(&wing);
-    
+
     let rooms_to_use = if rooms.is_empty() {
         detect_rooms_from_folders(project_dir)
     } else {
         rooms
     };
-    
+
     let mut miner = Miner::new(palace_path, wing, rooms_to_use)?;
     Ok(miner.scan_and_mine(project_dir).await)
 }
@@ -314,20 +316,20 @@ mod tests {
     #[test]
     fn test_chunk_text_basic() {
         let miner = Miner::new(std::path::Path::new("/tmp"), "test", vec![]).unwrap();
-        
+
         let text = "This is a test paragraph.\n\nThis is another paragraph.\n\nAnd another one here with enough content to be a chunk.";
         let chunks = miner.chunk_text(text, "test.txt");
-        
+
         assert!(!chunks.is_empty());
     }
 
     #[test]
     fn test_chunk_text_respects_min_size() {
         let miner = Miner::new(std::path::Path::new("/tmp"), "test", vec![]).unwrap();
-        
+
         let text = "Short text";
         let chunks = miner.chunk_text(text, "test.txt");
-        
+
         assert!(chunks.is_empty());
     }
 
@@ -339,7 +341,7 @@ mod tests {
             keywords: vec!["backend".to_string()],
         }];
         let miner = Miner::new(std::path::Path::new("/tmp"), "test", rooms).unwrap();
-        
+
         let room = miner.detect_room(std::path::Path::new("/tmp/unknown_file.txt"), "content");
         assert_eq!(room, "general");
     }
@@ -358,7 +360,7 @@ mod tests {
         let id1 = Miner::generate_drawer_id("wing1", "room1", "/path/file.rs", 0);
         let id2 = Miner::generate_drawer_id("wing1", "room1", "/path/file.rs", 0);
         let id3 = Miner::generate_drawer_id("wing1", "room1", "/path/file.rs", 1);
-        
+
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
         assert!(id1.starts_with("drawer_wing1_room1_0_"));
