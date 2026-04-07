@@ -155,6 +155,7 @@ enum MiningMode {
     #[default]
     Projects,
     Convos,
+    Auto,
 }
 
 impl std::str::FromStr for MiningMode {
@@ -164,7 +165,8 @@ impl std::str::FromStr for MiningMode {
         match s.to_lowercase().as_str() {
             "projects" | "project" => Ok(MiningMode::Projects),
             "convos" | "convo" | "conversations" => Ok(MiningMode::Convos),
-            _ => Err(format!("Unknown mining mode: {s}. Use 'projects' or 'convos'.")),
+            "auto" => Ok(MiningMode::Auto),
+            _ => Err(format!("Unknown mining mode: {s}. Use 'projects', 'convos', or 'auto'.")),
         }
     }
 }
@@ -309,6 +311,58 @@ fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
     Ok(())
 }
 
+/// Auto-detect mining mode by scanning for conversation file patterns
+fn detect_mining_mode(dir: &PathBuf) -> MiningMode {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return MiningMode::Projects,
+    };
+
+    let mut has_conversation_markers = 0;
+    let mut has_project_markers = 0;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        // Check for conversation markers
+        let name_lower = name.to_lowercase();
+        if name_lower.contains("conversation")
+            || name_lower.contains("transcript")
+            || name_lower.contains("chatgpt")
+            || name_lower.contains("claude")
+            || name_lower.ends_with(".jsonl")
+            || name_lower.ends_with(".json")
+        {
+            has_conversation_markers += 1;
+        }
+
+        // Check for project markers
+        if path.is_dir()
+            && (name_lower == "src"
+                || name_lower == "lib"
+                || name_lower == "tests"
+                || name_lower == "scripts"
+                || name_lower == "bin")
+        {
+            has_project_markers += 1;
+        } else if path.is_file() {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if matches!(ext.to_lowercase().as_str(), "rs" | "py" | "js" | "ts" | "go" | "java" | "txt" | "md") {
+                has_project_markers += 1;
+            }
+        }
+    }
+
+    if has_conversation_markers > has_project_markers {
+        MiningMode::Convos
+    } else {
+        MiningMode::Projects
+    }
+}
+
 fn cmd_mine(
     dir: &PathBuf,
     mode: &MiningMode,
@@ -354,6 +408,33 @@ fn cmd_mine(
                 Err(e) => {
                     eprintln!("  Convo mining error: {}", e);
                     return Err(e);
+                }
+            }
+        }
+        MiningMode::Auto => {
+            // Auto-detect mining mode by scanning for known patterns
+            let detected = detect_mining_mode(dir);
+            println!("  Auto-detected mode: {:?}", detected);
+            match detected {
+                MiningMode::Projects | MiningMode::Auto => {
+                    let result = runtime().block_on(miner::mine(dir, &palace_path, wing, None));
+                    match result {
+                        Ok(mining_result) => print_mining_result(&mining_result),
+                        Err(e) => {
+                            eprintln!("  Mining error: {}", e);
+                            return Err(e);
+                        }
+                    }
+                }
+                MiningMode::Convos => {
+                    let result = runtime().block_on(mine_conversations(dir, &palace_path, wing, extract));
+                    match result {
+                        Ok(convo_result) => print_convo_result(&convo_result),
+                        Err(e) => {
+                            eprintln!("  Convo mining error: {}", e);
+                            return Err(e);
+                        }
+                    }
                 }
             }
         }
