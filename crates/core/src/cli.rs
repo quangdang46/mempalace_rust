@@ -148,6 +148,17 @@ enum Commands {
 
     /// Show what's been filed.
     Status,
+
+    /// Scan machine for AI tool sessions and mine them all.
+    MineDevice {
+        /// Wing name for discovered sessions
+        #[arg(long)]
+        wing: Option<String>,
+
+        /// Don't actually mine, just show what would be mined
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Clone, Default, Debug)]
@@ -699,6 +710,93 @@ fn cmd_split(
     Ok(())
 }
 
+/// Platform-specific session discovery
+fn discover_ai_sessions() -> Vec<(String, PathBuf)> {
+    let mut sessions = Vec::new();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+
+    // Claude Code sessions (~/.claude/)
+    if let Some(ref h) = home {
+        let claude_dir = h.join(".claude");
+        if claude_dir.exists() {
+            sessions.push(("Claude Code".to_string(), claude_dir));
+        }
+        // Codex sessions (~/.codex/sessions/)
+        let codex_dir = h.join(".codex").join("sessions");
+        if codex_dir.exists() {
+            sessions.push(("Codex".to_string(), codex_dir));
+        }
+        // OpenCode sessions
+        let opencode_dir = h.join(".opencode");
+        if opencode_dir.exists() {
+            sessions.push(("OpenCode".to_string(), opencode_dir));
+        }
+    }
+
+    // Platform-specific paths
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(h) = home {
+            let app_support = h.join("Library").join("Application Support");
+            for tool in &["Claude", "ChatGPT", "SoulForge"] {
+                let path = app_support.join(tool);
+                if path.exists() {
+                    sessions.push((tool.to_string(), path));
+                }
+            }
+        }
+    }
+
+    sessions
+}
+
+fn cmd_mine_device(wing: Option<&str>, dry_run: bool, palace_arg: Option<&str>) -> Result<()> {
+    let palace_path = resolve_palace_path(palace_arg)?;
+
+    println!();
+    println!("{}", "=".repeat(55));
+    println!("  MemPalace: Mine Device");
+    println!("{}", "=".repeat(55));
+
+    let sessions = discover_ai_sessions();
+
+    if sessions.is_empty() {
+        println!("  No AI tool sessions found.");
+        return Ok(());
+    }
+
+    println!("  Discovered sessions:");
+    for (tool, path) in &sessions {
+        println!("    {}: {}", tool, path.display());
+    }
+    println!();
+
+    if dry_run {
+        println!("  [DRY RUN] Skipping actual mining.");
+        return Ok(());
+    }
+
+    let mut total_mined = 0;
+    for (tool, path) in &sessions {
+        let wing_name = wing.unwrap_or(tool);
+        println!("  Mining {} sessions into wing '{}'...", tool, wing_name);
+        let result = runtime().block_on(miner::mine(path, &palace_path, Some(wing_name), None));
+        match result {
+            Ok(r) => {
+                println!("    {} files, {} chunks", r.files_processed, r.chunks_created);
+                total_mined += r.chunks_created;
+            }
+            Err(e) => {
+                println!("    Error: {}", e);
+            }
+        }
+    }
+
+    println!();
+    println!("  Total chunks mined: {}", total_mined);
+    Ok(())
+}
+
 fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
@@ -853,6 +951,9 @@ pub fn run() -> Result<()> {
             min_sessions,
         } => cmd_split(dir, output_dir.as_ref(), *dry_run, *min_sessions)?,
         Commands::Status {} => cmd_status(palace_arg)?,
+        Commands::MineDevice { wing, dry_run } => {
+            cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
+        }
     }
 
     Ok(())
