@@ -90,6 +90,17 @@ impl KnowledgeGraph {
             CREATE INDEX IF NOT EXISTS idx_triples_object ON triples(object);
             CREATE INDEX IF NOT EXISTS idx_triples_predicate ON triples(predicate);
             CREATE INDEX IF NOT EXISTS idx_triples_valid ON triples(valid_from, valid_to);
+
+            CREATE TABLE IF NOT EXISTS episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                drawer_id TEXT NOT NULL,
+                query TEXT NOT NULL,
+                outcome TEXT NOT NULL CHECK(outcome IN ('helpful', 'unhelpful', 'neutral')),
+                feedback_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_episodes_drawer ON episodes(drawer_id);
+            CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome);
             ",
         )?;
         Ok(())
@@ -447,6 +458,49 @@ impl KnowledgeGraph {
             relationship_types,
         })
     }
+
+    /// Record a retrieval feedback outcome for a drawer.
+    /// outcome: "helpful", "unhelpful", or "neutral"
+    pub fn record_feedback(&self, drawer_id: &str, query: &str, outcome: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO episodes (drawer_id, query, outcome) VALUES (?1, ?2, ?3)",
+            params![drawer_id, query, outcome],
+        )?;
+        Ok(())
+    }
+
+    /// Get helpfulness score for a drawer based on historical feedback.
+    /// Returns a multiplier between 0.5 (unhelpful) and 1.5 (helpful).
+    pub fn helpfulness_score(&self, drawer_id: &str) -> anyhow::Result<f64> {
+        let helpful: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'helpful'",
+            params![drawer_id],
+            |row| row.get(0),
+        )?;
+        let unhelpful: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'unhelpful'",
+            params![drawer_id],
+            |row| row.get(0),
+        )?;
+        let total = helpful + unhelpful;
+        if total == 0 {
+            return Ok(1.0); // No feedback = neutral
+        }
+        // Score: helpful ratio mapped to [0.5, 1.5]
+        let ratio = helpful as f64 / total as f64;
+        Ok(0.5 + ratio)
+    }
+
+    /// Get feedback history for a drawer.
+    pub fn get_feedback(&self, drawer_id: &str) -> anyhow::Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT query, outcome FROM episodes WHERE drawer_id = ?1 ORDER BY feedback_at DESC LIMIT 50",
+        )?;
+        let rows = stmt.query_map(params![drawer_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
 }
 
 #[cfg(test)]
@@ -577,5 +631,32 @@ mod tests {
 
         let timeline = kg.timeline(Some("Max")).unwrap();
         assert_eq!(timeline.len(), 2);
+    }
+
+    #[test]
+    fn test_episode_feedback_scoring() {
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+
+        // No feedback = neutral score
+        assert_eq!(kg.helpfulness_score("drawer_1").unwrap(), 1.0);
+
+        // Helpful feedback
+        kg.record_feedback("drawer_1", "test query", "helpful").unwrap();
+        assert!(kg.helpfulness_score("drawer_1").unwrap() > 1.0);
+
+        // Unhelpful feedback
+        kg.record_feedback("drawer_2", "test query", "unhelpful").unwrap();
+        assert!(kg.helpfulness_score("drawer_2").unwrap() < 1.0);
+
+        // Mixed feedback
+        kg.record_feedback("drawer_3", "query1", "helpful").unwrap();
+        kg.record_feedback("drawer_3", "query2", "unhelpful").unwrap();
+        let score = kg.helpfulness_score("drawer_3").unwrap();
+        assert!(score > 0.5 && score < 1.5);
+
+        // Get feedback history
+        let history = kg.get_feedback("drawer_1").unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].1, "helpful");
     }
 }
