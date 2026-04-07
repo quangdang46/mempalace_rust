@@ -125,8 +125,13 @@ impl PalaceDb {
             );
         }
 
-        self.save()?;
+        // Don't auto-save on every add - caller should call flush() when done batching
         Ok(())
+    }
+
+    /// Force flush documents to disk. Call after batch operations.
+    pub fn flush(&mut self) -> anyhow::Result<()> {
+        self.save()
     }
 
     fn save(&self) -> anyhow::Result<()> {

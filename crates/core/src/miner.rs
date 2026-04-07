@@ -227,10 +227,6 @@ impl Miner {
     }
 
     pub async fn scan_and_mine(&mut self, project_dir: &Path) -> MiningResult {
-        let mut files_processed = 0;
-        let mut chunks_created = 0;
-        let mut errors = Vec::new();
-
         let file_paths: Vec<_> = WalkDir::new(project_dir)
             .follow_links(false)
             .into_iter()
@@ -248,6 +244,11 @@ impl Miner {
             .map(|e| e.path().to_path_buf())
             .collect();
 
+        // Sequential processing (parallelization requires mutable borrow of palace_db)
+        let mut files_processed = 0;
+        let mut chunks_created = 0;
+        let mut errors = Vec::new();
+
         for filepath in file_paths {
             match self.mine_file(&filepath).await {
                 Ok(count) => {
@@ -259,6 +260,9 @@ impl Miner {
                 }
             }
         }
+
+        // Flush once at end - critical for Windows performance
+        self.palace_db.flush().ok();
 
         MiningResult {
             files_processed,
