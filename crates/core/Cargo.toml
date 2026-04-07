@@ -24,6 +24,7 @@ chrono = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 charset = { workspace = true }
+rmcp = { version = "1.3", features = ["transport-io"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
