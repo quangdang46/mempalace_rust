@@ -210,6 +210,7 @@ Options:
   --version VERSION   Specific version to install (default: latest from GitHub)
   --path DIR          Installation directory (default: /usr/local/bin or ~/.local/bin)
   --easy-mode        Add installation directory to PATH automatically
+  --auto-mcp         Auto-install MCP server config into Claude Code, Codex, Cursor, etc.
   --dry-run           Show what would be installed without installing
   --repo USER/REPO   GitHub repository (default: quangdang46/mempalace_rust)
   --bin NAME         Binary name (default: mpr)
@@ -219,7 +220,287 @@ Examples:
   curl -sSL https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh | bash
   bash install.sh --version 0.1.0 --path ~/bin
   bash install.sh --dry-run
+  bash install.sh --auto-mcp  # Install + register with Claude Code, Cursor, etc.
 EOF
+}
+
+# -----------------------------------------------------------------------------
+# MCP auto-install
+# -----------------------------------------------------------------------------
+detect_mcp_providers() {
+  local providers=()
+
+  [[ -f ~/.claude.json ]] || [[ -f ~/.claude/projects/*/settings.json ]] && providers+=("claude-code")
+  [[ -d ~/.codex ]] && providers+=("codex")
+  [[ -d ~/.cursor ]] && providers+=("cursor")
+  [[ -d ~/.codeium/windsurf ]] && providers+=("windsurf")
+  [[ -d .vscode ]] && providers+=("vscode")
+  [[ -d ~/.gemini ]] && providers+=("gemini")
+  [[ -f ~/.opencode.json ]] && providers+=("opencode")
+  [[ -f ~/.config/amp/settings.json ]] && providers+=("amp")
+  [[ -f ~/.factory/mcp.json ]] && providers+=("droid")
+
+  echo "${providers[@]}"
+}
+
+write_mcp_json_config() {
+  local path="$1"
+  local servers_key="$2"
+  local command_path="$3"
+
+  mkdir -p "$(dirname "$path")"
+  python3 - "$path" "$servers_key" "$command_path" <<'PY'
+import json
+import os
+import sys
+
+path, servers_key, command_path = sys.argv[1:4]
+entry = {"command": command_path, "args": ["mcp"]}
+if os.path.exists(path):
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+else:
+    data = {}
+
+if not isinstance(data, dict):
+    raise SystemExit(f"{path} root is not a JSON object")
+
+cursor = data
+parts = servers_key.split(".")
+for part in parts[:-1]:
+    child = cursor.get(part)
+    if not isinstance(child, dict):
+        child = {}
+        cursor[part] = child
+    cursor = child
+
+leaf = parts[-1]
+servers = cursor.get(leaf)
+if not isinstance(servers, dict):
+    servers = {}
+
+existing = servers.get("mempalace")
+if existing is None:
+    status = "installed"
+elif existing == entry:
+    status = "unchanged"
+else:
+    status = "updated"
+
+servers["mempalace"] = entry
+cursor[leaf] = servers
+
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+
+print(status)
+PY
+}
+
+write_mcp_toml_config() {
+  local path="$1"
+  local command_path="$2"
+
+  mkdir -p "$(dirname "$path")"
+  python3 - "$path" "$command_path" <<'PY'
+import os
+import re
+import sys
+
+path, command_path = sys.argv[1:3]
+section = '[mcp_servers.mempalace]\ncommand = "{0}"\nargs = ["mcp"]\n'.format(
+    command_path.replace("\\", "\\\\").replace('"', '\\"')
+)
+
+if os.path.exists(path):
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+else:
+    text = ""
+
+pattern = re.compile(r'(?ms)^\[mcp_servers\.mempalace\]\n.*?(?=^\[|\Z)')
+match = pattern.search(text)
+if match is None:
+    status = "installed"
+    text += "\n" + section
+else:
+    status = "updated"
+    text = pattern.sub(section, text)
+
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+
+print(status)
+PY
+}
+
+auto_install_mcp() {
+  local bin_path="$1"
+  local providers
+  providers=$(detect_mcp_providers)
+
+  if [[ -z "$providers" ]]; then
+    log_info "No MCP-compatible tools detected (Claude Code, Codex, Cursor, etc.)"
+    return 0
+  fi
+
+  log_info "Detected MCP providers: ${providers}"
+  log_info "Auto-installing MemPalace MCP server..."
+
+  local installed=0
+  local skipped=0
+
+  for provider in $providers; do
+    case "$provider" in
+      claude-code)
+        local path=~/.claude.json
+        if [[ -f "$path" ]] || [[ ! -f ~/.claude/projects/*/settings.json ]]; then
+          local result
+          result=$(write_mcp_json_config "$path" "mcpServers" "$bin_path" 2>&1) && echo "$result" || echo "error"
+          if [[ "$result" == "installed" ]]; then
+            log_ok "MCP installed for Claude Code"
+            ((installed++))
+          elif [[ "$result" == "updated" ]]; then
+            log_ok "MCP updated for Claude Code"
+            ((installed++))
+          elif [[ "$result" == "unchanged" ]]; then
+            log_info "MCP unchanged for Claude Code"
+            ((skipped++))
+          else
+            log_warn "Claude Code: $result"
+          fi
+        else
+          log_info "Claude Code: config not in expected location, skipping"
+        fi
+        ;;
+      codex)
+        local path=~/.codex/config.toml
+        local result
+        result=$(write_mcp_toml_config "$path" "$bin_path" 2>&1) && echo "$result" || echo "error"
+        if [[ "$result" == "installed" ]]; then
+          log_ok "MCP installed for Codex"
+          ((installed++))
+        elif [[ "$result" == "updated" ]]; then
+          log_ok "MCP updated for Codex"
+          ((installed++))
+        elif [[ "$result" == "unchanged" ]]; then
+          log_info "MCP unchanged for Codex"
+          ((skipped++))
+        else
+          log_warn "Codex: $result"
+        fi
+        ;;
+      cursor)
+        local path=~/.cursor/mcp.json
+        local result
+        result=$(write_mcp_json_config "$path" "mcpServers" "$bin_path" 2>&1) && echo "$result" || echo "error"
+        if [[ "$result" == "installed" ]]; then
+          log_ok "MCP installed for Cursor"
+          ((installed++))
+        elif [[ "$result" == "updated" ]]; then
+          log_ok "MCP updated for Cursor"
+          ((installed++))
+        elif [[ "$result" == "unchanged" ]]; then
+          log_info "MCP unchanged for Cursor"
+          ((skipped++))
+        else
+          log_warn "Cursor: $result"
+        fi
+        ;;
+      windsurf)
+        local path=~/.codeium/windsurf/mcp_config.json
+        local result
+        result=$(write_mcp_json_config "$path" "mcpServers" "$bin_path" 2>&1) && echo "$result" || echo "error"
+        if [[ "$result" == "installed" ]]; then
+          log_ok "MCP installed for Windsurf"
+          ((installed++))
+        elif [[ "$result" == "updated" ]]; then
+          log_ok "MCP updated for Windsurf"
+          ((installed++))
+        elif [[ "$result" == "unchanged" ]]; then
+          log_info "MCP unchanged for Windsurf"
+          ((skipped++))
+        else
+          log_warn "Windsurf: $result"
+        fi
+        ;;
+      vscode)
+        mkdir -p .vscode
+        local path=.vscode/mcp.json
+        local result
+        result=$(write_mcp_json_config "$path" "servers" "$bin_path" 2>&1) && echo "$result" || echo "error"
+        if [[ "$result" == "installed" ]]; then
+          log_ok "MCP installed for VS Code"
+          ((installed++))
+        elif [[ "$result" == "updated" ]]; then
+          log_ok "MCP updated for VS Code"
+          ((installed++))
+        elif [[ "$result" == "unchanged" ]]; then
+          log_info "MCP unchanged for VS Code"
+          ((skipped++))
+        else
+          log_warn "VS Code: $result"
+        fi
+        ;;
+      opencode)
+        local path=~/.opencode.json
+        local result
+        result=$(write_mcp_json_config "$path" "mcpServers" "$bin_path" 2>&1) && echo "$result" || echo "error"
+        if [[ "$result" == "installed" ]]; then
+          log_ok "MCP installed for OpenCode"
+          ((installed++))
+        elif [[ "$result" == "updated" ]]; then
+          log_ok "MCP updated for OpenCode"
+          ((installed++))
+        elif [[ "$result" == "unchanged" ]]; then
+          log_info "MCP unchanged for OpenCode"
+          ((skipped++))
+        else
+          log_warn "OpenCode: $result"
+        fi
+        ;;
+      amp)
+        local path=~/.config/amp/settings.json
+        local result
+        result=$(write_mcp_json_config "$path" "amp.mcpServers" "$bin_path" 2>&1) && echo "$result" || echo "error"
+        if [[ "$result" == "installed" ]]; then
+          log_ok "MCP installed for Amp"
+          ((installed++))
+        elif [[ "$result" == "updated" ]]; then
+          log_ok "MCP updated for Amp"
+          ((installed++))
+        elif [[ "$result" == "unchanged" ]]; then
+          log_info "MCP unchanged for Amp"
+          ((skipped++))
+        else
+          log_warn "Amp: $result"
+        fi
+        ;;
+      droid)
+        local path=~/.factory/mcp.json
+        local result
+        result=$(write_mcp_json_config "$path" "mcpServers" "$bin_path" 2>&1) && echo "$result" || echo "error"
+        if [[ "$result" == "installed" ]]; then
+          log_ok "MCP installed for Droid"
+          ((installed++))
+        elif [[ "$result" == "updated" ]]; then
+          log_ok "MCP updated for Droid"
+          ((installed++))
+        elif [[ "$result" == "unchanged" ]]; then
+          log_info "MCP unchanged for Droid"
+          ((skipped++))
+        else
+          log_warn "Droid: $result"
+        fi
+        ;;
+      *)
+        log_info "Unknown provider: $provider"
+        ;;
+    esac
+  done
+
+  log_info "MCP auto-install complete: $installed installed, $skipped unchanged"
 }
 
 # -----------------------------------------------------------------------------
@@ -227,15 +508,14 @@ EOF
 # -----------------------------------------------------------------------------
 main() {
   local version="" install_dir="" easy_mode="false" dry_run="false"
-  local repo="${DEFAULT_REPO}" bin="${DEFAULT_BIN}"
-
-  # Parse arguments
+  local auto_mcp="false" repo="${DEFAULT_REPO}" bin="${DEFAULT_BIN}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --version)      version="$2"; shift 2;;
       --path)         install_dir="$2"; shift 2;;
       --easy-mode)    easy_mode="true"; shift;;
       --dry-run)      dry_run="true"; shift;;
+      --auto-mcp)    auto_mcp="true"; shift;;
       --repo)         repo="$2"; shift 2;;
       --bin)          bin="$2"; shift 2;;
       -h|--help)      usage; exit 0;;
@@ -369,6 +649,11 @@ main() {
   else
     log_warn "Installed but not found in PATH"
     log_info "Full path: ${install_dir}/${bin}"
+  fi
+
+  # Auto-install MCP server config
+  if [[ "$auto_mcp" == "true" ]]; then
+    auto_install_mcp "${install_dir}/${bin}" || log_warn "MCP auto-install failed"
   fi
 }
 
