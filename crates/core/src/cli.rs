@@ -692,11 +692,27 @@ fn cmd_split(
 fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
+    // Expand path for display
+    let display_path = if palace_path.starts_with("~/") || palace_path.to_string_lossy().contains("~") {
+        if let Ok(home) = std::env::var("HOME") {
+            let path_str = palace_path.to_string_lossy();
+            if path_str.starts_with("~/") {
+                PathBuf::from(home).join(&path_str[2..])
+            } else {
+                PathBuf::from(path_str.replace("~", &home))
+            }
+        } else {
+            palace_path.clone()
+        }
+    } else {
+        palace_path.clone()
+    };
+
     println!();
     println!("{}", "=".repeat(55));
     println!("  MemPalace Status");
     println!("{}", "=".repeat(55));
-    println!("  Palace: {:?}", palace_path);
+    println!("  Palace: {}", display_path.display());
 
     let config = Config::load()?;
     println!("  Topic wings: {:?}", config.topic_wings);
