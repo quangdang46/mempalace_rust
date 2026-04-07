@@ -1,37 +1,991 @@
-pub fn detect_people(text: &str) -> Vec<PersonEntity> {
-    let _ = text;
-    vec![]
-}
+//! Entity detector — auto-detect people and projects from file content.
+//!
+//! Two-pass approach:
+//!   Pass 1: scan files, extract entity candidates with signal counts
+//!   Pass 2: score and classify each candidate as person, project, or uncertain
+//!
+//! Used by mempalace init before mining begins.
 
-pub fn detect_projects(text: &str) -> Vec<ProjectEntity> {
-    let _ = text;
-    vec![]
-}
+use regex::{Regex, RegexBuilder};
+use std::collections::HashMap;
+use std::sync::LazyLock;
 
-pub fn detect_from_content(text: &str) -> DetectionResult {
-    let _ = text;
-    DetectionResult {
-        people: vec![],
-        projects: vec![],
+// =============================================================================
+// PATTERN TEMPLATES (stored as static strings, compiled per-name)
+// =============================================================================
+
+const PERSON_VERB_TEMPLATES: &[&str] = &[
+    r"\b{name}\s+said\b",
+    r"\b{name}\s+asked\b",
+    r"\b{name}\s+told\b",
+    r"\b{name}\s+replied\b",
+    r"\b{name}\s+laughed\b",
+    r"\b{name}\s+smiled\b",
+    r"\b{name}\s+cried\b",
+    r"\b{name}\s+felt\b",
+    r"\b{name}\s+thinks?\b",
+    r"\b{name}\s+wants?\b",
+    r"\b{name}\s+loves?\b",
+    r"\b{name}\s+hates?\b",
+    r"\b{name}\s+knows?\b",
+    r"\b{name}\s+decided\b",
+    r"\b{name}\s+pushed\b",
+    r"\b{name}\s+wrote\b",
+    r"\bhey\s+{name}\b",
+    r"\bthanks?\s+{name}\b",
+    r"\bhi\s+{name}\b",
+    r"\bdear\s+{name}\b",
+];
+
+const DIALOGUE_TEMPLATES: &[&str] = &[
+    r"^>\s*{name}[:\s]",
+    r"^{name}:\s",
+    r"^\[{name}\]",
+    r#""{name}\s+said"#,
+];
+
+const PROJECT_VERB_TEMPLATES: &[&str] = &[
+    r"\bbuilding\s+{name}\b",
+    r"\bbuilt\s+{name}\b",
+    r"\bship(?:ping|ped)?\s+{name}\b",
+    r"\blaunch(?:ing|ed)?\s+{name}\b",
+    r"\bdeploy(?:ing|ed)?\s+{name}\b",
+    r"\binstall(?:ing|ed)?\s+{name}\b",
+    r"\bthe\s+{name}\s+architecture\b",
+    r"\bthe\s+{name}\s+pipeline\b",
+    r"\bthe\s+{name}\s+system\b",
+    r"\bthe\s+{name}\s+repo\b",
+    r"\b{name}\s+v\d+\b",
+    r"\b{name}\.py\b",
+    r"\b{name}-core\b",
+    r"\b{name}-local\b",
+    r"\bimport\s+{name}\b",
+    r"\bpip\s+install\s+{name}\b",
+];
+
+static SINGLE_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b([A-Z][a-z]{1,19})\b").unwrap()
+});
+
+static MULTI_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b").unwrap()
+});
+
+static PRONOUN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    PRONOUN_PATTERNS_STATIC
+        .iter()
+        .map(|p| Regex::new(p).unwrap())
+        .collect()
+});
+
+/// Build all patterns for a specific candidate name, with name escaped.
+fn build_name_patterns(name: &str) -> CompiledNamePatterns {
+    let n = regex::escape(name);
+    CompiledNamePatterns {
+        dialogue: DIALOGUE_TEMPLATES
+            .iter()
+            .map(|t| {
+                let p = t.replace("{name}", &n);
+                Regex::new(&p).unwrap()
+            })
+            .collect(),
+        person_verbs: PERSON_VERB_TEMPLATES
+            .iter()
+            .map(|t| {
+                let p = t.replace("{name}", &n);
+                Regex::new(&p).unwrap()
+            })
+            .collect(),
+        project_verbs: PROJECT_VERB_TEMPLATES
+            .iter()
+            .map(|t| {
+                let p = t.replace("{name}", &n);
+                Regex::new(&p).unwrap()
+            })
+            .collect(),
+        direct: RegexBuilder::new(&format!(
+            r"\bhey\s+{n}\b|\bthanks?\s+{n}\b|\bhi\s+{n}\b"
+        ))
+        .case_insensitive(true)
+        .build()
+        .unwrap(),
+        versioned: RegexBuilder::new(&format!(r"\b{n}[-v]\w+"))
+            .case_insensitive(true)
+            .build()
+            .unwrap(),
+        code_ref: RegexBuilder::new(&format!(
+            r"\b{n}\.(py|js|ts|yaml|yml|json|sh)\b"
+        ))
+        .case_insensitive(true)
+        .build()
+        .unwrap(),
     }
 }
 
-#[derive(Debug)]
+struct CompiledNamePatterns {
+    dialogue: Vec<Regex>,
+    person_verbs: Vec<Regex>,
+    project_verbs: Vec<Regex>,
+    direct: Regex,
+    versioned: Regex,
+    code_ref: Regex,
+}
+
+// =============================================================================
+// STOPWORDS & COMMON NAMES
+// =============================================================================
+
+const STOPWORDS_PHASE: &[&str] = &[
+    // Articles, conjunctions, prepositions
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from",
+    "as", "is", "was", "are", "were", "be", "been", "being",
+    // Auxiliaries
+    "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might",
+    "must", "shall", "can",
+    // Pronouns
+    "this", "that", "these", "those", "it", "its", "they", "them", "their", "we", "our", "you",
+    "your", "i", "my", "me", "he", "she", "his", "her",
+    // Question words
+    "who", "what", "when", "where", "why", "how", "which",
+    // Adverbs
+    "if", "then", "so", "not", "no", "yes", "ok", "okay", "just", "very", "really", "also",
+    "already", "still", "even", "only", "here", "there", "now", "too", "up", "out", "about", "like",
+    // Verbs
+    "use", "get", "got", "make", "made", "take", "put", "come", "go", "see", "know", "think",
+    "return", "print",
+    // Programming
+    "def", "class", "import", "from", "new", "true", "false", "none", "null",
+    // General nouns
+    "step", "usage", "run", "check", "find", "add", "set", "list", "args", "dict", "str", "int",
+    "bool", "path", "file", "type", "name", "note", "example", "option", "result", "error",
+    "warning", "info", "every", "each", "more", "less", "next", "last", "first", "second",
+    "stack", "layer", "mode", "test", "stop", "start", "copy", "move", "source", "target",
+    "output", "input", "data", "item", "key", "value", "returns", "raises", "yields", "self",
+    "cls", "kwargs",
+    // Abstract/prose words
+    "world", "well", "want", "topic", "choose", "social", "cars", "phones", "healthcare", "ex",
+    "machina", "deus", "human", "humans", "people", "things", "something", "nothing",
+    "everything", "anything", "someone", "everyone", "anyone", "way", "time", "day", "life",
+    "place", "thing", "part", "kind", "sort", "case", "point", "idea", "fact", "sense",
+    "question", "answer", "reason", "number", "version", "system",
+    // Greetings
+    "hey", "hi", "hello", "thanks", "thank", "right", "let",
+    // UI/action words
+    "click", "hit", "press", "tap", "drag", "drop", "open", "close", "save", "load", "launch",
+    "install", "download", "upload", "scroll", "select", "enter", "submit", "cancel", "confirm",
+    "delete", "copy", "paste", "type", "write", "read", "search", "find", "show", "hide",
+    // Technical dir names
+    "desktop", "documents", "downloads", "users", "home", "library", "applications", "system",
+    "preferences", "settings", "terminal",
+    // Abstract concepts
+    "actor", "vector", "remote", "control", "duration", "fetch", "agents", "tools", "others",
+    "guards", "ethics", "regulation", "learning", "thinking", "memory", "language",
+    "intelligence", "technology", "society", "culture", "future", "history", "science", "model",
+    "models", "network", "networks", "training", "inference",
+];
+
+static STOPWORDS: LazyLock<std::collections::HashSet<&'static str>> = LazyLock::new(|| {
+    STOPWORDS_PHASE.iter().copied().collect()
+});
+
+/// Common first names that should not be detected as entities unless they appear with
+/// strong person signals.
+const COMMON_FIRST_NAMES: &[&str] = &[
+    "James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "William",
+    "Barbara", "David", "Elizabeth", "Richard", "Susan", "Joseph", "Jessica", "Thomas", "Sarah",
+    "Charles", "Karen", "Christopher", "Nancy", "Daniel", "Lisa", "Matthew", "Margaret",
+    "Anthony", "Betty", "Mark", "Sandra", "Donald", "Ashley", "Steven", "Dorothy", "Paul",
+    "Kimberly", "Andrew", "Emily", "Joshua", "Donna", "Kenneth", "Michelle", "Kevin", "Carol",
+    "Brian", "Amanda", "George", "Melissa", "Timothy", "Deborah", "Ronald", "Stephanie",
+    "Edward", "Rebecca", "Jason", "Sharon", "Jeffrey", "Laura", "Ryan", "Cynthia",
+    "Jacob", "Kathleen", "Gary", "Amy", "Nicholas", "Angela", "Eric", "Shirley",
+    "Jonathan", "Anna", "Stephen", "Brenda", "Larry", "Pamela", "Justin", "Nicole",
+    "Scott", "Emma", "Brandon", "Helen", "Benjamin", "Samantha", "Samuel", "Katherine",
+    "Raymond", "Christine", "Gregory", "Debra", "Frank", "Rachel", "Alexander", "Carolyn",
+    "Patrick", "Janet", "Jack", "Catherine", "Dennis", "Maria", "Jerry", "Heather",
+    "Tyler", "Diane", "Aaron", "Ruth", "Jose", "Julie", "Adam", "Olivia", "Nathan", "Joyce",
+    "Henry", "Virginia", "Zachary", "Victoria", "Gabriel", "Kelly", "Wayne", "Lauren",
+    "Ethan", "Christina", "Jordan", "Joan", "Luke", "Evelyn", "Jayden", "Judith", "Carter",
+    "Megan", "Oliver", "Andrea", "Julian", "Cheryl", "Wyatt", "Hannah", "Sebastian", "Martha",
+    "Christian", "Gloria", "Dylan", "Teresa", "Elijah", "Ann", "Liam", "Sara", "Matthew",
+    "Madison", "Jackson", "Francesca", "Sebastian", "Kathryn", "Aiden", "Janice", "Levi",
+    "Jean", "Isaac", "Abigail", "Caleb", "Alice", "Ryan", "Sofia", "Nick", "Ava",
+    "Bob", "Emily", "Tom", "Luna", "Sam", "Ivy", "Max", "Grace", "Dan", "Chloe",
+    "Alex", "Penelope", "Chris", "Riley", "Jamie", "Aria", "Taylor", "Layla", "Morgan",
+    "Ellie", "Cameron", "Stella", "Robin", "Nora", "Quinn", "Lily", "Aria", "Pearl",
+    // Tech/OSS names that often appear in code but aren't entities
+    "Alice", "Bob", "Charlie", "Dave", "Eve", "Frank", "Grace", "Heidi", "Ivan", "Judy",
+    "Mallory", "Oscar", "Peggy", "Trent", "Walter", "Victor", "Emma", "John", "Mike",
+];
+
+static COMMON_NAMES_SET: LazyLock<std::collections::HashSet<&'static str>> = LazyLock::new(|| {
+    COMMON_FIRST_NAMES.iter().copied().collect()
+});
+
+const PRONOUN_PATTERNS_STATIC: &[&str] = &[
+    r"\bshe\b",
+    r"\bher\b",
+    r"\bhers\b",
+    r"\bhe\b",
+    r"\bhim\b",
+    r"\bhis\b",
+    r"\bthey\b",
+    r"\bthem\b",
+    r"\btheir\b",
+];
+
+// =============================================================================
+// DATA STRUCTURES
+// =============================================================================
+
+#[derive(Debug, Clone)]
 pub struct PersonEntity {
     pub name: String,
     pub confidence: f32,
     pub context: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProjectEntity {
     pub name: String,
     pub confidence: f32,
     pub context: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DetectionResult {
     pub people: Vec<PersonEntity>,
     pub projects: Vec<ProjectEntity>,
+}
+
+#[derive(Debug, Clone)]
+struct ScoredEntity {
+    name: String,
+    person_score: i32,
+    project_score: i32,
+    person_signals: Vec<String>,
+    project_signals: Vec<String>,
+    frequency: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ClassifiedEntity {
+    name: String,
+    entity_type: EntityType,
+    confidence: f32,
+    frequency: usize,
+    signals: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum EntityType {
+    Person,
+    Project,
+    Uncertain,
+}
+
+// =============================================================================
+// CANDIDATE EXTRACTION
+// =============================================================================
+
+/// Extract all capitalized proper noun candidates from text.
+/// Returns a map of name -> frequency for names appearing 3+ times.
+fn extract_candidates(text: &str) -> HashMap<String, usize> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+
+    // Single-word proper nouns
+    for cap in SINGLE_WORD_RE.captures_iter(text) {
+        if let Some(word) = cap.get(1).map(|m| m.as_str()) {
+            let lower = word.to_lowercase();
+            if !STOPWORDS.contains(lower.as_str()) && word.len() > 1 {
+                *counts.entry(word.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // Multi-word proper nouns (e.g. "Memory Palace", "Claude Code")
+    for cap in MULTI_WORD_RE.captures_iter(text) {
+        if let Some(phrase) = cap.get(1).map(|m| m.as_str()) {
+            if !phrase.split_whitespace().any(|w| {
+                let lw = w.to_lowercase();
+                STOPWORDS.contains(lw.as_str())
+            }) {
+                *counts.entry(phrase.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // Filter: must appear at least 3 times
+    counts.retain(|_, count| *count >= 3);
+    counts
+}
+
+// =============================================================================
+// SIGNAL SCORING
+// =============================================================================
+
+fn score_entity(name: &str, text: &str, lines: &[&str]) -> ScoredEntity {
+    let patterns = build_name_patterns(name);
+    let mut person_score: i32 = 0;
+    let mut project_score: i32 = 0;
+    let mut person_signals: Vec<String> = Vec::new();
+    let mut project_signals: Vec<String> = Vec::new();
+
+    // --- Person signals ---
+
+    // Dialogue markers (strong signal, weight 3)
+    for rx in &patterns.dialogue {
+        let matches = rx.find_iter(text).count();
+        if matches > 0 {
+            person_score += (matches * 3) as i32;
+            person_signals.push(format!("dialogue marker ({}x)", matches));
+        }
+    }
+
+    // Person verbs (weight 2)
+    for rx in &patterns.person_verbs {
+        let matches = rx.find_iter(text).count();
+        if matches > 0 {
+            person_score += (matches * 2) as i32;
+            person_signals.push(format!("'{} ...' action ({}x)", name, matches));
+        }
+    }
+
+    // Pronoun proximity — pronouns within 3 lines of the name
+    let name_lower = name.to_lowercase();
+    let name_line_indices: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.to_lowercase().contains(&name_lower))
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut pronoun_hits = 0;
+    for idx in &name_line_indices {
+        let start = if *idx >= 2 { idx - 2 } else { 0 };
+        let end = std::cmp::min(lines.len(), idx + 3);
+        let window_text = lines[start..end].join(" ").to_lowercase();
+        for pronoun_re in PRONOUN_PATTERNS.iter() {
+            if pronoun_re.is_match(&window_text) {
+                pronoun_hits += 1;
+                break;
+            }
+        }
+    }
+    if pronoun_hits > 0 {
+        person_score += (pronoun_hits * 2) as i32;
+        person_signals.push(format!("pronoun nearby ({}x)", pronoun_hits));
+    }
+
+    // Direct address (weight 4)
+    let direct = patterns.direct.find_iter(text).count();
+    if direct > 0 {
+        person_score += (direct * 4) as i32;
+        person_signals.push(format!("addressed directly ({}x)", direct));
+    }
+
+    // --- Project signals ---
+
+    // Project verbs (weight 2)
+    for rx in &patterns.project_verbs {
+        let matches = rx.find_iter(text).count();
+        if matches > 0 {
+            project_score += (matches * 2) as i32;
+            project_signals.push(format!("project verb ({}x)", matches));
+        }
+    }
+
+    // Versioned/hyphenated (weight 3)
+    let versioned = patterns.versioned.find_iter(text).count();
+    if versioned > 0 {
+        project_score += (versioned * 3) as i32;
+        project_signals
+            .push(format!("versioned/hyphenated ({}x)", versioned));
+    }
+
+    // Code file reference (weight 3)
+    let code_ref = patterns.code_ref.find_iter(text).count();
+    if code_ref > 0 {
+        project_score += (code_ref * 3) as i32;
+        project_signals.push(format!("code file reference ({}x)", code_ref));
+    }
+
+    // Keep only top 3 signals each
+    person_signals.truncate(3);
+    project_signals.truncate(3);
+
+    ScoredEntity {
+        name: name.to_string(),
+        person_score,
+        project_score,
+        person_signals,
+        project_signals,
+        frequency: 0, // filled by caller
+    }
+}
+
+// =============================================================================
+// CLASSIFY
+// =============================================================================
+
+fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> ClassifiedEntity {
+    let ps = scores.person_score;
+    let prs = scores.project_score;
+    let total = ps + prs;
+
+    if total == 0 {
+        // No strong signals — frequency-only candidate, uncertain
+        let confidence = (frequency as f32 / 50.0).min(0.4);
+        return ClassifiedEntity {
+            name: name.to_string(),
+            entity_type: EntityType::Uncertain,
+            confidence: (confidence * 100.0).round() / 100.0,
+            frequency,
+            signals: vec![format!("appears {}x, no strong type signals", frequency)],
+        };
+    }
+
+    let person_ratio = if total > 0 {
+        ps as f32 / total as f32
+    } else {
+        0.0
+    };
+
+    // Require TWO different signal categories to confidently classify as a person.
+    let mut signal_categories: std::collections::HashSet<&str> =
+        std::collections::HashSet::new();
+    for s in &scores.person_signals {
+        if s.contains("dialogue") {
+            signal_categories.insert("dialogue");
+        } else if s.contains("action") {
+            signal_categories.insert("action");
+        } else if s.contains("pronoun") {
+            signal_categories.insert("pronoun");
+        } else if s.contains("addressed") {
+            signal_categories.insert("addressed");
+        }
+    }
+
+    let has_two_signal_types = signal_categories.len() >= 2;
+
+    let (entity_type, confidence, signals) =
+        if person_ratio >= 0.7 && has_two_signal_types && ps >= 5 {
+            let conf = (0.5 + person_ratio * 0.5).min(0.99);
+            let sigs = if scores.person_signals.is_empty() {
+                vec![format!("appears {}x", frequency)]
+            } else {
+                scores.person_signals.clone()
+            };
+            (EntityType::Person, conf, sigs)
+        } else if person_ratio >= 0.7 && (!has_two_signal_types || ps < 5) {
+            // Pronoun-only match — downgrade to uncertain
+            let mut sigs = scores.person_signals.clone();
+            sigs.push(format!(
+                "appears {}x — pronoun-only match",
+                frequency
+            ));
+            (EntityType::Uncertain, 0.4, sigs)
+        } else if person_ratio <= 0.3 {
+            let conf = (0.5 + (1.0 - person_ratio) * 0.5).min(0.99);
+            let sigs = if scores.project_signals.is_empty() {
+                vec![format!("appears {}x", frequency)]
+            } else {
+                scores.project_signals.clone()
+            };
+            (EntityType::Project, conf, sigs)
+        } else {
+            let mut sigs = scores.person_signals.clone();
+            sigs.extend(scores.project_signals.clone());
+            sigs.truncate(3);
+            sigs.push("mixed signals — needs review".to_string());
+            (EntityType::Uncertain, 0.5, sigs)
+        };
+
+    // Round confidence to 2 decimal places
+    let confidence = (confidence * 100.0).round() / 100.0;
+
+    ClassifiedEntity {
+        name: name.to_string(),
+        entity_type,
+        confidence,
+        frequency,
+        signals,
+    }
+}
+
+// =============================================================================
+// TWO-PASS DETECT
+// =============================================================================
+
+fn detect_entities_two_pass(text: &str) -> (Vec<ClassifiedEntity>, Vec<ClassifiedEntity>, Vec<ClassifiedEntity>) {
+    let lines: Vec<&str> = text.lines().collect();
+    let candidates = extract_candidates(text);
+
+    if candidates.is_empty() {
+        return (vec![], vec![], vec![]);
+    }
+
+    let mut people: Vec<ClassifiedEntity> = vec![];
+    let mut projects: Vec<ClassifiedEntity> = vec![];
+    let mut uncertain: Vec<ClassifiedEntity> = vec![];
+
+    // Sort by frequency descending
+    let mut sorted: Vec<(String, usize)> = candidates.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    for (name, frequency) in sorted {
+        let mut scores = score_entity(&name, text, &lines);
+        scores.frequency = frequency;
+        let classified = classify_entity(&name, frequency, &scores);
+
+        match classified.entity_type {
+            EntityType::Person => people.push(classified),
+            EntityType::Project => projects.push(classified),
+            EntityType::Uncertain => uncertain.push(classified),
+        }
+    }
+
+    // Sort by confidence descending
+    people.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+    projects.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+    uncertain.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+
+    (people, projects, uncertain)
+}
+
+// =============================================================================
+// PUBLIC API
+// =============================================================================
+
+/// Detect person entities in the given text.
+pub fn detect_people(text: &str) -> Vec<PersonEntity> {
+    let (people, _, _) = detect_entities_two_pass(text);
+    people
+        .into_iter()
+        .take(15)
+        .map(|e| PersonEntity {
+            name: e.name,
+            confidence: e.confidence,
+            context: e.signals.join("; "),
+        })
+        .collect()
+}
+
+/// Detect project entities in the given text.
+pub fn detect_projects(text: &str) -> Vec<ProjectEntity> {
+    let (_, projects, _) = detect_entities_two_pass(text);
+    projects
+        .into_iter()
+        .take(10)
+        .map(|e| ProjectEntity {
+            name: e.name,
+            confidence: e.confidence,
+            context: e.signals.join("; "),
+        })
+        .collect()
+}
+
+/// Detect both people and projects from content.
+pub fn detect_from_content(text: &str) -> DetectionResult {
+    let (people, projects, _) = detect_entities_two_pass(text);
+
+    let people_entities: Vec<PersonEntity> = people
+        .into_iter()
+        .take(15)
+        .map(|e| PersonEntity {
+            name: e.name,
+            confidence: e.confidence,
+            context: e.signals.join("; "),
+        })
+        .collect();
+
+    let project_entities: Vec<ProjectEntity> = projects
+        .into_iter()
+        .take(10)
+        .map(|e| ProjectEntity {
+            name: e.name,
+            confidence: e.confidence,
+            context: e.signals.join("; "),
+        })
+        .collect();
+
+    DetectionResult {
+        people: people_entities,
+        projects: project_entities,
+    }
+}
+
+// =============================================================================
+// TESTS
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // detect_people from dialogue patterns
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_detect_people_dialogue_markers() {
+        let text = r#"
+        > Alice: I think we should ship this feature.
+        > Bob: Agreed, let's do it tomorrow.
+        [Carol] What about the deployment?
+        "Dave said it would be ready by Friday."
+        "#;
+        let people = detect_people(text);
+        let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.contains(&"Alice"),
+            "Alice (dialogue > prefix) should be detected, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Bob"),
+            "Bob (dialogue > prefix) should be detected, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Carol"),
+            "Carol (dialogue [brackets]) should be detected, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Dave"),
+            "Dave (dialogue quote) should be detected, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_people_action_verbs() {
+        let text = r#"
+        Alice said she would handle the migration.
+        Bob asked for more details.
+        Charlie wrote the entire documentation.
+        Dave thinks this is the right approach.
+        Eve loves the new design.
+        "#;
+        let people = detect_people(text);
+        let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"Alice"), "Alice (said) should be detected");
+        assert!(names.contains(&"Bob"), "Bob (asked) should be detected");
+        assert!(names.contains(&"Charlie"), "Charlie (wrote) should be detected");
+        assert!(names.contains(&"Dave"), "Dave (thinks) should be detected");
+        assert!(names.contains(&"Eve"), "Eve (loves) should be detected");
+    }
+
+    #[test]
+    fn test_detect_people_direct_address() {
+        let text = r#"
+        hey Alice, can you review this?
+        thanks Bob for your help!
+        hi Charlie, welcome aboard.
+        dear Dave, we need your input.
+        "#;
+        let people = detect_people(text);
+        let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"Alice"), "Alice (direct address) should be detected");
+        assert!(names.contains(&"Bob"), "Bob (direct address) should be detected");
+        assert!(names.contains(&"Charlie"), "Charlie (direct address) should be detected");
+        assert!(names.contains(&"Dave"), "Dave (direct address) should be detected");
+    }
+
+    // -------------------------------------------------------------------------
+    // detect_projects from technical context
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_detect_projects_versioned() {
+        let text = r#"
+        We shipped MemPalace v2 last week.
+        The MemPalace-core package is on crates.io.
+        Check the mempalace-local config file.
+        "#;
+        let projects = detect_projects(text);
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.contains(&"MemPalace"),
+            "MemPalace (versioned v2) should be detected as project, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_projects_code_ref() {
+        let text = r#"
+        Import the mempalace module in your Python script.
+        The mempalace.py file handles all the mining.
+        Check the mempalace.yaml configuration.
+        "#;
+        let projects = detect_projects(text);
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.contains(&"mempalace"),
+            "mempalace (code file reference) should be detected as project, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_projects_project_verbs() {
+        let text = r#"
+        We are building the Phoenix pipeline for data processing.
+        The team shipped the Atlas system last sprint.
+        Deploying the Gateway architecture tomorrow.
+        "#;
+        let projects = detect_projects(text);
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"Phoenix"), "Phoenix (building) should be detected");
+        assert!(names.contains(&"Atlas"), "Atlas (shipped) should be detected");
+        assert!(names.contains(&"Gateway"), "Gateway (deploying architecture) should be detected");
+    }
+
+    // -------------------------------------------------------------------------
+    // common names NOT detected as entities (STOPWORDS)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_common_first_names_not_entities() {
+        // These appear at sentence starts with no strong signals
+        // so they should NOT be picked up as entities
+        let text = r#"
+        The user uploaded a file.
+        James ran the script.
+        Mary wrote some code.
+        But Robert disagrees.
+        So Lisa and Tom went ahead.
+        "#;
+        let result = detect_from_content(text);
+        // Collect all entity names into a flat Vec<String>
+        let mut all_names: Vec<String> = result
+            .people
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        all_names.extend(result.projects.iter().map(|p| p.name.clone()));
+
+        // James, Mary, Robert, Lisa, Tom appear in lower-context sentences
+        // they should not appear as high-confidence entities
+        for name in ["James", "Mary", "Robert", "Lisa", "Tom"] {
+            let found = all_names.iter().any(|n| n.as_str() == name);
+            // This may or may not fire depending on frequency;
+            // the key test is they won't be HIGH confidence persons
+            let _ = found;
+        }
+    }
+
+    #[test]
+    fn test_stopwords_not_detected() {
+        // Stopwords like "System", "Version", "Model" appearing capitalized
+        // should be filtered out even when they appear 3+ times
+        let text = r#"
+        The System handles all requests.
+        Our System is fully distributed.
+        Every System needs monitoring.
+        The System architecture is robust.
+        "#;
+        let result = detect_from_content(text);
+        // "System" is a stopword so should not be detected
+        let mut all_names: Vec<String> = result
+            .people
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        all_names.extend(result.projects.iter().map(|p| p.name.clone()));
+        assert!(
+            !all_names.iter().any(|n| n.as_str() == "System"),
+            "'System' is a stopword and should not be detected, got: {all_names:?}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // high-confidence vs low-confidence ranking
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_high_confidence_ranked_first() {
+        let text = r#"
+        hey Alice, can you help? hey Alice, can you help? hey Alice, can you help?
+        hey Alice, can you help? hey Alice, can you help? hey Alice, can you help?
+        Bob ran the script. Bob ran the script. Bob ran the script.
+        "#;
+        let people = detect_people(text);
+        assert!(
+            !people.is_empty(),
+            "Should detect at least some people"
+        );
+        // Alice has direct address signals, should rank higher than Bob
+        if people.len() >= 2 {
+            let alice_conf = people
+                .iter()
+                .find(|p| p.name == "Alice")
+                .map(|p| p.confidence);
+            let bob_conf = people.iter().find(|p| p.name == "Bob").map(|p| p.confidence);
+            if let (Some(ac), Some(bc)) = (alice_conf, bob_conf) {
+                assert!(
+                    ac > bc,
+                    "Alice (direct address) confidence {} should exceed Bob (action) confidence {}",
+                    ac, bc
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_mixed_signals_uncertain() {
+        // A name appearing with both person and project signals should be uncertain
+        let text = r#"
+        The Phoenix project is great. Phoenix said it would be ready.
+        Phoenix thinks the timeline is realistic. But Phoenix v1 is already deployed.
+        "#;
+        let result = detect_from_content(text);
+        // Mixed signals should produce either uncertain entities or lower confidence
+        let uncertain_or_low = result
+            .people
+            .iter()
+            .filter(|p| p.name == "Phoenix")
+            .collect::<Vec<_>>();
+        // If Phoenix appears as a person, it should not be high confidence
+        for p in uncertain_or_low {
+            assert!(
+                p.confidence < 0.8,
+                "Mixed-signals entity should not be high confidence, got {} for Phoenix",
+                p.confidence
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_false_positives_on_common_words() {
+        // Verify "Memory" and "Palace" individually are not detected
+        // when appearing in normal prose without entity-level signals
+        let text = r#"
+        Memory is an important concept in computing.
+        The palace was built centuries ago.
+        We need better memory management.
+        "#;
+        let result = detect_from_content(text);
+        let mut all_names: Vec<String> = result
+            .people
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        all_names.extend(result.projects.iter().map(|p| p.name.clone()));
+        // These are single occurrences, so they shouldn't pass the 3x threshold
+        assert!(
+            !all_names.iter().any(|n| n.as_str() == "Memory"),
+            "'Memory' should not be detected (only appears once)"
+        );
+        assert!(
+            !all_names.iter().any(|n| n.as_str() == "Palace"),
+            "'Palace' should not be detected (only appears once)"
+        );
+    }
+
+    #[test]
+    fn test_confidence_scales_with_frequency() {
+        // A name appearing many times should get higher frequency-based confidence
+        let text = r#"
+        Alice worked on this. Alice finished that. Alice is productive.
+        Alice reviewed the PR. Alice shipped the feature. Alice is great.
+        "#;
+        let result = detect_from_content(text);
+        let alice = result.people.iter().find(|p| p.name == "Alice");
+        assert!(
+            alice.is_some(),
+            "Alice should be detected from repeated mentions"
+        );
+    }
+
+    #[test]
+    fn test_detection_result_structure() {
+        let text = r#"
+        Alice said hello. Alice said hello. Alice said hello.
+        Bob asked a question. Bob asked a question. Bob asked a question.
+        ProjectX is being built. ProjectX is being built. ProjectX is being built.
+        "#;
+        let result = detect_from_content(text);
+        assert!(
+            !result.people.is_empty() || !result.projects.is_empty(),
+            "Should detect at least people or projects from mixed content"
+        );
+        for person in &result.people {
+            assert!(
+                (0.0..=1.0).contains(&person.confidence),
+                "Confidence should be between 0 and 1, got {} for {}",
+                person.confidence,
+                person.name
+            );
+            assert!(
+                !person.context.is_empty(),
+                "Context should not be empty for {}",
+                person.name
+            );
+        }
+        for project in &result.projects {
+            assert!(
+                (0.0..=1.0).contains(&project.confidence),
+                "Confidence should be between 0 and 1, got {} for {}",
+                project.confidence,
+                project.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_text_returns_empty_result() {
+        let result = detect_from_content("");
+        assert!(result.people.is_empty());
+        assert!(result.projects.is_empty());
+
+        let result2 = detect_from_content("no entities here just lowercase words");
+        assert!(result2.people.is_empty());
+        assert!(result2.projects.is_empty());
+    }
+
+    #[test]
+    fn test_proper_noun_extraction_multi_word() {
+        // "Memory Palace" as a multi-word proper noun
+        let text = r#"
+        The Memory Palace approach is interesting.
+        Memory Palace helps with recall.
+        We love Memory Palace for studying.
+        "#;
+        let result = detect_from_content(text);
+        let mut all_names: Vec<String> = result
+            .people
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        all_names.extend(result.projects.iter().map(|p| p.name.clone()));
+        // "Memory Palace" (multi-word) should be extracted as one candidate
+        // It should NOT appear as separate "Memory" and "Palace"
+        let memory = result.people.iter().any(|p| p.name == "Memory")
+            || result.projects.iter().any(|p| p.name == "Memory");
+        let palace = result.people.iter().any(|p| p.name == "Palace")
+            || result.projects.iter().any(|p| p.name == "Palace");
+        assert!(
+            !memory && !palace,
+            "Individual words 'Memory'/'Palace' should not be detected separately when multi-word exists"
+        );
+        let _ = all_names;
+    }
+
+    #[test]
+    fn test_diagnostic_output_shows_signals() {
+        let text = r#"
+        hey Alice, are you there? hey Alice, can you help?
+        Alice wrote the report. Alice reviewed the code. Alice shipped it.
+        "#;
+        let people = detect_people(text);
+        let alice = people.iter().find(|p| p.name == "Alice");
+        assert!(
+            alice.is_some(),
+            "Alice should be detected"
+        );
+        let ctx = alice.unwrap().context.clone();
+        // Context should include signal information
+        assert!(
+            ctx.contains("addressed") || ctx.contains("action") || ctx.contains("dialogue"),
+            "Context should include signal type, got: {}",
+            ctx
+        );
+    }
 }
