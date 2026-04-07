@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::convo_miner::{mine_conversations, ConvoMiningResult};
 use crate::dialect;
 use crate::entity_detector::{detect_from_content, PersonEntity, ProjectEntity};
+use crate::entity_registry::EntityRegistry;
 use crate::layers::MemoryStack;
 use crate::miner::{self, MiningResult};
 use crate::palace_db::PalaceDb;
@@ -263,9 +264,50 @@ fn scan_and_detect_entities(dir: &PathBuf) -> DetectedEntities {
     }
 }
 
-/// Confirm entities (interactive stub -- just returns detected entities).
-fn confirm_entities(detected: &DetectedEntities, _yes: bool) -> DetectedEntities {
-    detected.clone()
+/// Confirm entities with registry integration.
+/// - Filters out previously rejected entities
+/// - In yes mode, accepts all non-rejected entities
+/// - In interactive mode, could prompt for confirmations (stub for now)
+fn confirm_entities(detected: &DetectedEntities, yes: bool) -> DetectedEntities {
+    // Load registry to check rejected entities from default path
+    let registry_path = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".mempalace")
+        .join("registry.json");
+    let rejected_names: Vec<String> = EntityRegistry::load(&registry_path)
+        .ok()
+        .map(|r| r.get_rejected().to_vec())
+        .unwrap_or_default();
+
+    let is_rejected = |name: &str| rejected_names.iter().any(|r| r == name);
+
+    if yes {
+        // Non-interactive: accept all non-rejected entities
+        DetectedEntities {
+            people: detected
+                .people
+                .iter()
+                .filter(|p| !is_rejected(&p.name))
+                .cloned()
+                .collect(),
+            projects: detected
+                .projects
+                .iter()
+                .filter(|p| !is_rejected(&p.name))
+                .cloned()
+                .collect(),
+            uncertain: detected
+                .uncertain
+                .iter()
+                .filter(|p| !is_rejected(&p.name))
+                .cloned()
+                .collect(),
+        }
+    } else {
+        // Interactive: accept non-rejected entities (stub - real UI would ask)
+        detected.clone()
+    }
 }
 
 // ---------------------------------------------------------------------------

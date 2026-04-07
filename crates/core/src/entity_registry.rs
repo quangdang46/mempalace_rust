@@ -26,6 +26,10 @@ pub struct RegistryData {
     pub ambiguous_flags: Vec<String>,
     #[serde(default)]
     pub wiki_cache: HashMap<String, serde_json::Value>,
+    /// Entities explicitly rejected by the user during init or review.
+    /// These are permanently ignored in future entity detection.
+    #[serde(default)]
+    pub rejected_entities: Vec<String>,
 }
 
 impl Default for RegistryData {
@@ -37,6 +41,7 @@ impl Default for RegistryData {
             projects: Vec::new(),
             ambiguous_flags: Vec::new(),
             wiki_cache: HashMap::new(),
+            rejected_entities: Vec::new(),
         }
     }
 }
@@ -413,6 +418,40 @@ impl EntityRegistry {
 
     pub fn projects_count(&self) -> usize {
         self.data.projects.len()
+    }
+
+    /// Add an entity to the rejected list so it won't be re-detected.
+    pub fn reject_entity(&mut self, name: &str) {
+        let lower = name.to_lowercase();
+        if !self.data.rejected_entities.contains(&lower) {
+            self.data.rejected_entities.push(lower);
+        }
+    }
+
+    /// Check if an entity was previously rejected by the user.
+    pub fn is_rejected(&self, name: &str) -> bool {
+        self.data.rejected_entities.contains(&name.to_lowercase())
+    }
+
+    /// Get the list of all rejected entity names.
+    pub fn get_rejected(&self) -> &[String] {
+        &self.data.rejected_entities
+    }
+
+    /// Filter out rejected entities from a list of candidate names.
+    pub fn filter_rejected(&self, names: &[String]) -> Vec<String> {
+        names
+            .iter()
+            .filter(|n| !self.is_rejected(n))
+            .cloned()
+            .collect()
+    }
+
+    /// Reject multiple entities at once (e.g., from an interactive confirmation).
+    pub fn reject_entities(&mut self, names: &[String]) {
+        for name in names {
+            self.reject_entity(name);
+        }
     }
 }
 

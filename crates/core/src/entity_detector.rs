@@ -724,6 +724,7 @@ enum EntityType {
 
 /// Extract all capitalized proper noun candidates from text.
 /// Returns a map of name -> frequency for names appearing 3+ times.
+/// Filters out stopwords and common first names (requires strong signals for those).
 fn extract_candidates(text: &str) -> HashMap<String, usize> {
     let mut counts: HashMap<String, usize> = HashMap::new();
 
@@ -752,6 +753,11 @@ fn extract_candidates(text: &str) -> HashMap<String, usize> {
     // Filter: must appear at least 3 times
     counts.retain(|_, count| *count >= 3);
     counts
+}
+
+/// Check if a name is a common first name that needs extra signals to be confirmed.
+fn is_common_name(name: &str) -> bool {
+    COMMON_NAMES_SET.contains(name)
 }
 
 // =============================================================================
