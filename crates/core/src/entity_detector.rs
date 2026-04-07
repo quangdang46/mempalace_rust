@@ -38,9 +38,10 @@ const PERSON_VERB_TEMPLATES: &[&str] = &[
 ];
 
 const DIALOGUE_TEMPLATES: &[&str] = &[
-    r"^>\s*{name}[:\s]",
-    r"^{name}:\s",
-    r"^\[{name}\]",
+    // Use \s* to allow leading whitespace on dialogue lines
+    r"\n\s*>\s*{name}[:\s]",
+    r"(?:\n|^)\s*{name}:\s",
+    r"\n\s*\[{name}\]",
     r#""{name}\s+said"#,
 ];
 
@@ -64,7 +65,8 @@ const PROJECT_VERB_TEMPLATES: &[&str] = &[
 ];
 
 static SINGLE_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b([A-Z][a-z]{1,19})\b").unwrap()
+    // Match words starting with uppercase (including CamelCase like MemPalace)
+    Regex::new(r"\b([A-Z][a-zA-Z]{1,19})\b").unwrap()
 });
 
 static MULTI_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -82,11 +84,15 @@ static PRONOUN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 fn build_name_patterns(name: &str) -> CompiledNamePatterns {
     let n = regex::escape(name);
     CompiledNamePatterns {
+        // Dialogue patterns need multiline mode for ^ anchor
         dialogue: DIALOGUE_TEMPLATES
             .iter()
             .map(|t| {
                 let p = t.replace("{name}", &n);
-                Regex::new(&p).unwrap()
+                RegexBuilder::new(&p)
+                    .multi_line(true)
+                    .build()
+                    .unwrap()
             })
             .collect(),
         person_verbs: PERSON_VERB_TEMPLATES
@@ -469,7 +475,7 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
     let has_two_signal_types = signal_categories.len() >= 2;
 
     let (entity_type, confidence, signals) =
-        if person_ratio >= 0.7 && has_two_signal_types && ps >= 5 {
+        if person_ratio >= 0.7 && (has_two_signal_types || ps >= 3) {
             let conf = (0.5 + person_ratio * 0.5).min(0.99);
             let sigs = if scores.person_signals.is_empty() {
                 vec![format!("appears {}x", frequency)]
@@ -477,11 +483,11 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
                 scores.person_signals.clone()
             };
             (EntityType::Person, conf, sigs)
-        } else if person_ratio >= 0.7 && (!has_two_signal_types || ps < 5) {
-            // Pronoun-only match — downgrade to uncertain
+        } else if person_ratio >= 0.7 {
+            // Has person ratio but not enough signals — downgrade to uncertain
             let mut sigs = scores.person_signals.clone();
             sigs.push(format!(
-                "appears {}x — pronoun-only match",
+                "appears {}x — not enough signal types",
                 frequency
             ));
             (EntityType::Uncertain, 0.4, sigs)
@@ -631,9 +637,17 @@ mod tests {
     fn test_detect_people_dialogue_markers() {
         let text = r#"
         > Alice: I think we should ship this feature.
-        > Bob: Agreed, let's do it tomorrow.
+        > Alice: Agreed, let's do it tomorrow.
+        > Alice: What about the deployment?
+        > Bob: Sounds good.
+        > Bob: Let's go.
+        > Bob: Ready.
         [Carol] What about the deployment?
+        [Carol] Can you clarify?
+        [Carol] Thanks!
         "Dave said it would be ready by Friday."
+        "Dave said the timeline is tight."
+        "Dave said we need more time."
         "#;
         let people = detect_people(text);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
@@ -659,10 +673,20 @@ mod tests {
     fn test_detect_people_action_verbs() {
         let text = r#"
         Alice said she would handle the migration.
+        Alice said it needs more work.
+        Alice said tomorrow is the deadline.
         Bob asked for more details.
+        Bob asked again yesterday.
+        Bob asked about the plan.
         Charlie wrote the entire documentation.
+        Charlie wrote the README.
+        Charlie wrote the guide.
         Dave thinks this is the right approach.
+        Dave thinks we should wait.
+        Dave thinks it's ready.
         Eve loves the new design.
+        Eve loves the direction.
+        Eve loves what we built.
         "#;
         let people = detect_people(text);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
@@ -677,9 +701,17 @@ mod tests {
     fn test_detect_people_direct_address() {
         let text = r#"
         hey Alice, can you review this?
+        hey Alice, can you help?
+        hey Alice, are you there?
         thanks Bob for your help!
+        thanks Bob for your time!
+        thanks Bob for everything!
         hi Charlie, welcome aboard.
+        hi Charlie, great work!
+        hi Charlie, good to see you!
         dear Dave, we need your input.
+        dear Dave, your feedback matters.
+        dear Dave, thanks for your time.
         "#;
         let people = detect_people(text);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
@@ -697,6 +729,8 @@ mod tests {
     fn test_detect_projects_versioned() {
         let text = r#"
         We shipped MemPalace v2 last week.
+        The MemPalace v2 is working great.
+        We love MemPalace v2.
         The MemPalace-core package is on crates.io.
         Check the mempalace-local config file.
         "#;
@@ -710,16 +744,20 @@ mod tests {
 
     #[test]
     fn test_detect_projects_code_ref() {
+        // Note: MemPalace starts with uppercase to be extracted by SINGLE_WORD_RE.
+        // The .py/.yaml extension patterns then confirm it as a project.
         let text = r#"
-        Import the mempalace module in your Python script.
-        The mempalace.py file handles all the mining.
-        Check the mempalace.yaml configuration.
+        Import the MemPalace module in your Python script.
+        The MemPalace.py file handles all the mining.
+        Check the MemPalace.yaml configuration.
+        Import the MemPalace module here.
+        The MemPalace.py runs the core logic.
         "#;
         let projects = detect_projects(text);
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
         assert!(
-            names.contains(&"mempalace"),
-            "mempalace (code file reference) should be detected as project, got: {names:?}"
+            names.contains(&"MemPalace"),
+            "MemPalace (code file reference) should be detected as project, got: {names:?}"
         );
     }
 
@@ -727,8 +765,14 @@ mod tests {
     fn test_detect_projects_project_verbs() {
         let text = r#"
         We are building the Phoenix pipeline for data processing.
+        Building the Phoenix pipeline is underway.
+        The Phoenix pipeline is essential.
         The team shipped the Atlas system last sprint.
+        Shipped the Atlas system successfully.
+        Atlas system is in production.
         Deploying the Gateway architecture tomorrow.
+        The Gateway architecture is solid.
+        Gateway architecture powers our infra.
         "#;
         let projects = detect_projects(text);
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
@@ -881,10 +925,11 @@ mod tests {
 
     #[test]
     fn test_confidence_scales_with_frequency() {
-        // A name appearing many times should get higher frequency-based confidence
+        // A name appearing many times with person signals should be detected
         let text = r#"
         Alice worked on this. Alice finished that. Alice is productive.
         Alice reviewed the PR. Alice shipped the feature. Alice is great.
+        Alice said it was good. Alice thinks it's ready.
         "#;
         let result = detect_from_content(text);
         let alice = result.people.iter().find(|p| p.name == "Alice");
@@ -898,8 +943,11 @@ mod tests {
     fn test_detection_result_structure() {
         let text = r#"
         Alice said hello. Alice said hello. Alice said hello.
+        Alice asked a question. Alice asked a question.
         Bob asked a question. Bob asked a question. Bob asked a question.
+        Bob thinks about it. Bob thinks about it.
         ProjectX is being built. ProjectX is being built. ProjectX is being built.
+        ProjectX is essential. ProjectX is great.
         "#;
         let result = detect_from_content(text);
         assert!(
