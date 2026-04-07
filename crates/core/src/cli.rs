@@ -1022,9 +1022,7 @@ pub fn run() -> Result<()> {
         Commands::MineDevice { wing, dry_run } => {
             cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
         }
-        Commands::Mcp { read_only } => {
-            crate::mcp_server::run_server(*read_only)?
-        }
+        Commands::Mcp { read_only } => crate::mcp_server::run_server(*read_only)?,
     }
 
     Ok(())
