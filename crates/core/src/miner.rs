@@ -197,19 +197,29 @@ impl Miner {
 
         let chunks_added = chunks.len();
 
-        for (chunk_content, chunk_index) in &chunks {
-            let drawer_id = Self::generate_drawer_id(&self.wing, &room, &source_file, *chunk_index);
+        // Batch insert all chunks for this file in a single call
+        let drawer_ids: Vec<String> = chunks.iter()
+            .map(|(_chunk_content, chunk_index)| {
+                Self::generate_drawer_id(&self.wing, &room, &source_file, *chunk_index)
+            })
+            .collect();
 
-            self.palace_db.add(
-                &[(drawer_id.as_str(), chunk_content.as_str())],
-                &[&[
-                    ("wing", self.wing.as_str()),
-                    ("room", room.as_str()),
-                    ("source_file", source_file.as_str()),
-                    ("chunk_index", &chunk_index.to_string()),
-                ]],
-            )?;
+        let ids_and_docs: Vec<(&str, &str)> = drawer_ids.iter()
+            .zip(chunks.iter())
+            .map(|(id, (content, _))| (id.as_str(), content.as_str()))
+            .collect();
+
+        let mut metadata: Vec<Vec<(&str, &str)>> = Vec::new();
+        for _ in &drawer_ids {
+            metadata.push(vec![
+                ("wing", self.wing.as_str()),
+                ("room", room.as_str()),
+                ("source_file", source_file.as_str()),
+            ]);
         }
+        let metadata_refs: Vec<&[(&str, &str)]> = metadata.iter().map(|v| v.as_slice()).collect();
+
+        self.palace_db.add(&ids_and_docs, &metadata_refs)?;
 
         Ok(chunks_added)
     }
@@ -294,6 +304,7 @@ pub async fn mine(
     project_dir: &Path,
     palace_path: &Path,
     wing_override: Option<&str>,
+    exclude_patterns: Option<&[String]>,
 ) -> anyhow::Result<MiningResult> {
     let (wing, rooms) = load_config(project_dir)?;
     let wing = wing_override.unwrap_or(&wing);

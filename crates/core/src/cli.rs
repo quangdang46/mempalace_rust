@@ -333,7 +333,7 @@ fn cmd_mine(
 
     match mode {
         MiningMode::Projects => {
-            let result = runtime().block_on(miner::mine(dir, &palace_path, wing));
+            let result = runtime().block_on(miner::mine(dir, &palace_path, wing, None));
             match result {
                 Ok(mining_result) => {
                     print_mining_result(&mining_result);
