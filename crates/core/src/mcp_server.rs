@@ -75,6 +75,7 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_set_people" => tool_set_people(&state, args),
                 "mempalace_compress" => tool_compress(&state, args),
                 "mempalace_decompress" => tool_decompress(&state, args),
+                "mempalace_feedback" => tool_feedback(&state, args),
                 _ => Err(ErrorData::method_not_found::<
                     rmcp::model::CallToolRequestMethod,
                 >()),
@@ -225,6 +226,12 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Decompress Text",
             "Decompress AAAK shorthand back to natural language.",
             serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
+        ),
+        tool(
+            "mempalace_feedback",
+            "Record Feedback",
+            "Record retrieval feedback to improve future ranking. outcome: 'helpful', 'unhelpful', or 'neutral'.",
+            serde_json::json!({ "type": "object", "properties": { "drawer_id": { "type": "string" }, "query": { "type": "string" }, "outcome": { "type": "string", "enum": ["helpful", "unhelpful", "neutral"] } }, "required": ["drawer_id", "query", "outcome"] }),
         ),
     ]
 }
@@ -648,6 +655,28 @@ fn tool_decompress(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     ok_json(serde_json::json!({
         "original": input.text,
         "decompressed": decompressed
+    }))
+}
+
+fn tool_feedback(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        drawer_id: String,
+        query: String,
+        outcome: String,
+    }
+    let input: Input = parse_args(args)?;
+    let kg = crate::knowledge_graph::KnowledgeGraph::open(
+        &state.palace_path.join("knowledge.db"),
+    )
+    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+    kg.record_feedback(&input.drawer_id, &input.query, &input.outcome)
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+    ok_json(serde_json::json!({
+        "drawer_id": input.drawer_id,
+        "query": input.query,
+        "outcome": input.outcome,
+        "recorded": true
     }))
 }
 
