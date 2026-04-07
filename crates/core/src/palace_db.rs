@@ -1,0 +1,182 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+pub const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
+
+pub struct PalaceDb {
+    documents: HashMap<String, DocumentEntry>,
+    palace_path: PathBuf,
+    collection_name: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct DocumentEntry {
+    content: String,
+    metadata: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryResult {
+    pub ids: Vec<String>,
+    pub documents: Vec<String>,
+    pub distances: Vec<f64>,
+    pub metadatas: Vec<HashMap<String, serde_json::Value>>,
+}
+
+impl PalaceDb {
+    pub fn open(palace_path: &std::path::Path) -> anyhow::Result<Self> {
+        let collection_name = DEFAULT_COLLECTION_NAME.to_string();
+        let docs_path = palace_path.join(format!("{}.json", collection_name));
+
+        let documents = if docs_path.exists() {
+            let content = std::fs::read_to_string(&docs_path)?;
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
+        Ok(Self {
+            documents,
+            palace_path: palace_path.to_path_buf(),
+            collection_name,
+        })
+    }
+
+    pub async fn query(
+        &self,
+        query_text: &str,
+        wing: Option<&str>,
+        room: Option<&str>,
+        n_results: usize,
+    ) -> anyhow::Result<Vec<QueryResult>> {
+        let query_lower = query_text.to_lowercase();
+
+        let mut results: Vec<(String, f64, &DocumentEntry)> = self
+            .documents
+            .iter()
+            .filter_map(|(id, entry)| {
+                if let Some(w) = wing {
+                    let entry_wing = entry
+                        .metadata
+                        .get("wing")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if entry_wing != w {
+                        return None;
+                    }
+                }
+                if let Some(r) = room {
+                    let entry_room = entry
+                        .metadata
+                        .get("room")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if entry_room != r {
+                        return None;
+                    }
+                }
+                let similarity = naive_similarity(&query_lower, &entry.content.to_lowercase());
+                if similarity > 0.05 {
+                    Some((id.clone(), similarity, entry))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(n_results);
+
+        let query_results: Vec<QueryResult> = results
+            .into_iter()
+            .map(|(id, similarity, entry)| {
+                let mut metadata = entry.metadata.clone();
+                metadata.insert("distance".to_string(), serde_json::json!(1.0 - similarity));
+
+                QueryResult {
+                    ids: vec![id],
+                    documents: vec![entry.content.clone()],
+                    distances: vec![1.0 - similarity],
+                    metadatas: vec![metadata],
+                }
+            })
+            .collect();
+
+        Ok(query_results)
+    }
+
+    pub fn add(
+        &mut self,
+        documents: &[(&str, &str)],
+        metadata: &[&[(&str, &str)]],
+    ) -> anyhow::Result<()> {
+        for ((id, content), meta) in documents.iter().zip(metadata.iter()) {
+            let meta_map: HashMap<String, serde_json::Value> = meta
+                .iter()
+                .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+                .collect();
+
+            self.documents.insert(
+                id.to_string(),
+                DocumentEntry {
+                    content: content.to_string(),
+                    metadata: meta_map,
+                },
+            );
+        }
+
+        self.save()?;
+        Ok(())
+    }
+
+    fn save(&self) -> anyhow::Result<()> {
+        std::fs::create_dir_all(&self.palace_path)?;
+
+        let docs_path = self
+            .palace_path
+            .join(format!("{}.json", self.collection_name));
+        let content = serde_json::to_string_pretty(&self.documents)?;
+        std::fs::write(docs_path, content)?;
+
+        Ok(())
+    }
+
+    pub(crate) fn get_document(&self, id: &str) -> Option<&DocumentEntry> {
+        self.documents.get(id)
+    }
+
+    pub fn count(&self) -> usize {
+        self.documents.len()
+    }
+}
+
+fn naive_similarity(query: &str, content: &str) -> f64 {
+    let query_words: std::collections::HashSet<_> = query.split_whitespace().collect();
+    let content_words: std::collections::HashSet<_> = content.split_whitespace().collect();
+
+    if query_words.is_empty() || content_words.is_empty() {
+        return 0.0;
+    }
+
+    let intersection = query_words.intersection(&content_words).count();
+    let union = query_words.union(&content_words).count();
+
+    intersection as f64 / union as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_naive_similarity() {
+        let sim = naive_similarity("hello world", "hello world");
+        assert!((sim - 1.0).abs() < 1e-6);
+
+        let sim = naive_similarity("hello world", "hello");
+        assert!(sim > 0.3 && sim < 0.7);
+
+        let sim = naive_similarity("hello world", "completely different");
+        assert!(sim < 0.1);
+    }
+}

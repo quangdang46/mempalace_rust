@@ -1,0 +1,21 @@
+[package]
+name = "mempalace"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "mpr"
+path = "src/main.rs"
+
+[dependencies]
+mempalace-core = { path = "../core" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = { workspace = true }
