@@ -32,6 +32,9 @@ fn try_normalize_json(content: &str) -> Option<String> {
     if let Some(normalized) = try_codex_jsonl(content) {
         return Some(normalized);
     }
+    if let Some(normalized) = try_soulforge_jsonl(content) {
+        return Some(normalized);
+    }
 
     let Ok(data) = serde_json::from_str::<Value>(content) else {
         return None;
@@ -291,6 +294,131 @@ fn try_codex_jsonl(content: &str) -> Option<String> {
     None
 }
 
+fn try_soulforge_jsonl(content: &str) -> Option<String> {
+    let lines: Vec<&str> = content
+        .trim()
+        .split('\n')
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+
+    // Detect SoulForge via unique fields: segments, toolCalls, durationMs
+    let has_soulforge_marker = lines.iter().any(|l| {
+        if let Ok(v) = serde_json::from_str::<Value>(l) {
+            if let Some(obj) = v.as_object() {
+                // Check for SoulForge-specific fields
+                if obj.contains_key("segments") || obj.contains_key("toolCalls") || obj.contains_key("durationMs") {
+                    return true;
+                }
+                // Also check message content for segments array or toolCalls
+                if let Some(msg) = obj.get("message").and_then(|m| m.as_object()) {
+                    if msg.contains_key("segments") || msg.contains_key("toolCalls") || msg.contains_key("durationMs") {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    });
+
+    if !has_soulforge_marker {
+        return None;
+    }
+
+    let mut messages: Vec<(String, String)> = Vec::new();
+
+    for line in lines {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let entry = entry.as_object()?;
+
+        // Get message content - could be in message.segments or directly in message.text
+        let text = if let Some(msg) = entry.get("message").and_then(|m| m.as_object()) {
+            if let Some(segments) = msg.get("segments").and_then(|s| s.as_array()) {
+                // Extract text from segments array
+                let parts: Vec<String> = segments
+                    .iter()
+                    .filter_map(|seg| {
+                        seg.as_object()?.get("text")?.as_str().map(String::from)
+                    })
+                    .collect();
+                let text = parts.join(" ");
+                if !text.is_empty() {
+                    Some(text)
+                } else {
+                    msg.get("text")?.as_str().map(String::from)
+                }
+            } else {
+                msg.get("text")?.as_str().map(String::from)
+            }
+        } else {
+            entry.get("text")?.as_str().map(String::from)
+        };
+
+        let Some(text) = text else {
+            continue;
+        };
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+
+        // Determine role - SoulForge has user/assistant markers
+        let role = entry.get("role").and_then(|r| r.as_str())
+            .or_else(|| entry.get("type").and_then(|t| t.as_str()))
+            .unwrap_or("");
+
+        // Summarize tool calls if present (inside message object)
+        let final_text = if role == "assistant" || role == "agent" {
+            if let Some(msg) = entry.get("message").and_then(|m| m.as_object()) {
+                if let Some(tool_calls) = msg.get("toolCalls").and_then(|tc| tc.as_array()) {
+                    if !tool_calls.is_empty() {
+                        let tool_names: Vec<String> = tool_calls
+                            .iter()
+                            .filter_map(|tc| {
+                                tc.as_object()?.get("name")?.as_str().map(String::from)
+                            })
+                            .collect();
+                        if !tool_names.is_empty() {
+                            format!("{} [tools: {}]", text, tool_names.join(", "))
+                        } else {
+                            text
+                        }
+                    } else {
+                        text
+                    }
+                } else {
+                    text
+                }
+            } else {
+                text
+            }
+        } else {
+            text
+        };
+
+        match role {
+            "user" | "human" => messages.push(("user".to_string(), final_text)),
+            "assistant" | "ai" | "agent" => messages.push(("assistant".to_string(), final_text)),
+            // Skip system messages
+            "system" => continue,
+            _ => {
+                // If role is unknown, alternate based on position
+                if messages.is_empty() || messages.last().map(|m| m.0 == "assistant").unwrap_or(false) {
+                    messages.push(("user".to_string(), final_text));
+                } else {
+                    messages.push(("assistant".to_string(), final_text));
+                }
+            }
+        }
+    }
+
+    if messages.len() >= 2 {
+        return Some(messages_to_transcript(&messages));
+    }
+    None
+}
+
 fn extract_content_to_string(content: &Value) -> String {
     match content {
         Value::String(s) => s.trim().to_string(),
@@ -358,6 +486,28 @@ pub fn detect_format(content: &str) -> Option<String> {
     });
     if has_session_meta {
         return Some("codex_jsonl".to_string());
+    }
+
+    // Check for SoulForge JSONL
+    let has_soulforge = lines.iter().any(|l| {
+        if let Ok(v) = serde_json::from_str::<Value>(l) {
+            if let Some(obj) = v.as_object() {
+                // Top-level markers
+                if obj.contains_key("segments") || obj.contains_key("toolCalls") || obj.contains_key("durationMs") {
+                    return true;
+                }
+                // Also check inside "message" object
+                if let Some(msg) = obj.get("message").and_then(|m| m.as_object()) {
+                    if msg.contains_key("segments") || msg.contains_key("toolCalls") || msg.contains_key("durationMs") {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    });
+    if has_soulforge {
+        return Some("soulforge_jsonl".to_string());
     }
 
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
@@ -476,6 +626,41 @@ mod tests {
 {"type":"event_msg/user_message","text":"Hello"}"#;
         let result = detect_format(content);
         assert_eq!(result, Some("codex_jsonl".to_string()));
+    }
+
+    #[test]
+    fn test_soulforge_jsonl() {
+        let content = r#"{"role":"user","message":{"text":"Hello SoulForge"}}
+{"role":"assistant","message":{"text":"Hello from SoulForge"}}"#;
+        let result = normalize(std::path::Path::new("test.jsonl"), content);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_soulforge_with_segments() {
+        let content = r#"{"role":"user","message":{"segments":[{"text":"Hello"}]}}
+{"role":"assistant","message":{"segments":[{"text":"Response"}]}}"#;
+        let result = normalize(std::path::Path::new("test.jsonl"), content);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_soulforge_with_tool_calls() {
+        let content = r#"{"role":"user","message":{"text":"Run a command"}}
+{"role":"assistant","message":{"text":"Running...","toolCalls":[{"name":"bash","input":"ls"}]}}"#;
+        let result = normalize(std::path::Path::new("test.jsonl"), content);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        // Tool calls should be summarized
+        assert!(r.contains("[tools:"));
+    }
+
+    #[test]
+    fn test_detect_format_soulforge() {
+        let content = r#"{"role":"user","message":{"text":"Hello"}}
+{"role":"assistant","message":{"segments":[{"text":"Hi"}]}}"#;
+        let result = detect_format(content);
+        assert_eq!(result, Some("soulforge_jsonl".to_string()));
     }
 
     #[test]
