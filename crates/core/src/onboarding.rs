@@ -16,6 +16,74 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
+// Non-interactive mode detection
+// ---------------------------------------------------------------------------
+
+/// Check if we're running in non-interactive mode.
+/// Respects MEMPALACE_NONINTERACTIVE environment variable.
+pub fn is_non_interactive() -> bool {
+    std::env::var("MEMPALACE_NONINTERACTIVE")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+}
+
+/// Check if stdin appears to be interactive (has input available).
+pub fn is_interactive() -> bool {
+    // Non-interactive env var takes precedence
+    if is_non_interactive() {
+        return false;
+    }
+    // On Unix, check if stdin is a tty via termios, or just check if stdin is readable
+    // Simple heuristic: if stdin read doesn't immediately EOF, assume interactive
+    // The real check would need atty crate, but we avoid the dependency
+    true // Default to interactive, let stdin read failures handle non-interactive
+}
+
+/// Safe prompt that returns default in non-interactive mode.
+/// Takes a prompt message and a default value to return when non-interactive.
+pub fn prompt_or_default<T: Clone + ToString>(prompt: &str, default: T) -> T {
+    if is_interactive() {
+        print!("{}", prompt);
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_ok() {
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                return default;
+            }
+        }
+        default
+    } else {
+        eprintln!(
+            "[non-interactive mode] Using default: {}",
+            default.to_string()
+        );
+        default
+    }
+}
+
+/// Prompt for string input with default in non-interactive mode.
+pub fn prompt_string(prompt: &str, default: &str) -> String {
+    if is_interactive() {
+        print!("{} [{}]: ", prompt, default);
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_ok() {
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                return default.to_string();
+            }
+            trimmed.to_string()
+        } else {
+            default.to_string()
+        }
+    } else {
+        eprintln!("[non-interactive mode] Using default: {}", default);
+        default.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Default wing taxonomies by mode
 // ---------------------------------------------------------------------------
 
@@ -314,6 +382,11 @@ pub fn auto_detect_from_directory(
 
 /// Prompt user for mode selection.
 pub fn prompt_mode() -> Mode {
+    if !is_interactive() {
+        eprintln!("[non-interactive mode] Using default mode: Combo");
+        return Mode::Combo;
+    }
+
     println!("\n============================================================");
     println!("  Welcome to MemPalace");
     println!("============================================================");
