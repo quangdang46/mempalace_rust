@@ -7,6 +7,7 @@ pub mod doctor;
 pub mod entity_detector;
 pub mod entity_registry;
 pub mod general_extractor;
+pub mod hermes_integration;
 pub mod knowledge_graph;
 pub mod layers;
 pub mod mcp_server;

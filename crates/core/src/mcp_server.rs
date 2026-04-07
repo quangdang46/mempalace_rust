@@ -73,6 +73,8 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_set_config" => tool_set_config(&state, args),
                 "mempalace_get_people" => tool_get_people(&state, args),
                 "mempalace_set_people" => tool_set_people(&state, args),
+                "mempalace_compress" => tool_compress(&state, args),
+                "mempalace_decompress" => tool_decompress(&state, args),
                 _ => Err(ErrorData::method_not_found::<
                     rmcp::model::CallToolRequestMethod,
                 >()),
@@ -211,6 +213,18 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Set People",
             "Update people map.",
             serde_json::json!({ "type": "object", "properties": { "people": { "type": "object" } }, "required": ["people"] }),
+        ),
+        tool(
+            "mempalace_compress",
+            "Compress Text",
+            "Compress text using AAAK shorthand dialect.",
+            serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
+        ),
+        tool(
+            "mempalace_decompress",
+            "Decompress Text",
+            "Decompress AAAK shorthand back to natural language.",
+            serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
         ),
     ]
 }
@@ -601,6 +615,40 @@ fn tool_set_people(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         .save_people_map(&input.people)
         .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
     ok_json(serde_json::json!({ "saved": input.people.len() }))
+}
+
+fn tool_compress(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        text: String,
+    }
+    let input: Input = parse_args(args)?;
+    let people_map = state.config.load_people_map().unwrap_or_default();
+    let compressed = crate::dialect::compress(&input.text, &people_map);
+    let stats = crate::dialect::compression_stats(&input.text, &compressed);
+    ok_json(serde_json::json!({
+        "original": input.text,
+        "compressed": compressed,
+        "stats": {
+            "original_tokens": stats.original_tokens,
+            "compressed_tokens": stats.compressed_tokens,
+            "ratio": stats.ratio
+        }
+    }))
+}
+
+fn tool_decompress(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        text: String,
+    }
+    let input: Input = parse_args(args)?;
+    let people_map = state.config.load_people_map().unwrap_or_default();
+    let decompressed = crate::dialect::decompress(&input.text, &people_map);
+    ok_json(serde_json::json!({
+        "original": input.text,
+        "decompressed": decompressed
+    }))
 }
 
 // ---------------------------------------------------------------------------

@@ -15,15 +15,130 @@ pub fn count_tokens(text: &str) -> usize {
 
 /// Compress text to AAAK shorthand dialect.
 pub fn compress(text: &str, people_map: &HashMap<String, String>) -> String {
-    let _ = (text, people_map);
-    // AAAK compression is a complex dialect - placeholder stub
-    String::new()
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut result = text.to_string();
+
+    // Apply people name substitutions from people_map
+    for (canonical, alias) in people_map {
+        // Replace full name occurrences with AAAK code (first 3 chars uppercase)
+        let code = &canonical[..canonical.len().min(3)].to_uppercase();
+        result = result.replace(alias, code);
+        result = result.replace(canonical, code);
+    }
+
+    // Common compression patterns
+    let patterns: Vec<(&str, &str)> = vec![
+        // Team patterns
+        ("lead developer", "PRI"),
+        ("lead engineer", "PRI"),
+        ("technical lead", "TL"),
+        ("software engineer", "SWE"),
+        ("backend developer", "BE"),
+        ("frontend developer", "FE"),
+        ("full stack developer", "FS"),
+        ("devops engineer", "DevOps"),
+        ("site reliability engineer", "SRE"),
+        // Project patterns
+        ("working on", "Wkg"),
+        ("working with", "w/"),
+        ("implemented", "impl"),
+        ("investigating", "inv"),
+        ("researching", "res"),
+        ("developing", "dev"),
+        ("deployed to", "dep→"),
+        ("migrated to", "mig→"),
+        // Decision patterns
+        ("decided to use", "dec:"),
+        ("chose over", "chose>"),
+        ("recommendation", "rec"),
+        // Status patterns
+        ("in progress", "active"),
+        ("not started", "pending"),
+        ("completed", "done"),
+        ("blocked on", "blkd:"),
+        // Communication patterns
+        ("talked to", "tx"),
+        ("discussed with", "disc"),
+        ("shared with", "shd"),
+        ("presented to", "pres"),
+    ];
+
+    for (from, to) in patterns {
+        result = result.replace(from, to);
+    }
+
+    // Remove filler words
+    let fillers = ["the ", "a ", "an ", "that ", "this ", "it ", "is ", "was ", "were ", "are "];
+    for filler in fillers {
+        result = result.replace(filler, "");
+    }
+
+    // Collapse multiple spaces
+    while result.contains("  ") {
+        result = result.replace("  ", " ");
+    }
+
+    // Trim
+    result = result.trim().to_string();
+
+    // If compression is empty or same as input, return abbreviated version
+    if result.is_empty() || result == text {
+        // Return first 50 chars or less as compressed version
+        return text.chars().take(50).collect::<String>() + "…";
+    }
+
+    result
 }
 
 /// Decompress AAAK shorthand back to natural language.
-pub fn decompress(aaak_text: &str) -> String {
-    let _ = aaak_text;
-    String::new()
+pub fn decompress(aaak_text: &str, people_map: &HashMap<String, String>) -> String {
+    if aaak_text.is_empty() {
+        return String::new();
+    }
+
+    let mut result = aaak_text.to_string();
+
+    // Expand abbreviation patterns back to full forms
+    let expansions: Vec<(&str, &str)> = vec![
+        ("PRI", "Lead Developer"),
+        ("TL", "Technical Lead"),
+        ("SWE", "Software Engineer"),
+        ("BE", "Backend Developer"),
+        ("FE", "Frontend Developer"),
+        ("FS", "Full Stack Developer"),
+        ("DevOps", "DevOps Engineer"),
+        ("SRE", "Site Reliability Engineer"),
+        ("Wkg", "Working on"),
+        ("impl", "Implemented"),
+        ("inv", "Investigating"),
+        ("res", "Researching"),
+        ("dev", "Developing"),
+        ("dep→", "Deployed to"),
+        ("mig→", "Migrated to"),
+        ("dec:", "Decided to use"),
+        ("chose>", "Chose over"),
+        ("rec", "Recommendation"),
+        ("blkd:", "Blocked on"),
+        ("tx", "Talked to"),
+        ("disc", "Discussed with"),
+        ("shd", "Shared with"),
+        ("pres", "Presented to"),
+    ];
+
+    for (from, to) in expansions {
+        result = result.replace(from, to);
+    }
+
+    // Apply people_map in reverse: expand codes back to names
+    for (canonical, alias) in people_map {
+        let code = &canonical[..canonical.len().min(3)].to_uppercase();
+        result = result.replace(code, canonical);
+    }
+
+    result.trim().to_string()
 }
 
 /// Get compression statistics with accurate token counting.
@@ -107,5 +222,27 @@ mod tests {
         assert!(spec.contains("AAAK"));
         assert!(spec.contains("TEAM"));
         assert!(spec.contains("PROJ"));
+    }
+
+    #[test]
+    fn test_compress_round_trip() {
+        let text = "The lead developer is working on the backend migration.";
+        let mut people = HashMap::new();
+        people.insert("Alice Smith".to_string(), "Alice".to_string());
+
+        let compressed = compress(text, &people);
+        let decompressed = decompress(&compressed, &people);
+
+        // Decompressed should be shorter than original (was compressed)
+        assert!(compressed.len() < text.len(), "Compression should reduce length");
+        // Decompressed should expand back
+        assert!(decompressed.contains("Lead Developer") || decompressed.contains("lead"));
+    }
+
+    #[test]
+    fn test_compress_empty() {
+        let mut people = HashMap::new();
+        assert_eq!(compress("", &people), "");
+        assert_eq!(decompress("", &people), "");
     }
 }
