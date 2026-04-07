@@ -66,11 +66,14 @@ const PROJECT_VERB_TEMPLATES: &[&str] = &[
 
 static SINGLE_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Match words starting with uppercase (including CamelCase like MemPalace)
-    Regex::new(r"\b([A-Z][a-zA-Z]{1,19})\b").unwrap()
+    // Uses Unicode-aware \p{Lu}/\p{Ll} for cross-script support (Cyrillic, etc.)
+    Regex::new(r"\b([\p{Lu}][\p{Ll}\p{Lu}]{1,19})\b").unwrap()
 });
 
-static MULTI_WORD_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b").unwrap());
+static MULTI_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // Unicode-aware multi-word proper nouns
+    Regex::new(r"\b([\p{Lu}][\p{Ll}]+(?:\s+[\p{Lu}][\p{Ll}]+)+)\b").unwrap()
+});
 
 static PRONOUN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     PRONOUN_PATTERNS_STATIC
@@ -1476,5 +1479,41 @@ mod tests {
             "Context should include signal type, got: {}",
             ctx
         );
+    }
+
+    #[test]
+    fn test_cyrillic_entity_detection() {
+        // Cyrillic names should be detected with Unicode-aware patterns
+        // They may be classified as Uncertain (not Person) due to lack of English person signals,
+        // but extract_candidates should still find them
+        let text = "Иван работает над проектом. Иван закончил важную задачу. Иван написал код. Анна проверила результаты. Анна завершила работу. Анна довольна.";
+        let candidates = extract_candidates(text);
+        // Иван appears 3 times, Анна appears 3 times - both should pass frequency threshold
+        assert!(
+            candidates.contains_key("Иван") || candidates.contains_key("Анна"),
+            "Cyrillic names should pass frequency threshold, got: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn test_latin_detection_still_works() {
+        // Ensure the Unicode change didn't break Latin script detection
+        // Uses proper person signals: direct address and multiple action verbs
+        let text = r#"
+        hey Alice, can you help? hey Alice, can you help? hey Alice, can you help?
+        hey Alice, can you help? hey Alice, can you help? hey Alice, can you help?
+        Bob wrote the script. Bob wrote the script. Bob wrote the script.
+        "#;
+        let candidates = extract_candidates(text);
+        assert!(candidates.contains_key("Alice") && candidates.contains_key("Bob"),
+            "Both names should pass frequency threshold");
+        let result = detect_from_content(text);
+        let names: Vec<&str> = result
+            .people
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert!(names.contains(&"Alice"), "Alice should be detected");
+        assert!(names.contains(&"Bob"), "Bob should be detected");
     }
 }
