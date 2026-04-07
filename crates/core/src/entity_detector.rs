@@ -894,6 +894,7 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
     };
 
     // Require TWO different signal categories to confidently classify as a person.
+    // Common names (Bob, Alice, etc.) need stronger signals.
     let mut signal_categories: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for s in &scores.person_signals {
         if s.contains("dialogue") {
@@ -909,9 +910,14 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
 
     let has_two_signal_types = signal_categories.len() >= 2;
 
+    // Common names need stronger signals to prevent false positives
+    let common_name_penalty = if is_common_name(name) { 0.2 } else { 0.0 };
+
     let (entity_type, confidence, signals) =
         if person_ratio >= 0.7 && (has_two_signal_types || ps >= 3) {
-            let conf = (0.5 + person_ratio * 0.5).min(0.99);
+            // Apply common name penalty - reduce confidence for common names
+            let base_conf = (0.5 + person_ratio * 0.5).min(0.99);
+            let conf = (base_conf - common_name_penalty).max(0.3);
             let sigs = if scores.person_signals.is_empty() {
                 vec![format!("appears {}x", frequency)]
             } else {
@@ -922,7 +928,7 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
             // Has person ratio but not enough signals — downgrade to uncertain
             let mut sigs = scores.person_signals.clone();
             sigs.push(format!("appears {}x — not enough signal types", frequency));
-            (EntityType::Uncertain, 0.4, sigs)
+            (EntityType::Uncertain, (0.4 - common_name_penalty).max(0.2), sigs)
         } else if person_ratio <= 0.3 {
             let conf = (0.5 + (1.0 - person_ratio) * 0.5).min(0.99);
             let sigs = if scores.project_signals.is_empty() {
