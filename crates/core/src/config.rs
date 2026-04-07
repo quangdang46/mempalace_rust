@@ -122,6 +122,16 @@ pub struct Config {
     pub topic_wings: Vec<String>,
     #[serde(default)]
     pub hall_keywords: HashMap<String, Vec<String>>,
+    /// Embedding model for semantic search.
+    /// "naive" = word overlap similarity (current default)
+    /// "paraphrase-multilingual-MiniLM-L12-v2" = multilingual embeddings
+    /// "all-MiniLM-L6-v2" = fast English embeddings
+    #[serde(default = "default_embedding_model")]
+    pub embedding_model: String,
+}
+
+fn default_embedding_model() -> String {
+    "naive".to_string()
 }
 
 impl Default for Config {
@@ -132,6 +142,7 @@ impl Default for Config {
             people_map: HashMap::new(),
             topic_wings: default_topic_wings(),
             hall_keywords: default_hall_keywords(),
+            embedding_model: default_embedding_model(),
         }
     }
 }
@@ -177,6 +188,11 @@ impl Config {
                 people_map: HashMap::new(),
                 topic_wings,
                 hall_keywords,
+                embedding_model: file_config
+                    .get("embedding_model")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(default_embedding_model),
             })
         } else {
             Ok(Config::default())

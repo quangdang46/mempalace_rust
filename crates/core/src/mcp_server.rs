@@ -633,6 +633,7 @@ mod tests {
             people_map: Default::default(),
             topic_wings: vec!["emotions".to_string()],
             hall_keywords: Default::default(),
+            embedding_model: "naive".to_string(),
         };
         std::fs::create_dir_all(&config.palace_path).unwrap();
         AppState::new(config, false).unwrap()
@@ -768,6 +769,7 @@ mod tests {
                 people_map: Default::default(),
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
+                embedding_model: "naive".to_string(),
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
@@ -790,6 +792,7 @@ mod tests {
                 people_map: Default::default(),
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
+                embedding_model: "naive".to_string(),
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
@@ -808,6 +811,7 @@ mod tests {
                 people_map: Default::default(),
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
+                embedding_model: "naive".to_string(),
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
@@ -830,6 +834,7 @@ mod tests {
                 people_map: Default::default(),
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
+                embedding_model: "naive".to_string(),
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
