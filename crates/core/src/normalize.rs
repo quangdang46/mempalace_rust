@@ -49,7 +49,7 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
         .split('\n')
         .filter(|l| !l.trim().is_empty())
         .collect();
-    let mut messages: Vec<(&str, &str)> = Vec::new();
+    let mut messages: Vec<(String, String)> = Vec::new();
 
     for line in lines {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -58,15 +58,15 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
         let entry = entry.as_object()?;
         let msg_type = entry.get("type")?.as_str()?;
         let message = entry.get("message")?.as_object()?;
+        let text = extract_content_to_string(message.get("content")?);
 
-        let text = extract_content(message.get("content")?);
         if text.is_empty() {
             continue;
         }
 
         match msg_type {
-            "human" => messages.push(("user", text)),
-            "assistant" => messages.push(("assistant", text)),
+            "human" => messages.push(("user".to_string(), text)),
+            "assistant" => messages.push(("assistant".to_string(), text)),
             _ => continue,
         }
     }
@@ -87,21 +87,21 @@ fn try_claude_ai_json(data: &Value) -> Option<String> {
     };
 
     let list = messages_data.as_array()?;
-    let mut messages: Vec<(&str, &str)> = Vec::new();
+    let mut messages: Vec<(String, String)> = Vec::new();
 
     for item in list {
         let obj = item.as_object()?;
         let role = obj.get("role")?.as_str()?;
-        let text = extract_content(obj.get("content")?);
+        let text = extract_content_to_string(obj.get("content")?);
 
         if text.is_empty() {
             continue;
         }
 
-        if (role == "user" || role == "human") {
-            messages.push(("user", text));
+        if role == "user" || role == "human" {
+            messages.push(("user".to_string(), text));
         } else if role == "assistant" || role == "ai" {
-            messages.push(("assistant", text));
+            messages.push(("assistant".to_string(), text));
         }
     }
 
@@ -119,8 +119,10 @@ fn try_chatgpt_json(data: &Value) -> Option<String> {
 
     for (node_id, node) in mapping {
         let node = node.as_object()?;
-        if node.get("parent").is_none() || node.get("parent")?.is_null() {
-            if node.get("message").is_none() || node.get("message")?.is_null() {
+        let parent = node.get("parent");
+        if parent.is_none() || parent?.is_null() {
+            let msg = node.get("message");
+            if msg.is_none() || msg?.is_null() {
                 root_id = Some(node_id);
                 break;
             } else if fallback_root.is_none() {
@@ -130,42 +132,40 @@ fn try_chatgpt_json(data: &Value) -> Option<String> {
     }
 
     let root_id = root_id.or(fallback_root)?;
-    let mut messages: Vec<(&str, &str)> = Vec::new();
+    let mut messages: Vec<(String, String)> = Vec::new();
     let mut visited = std::collections::HashSet::new();
     let mut current_id: &str = root_id;
 
-    while current_id.is_empty() == false && !visited.contains(current_id) {
+    while !current_id.is_empty() && !visited.contains(current_id) {
         visited.insert(current_id);
         let node = mapping.get(current_id)?.as_object()?;
-        if let Some(msg) = node.get("message") {
-            let msg = msg.as_object()?;
+        if let Some(msg_val) = node.get("message") {
+            let msg = msg_val.as_object()?;
             let role = msg.get("author")?.as_object()?.get("role")?.as_str()?;
-            let content = msg.get("content")?;
+            let content_val = msg.get("content")?;
 
-            let parts = if content.is_object() {
-                content.get("parts")?.as_array()?
+            let parts: Vec<String> = if content_val.is_array() {
+                content_val
+                    .as_array()?
+                    .iter()
+                    .filter_map(|p| p.as_str().map(String::from))
+                    .collect()
             } else {
-                &Vec::new()
+                Vec::new()
             };
 
-            let text: String = parts
-                .iter()
-                .filter_map(|p| p.as_str())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ")
-                .trim()
-                .to_string();
+            let text: String = parts.join(" ").trim().to_string();
 
             if text.is_empty() {
-                current_id = node.get("children")?.as_array()?.first()?.as_str()?;
+                let children = node.get("children")?.as_array()?;
+                current_id = children.first()?.as_str().unwrap_or("");
                 continue;
             }
 
             if role == "user" {
-                messages.push(("user", text));
+                messages.push(("user".to_string(), text));
             } else if role == "assistant" {
-                messages.push(("assistant", text));
+                messages.push(("assistant".to_string(), text));
             }
         }
 
@@ -181,7 +181,7 @@ fn try_chatgpt_json(data: &Value) -> Option<String> {
 
 fn try_slack_json(data: &Value) -> Option<String> {
     let list = data.as_array()?;
-    let mut messages: Vec<(&str, &str)> = Vec::new();
+    let mut messages: Vec<(String, String)> = Vec::new();
     let mut seen_users: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
     let mut last_role: Option<&str> = None;
 
@@ -196,7 +196,7 @@ fn try_slack_json(data: &Value) -> Option<String> {
             .or_else(|| obj.get("username"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let text = obj.get("text")?.as_str().unwrap_or("").trim();
+        let text = obj.get("text")?.as_str().unwrap_or("").trim().to_string();
 
         if text.is_empty() || user_id.is_empty() {
             continue;
@@ -218,7 +218,7 @@ fn try_slack_json(data: &Value) -> Option<String> {
         };
 
         last_role = Some(role);
-        messages.push((role, text));
+        messages.push((role.to_string(), text));
     }
 
     if messages.len() >= 2 {
@@ -227,45 +227,48 @@ fn try_slack_json(data: &Value) -> Option<String> {
     None
 }
 
-fn extract_content(content: &Value) -> &str {
+fn extract_content_to_string(content: &Value) -> String {
     match content {
-        Value::String(s) => s.trim(),
+        Value::String(s) => s.trim().to_string(),
         Value::Array(arr) => {
-            let parts: Vec<&str> = arr
+            let parts: Vec<String> = arr
                 .iter()
                 .filter_map(|item| match item {
-                    Value::String(s) => Some(*s),
+                    Value::String(s) => Some(s.trim().to_string()),
                     Value::Object(obj) if obj.get("type")?.as_str() == Some("text") => {
-                        obj.get("text")?.as_str()
+                        obj.get("text")?.as_str().map(|s| s.trim().to_string())
                     }
                     _ => None,
                 })
                 .collect();
-            let joined = parts.join(" ");
-            Box::leak(joined.into_boxed_str()) as &str
+            parts.join(" ")
         }
-        Value::Object(obj) => obj.get("text").and_then(|v| v.as_str()).unwrap_or(""),
-        _ => "",
+        Value::Object(obj) => obj
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default(),
+        _ => String::new(),
     }
 }
 
-fn messages_to_transcript(messages: &[(&str, &str)]) -> String {
+fn messages_to_transcript(messages: &[(String, String)]) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut i = 0;
 
     while i < messages.len() {
-        let (role, text) = messages[i];
+        let (ref role, ref text) = messages[i];
 
         if role == "user" {
             lines.push(format!("> {}", text));
             if i + 1 < messages.len() && messages[i + 1].0 == "assistant" {
-                lines.push(messages[i + 1].1.to_string());
+                lines.push(messages[i + 1].1.clone());
                 i += 2;
             } else {
                 i += 1;
             }
         } else {
-            lines.push(text.to_string());
+            lines.push(text.clone());
             i += 1;
         }
         lines.push(String::new());
