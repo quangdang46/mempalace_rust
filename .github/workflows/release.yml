@@ -12,58 +12,72 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Release (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            tarball: mempalace-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            tarball: mempalace-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            tarball: mempalace-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz
-          - os: windows-latest
-            tarball: mempalace-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
-
+  release-linux:
+    name: Release (linux)
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-
-      - name: Build release
-        run: |
-          cargo build --release --locked
-          tar -czf ${{ matrix.tarball }} -C target/release mpr
-
-      - name: Build macOS targets
-        if: matrix.target != ''
-        run: |
-          cargo build --release --locked --target ${{ matrix.target }}
-          tar -czf ${{ matrix.tarball }} -C target/${{ matrix.target }}/release mpr
-
-      - name: Build Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          cargo build --release --locked
-          cd target/release
-          powershell -Command "Compress-Archive -Path 'mpr.exe' -DestinationPath '../${{ matrix.tarball }}' -Force"
-
-      - name: Generate SHA256
-        run: |
-          sha256sum ${{ matrix.tarball }} > ${{ matrix.tarball }}.sha256
-
-      - name: Upload artifact
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: tar -czf mempalace-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz -C target/release mpr
+      - name: SHA256
+        run: sha256sum mempalace-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz > mempalace-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
+      - name: Upload
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.ref_name }} ${{ matrix.tarball }} --clobber
-          gh release upload ${{ github.ref_name }} ${{ matrix.tarball }}.sha256 --clobber
+          gh release upload ${{ github.ref_name }} mempalace-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz --clobber
+          gh release upload ${{ github.ref_name }} mempalace-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256 --clobber
+
+  release-macos:
+    name: Release (macOS)
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: tar -czf mempalace-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release mpr
+      - name: SHA256
+        run: sha256sum mempalace-${{ github.ref_name }}-${{ matrix.target }}.tar.gz > mempalace-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
+      - name: Upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} mempalace-${{ github.ref_name }}-${{ matrix.target }}.tar.gz --clobber
+          gh release upload ${{ github.ref_name }} mempalace-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256 --clobber
+
+  release-windows:
+    name: Release (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/release/mpr.exe -DestinationPath mempalace-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip -Force
+      - name: SHA256
+        shell: bash
+        run: sha256sum mempalace-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip > mempalace-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip.sha256
+      - name: Upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} mempalace-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip --clobber
+          gh release upload ${{ github.ref_name }} mempalace-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip.sha256 --clobber
