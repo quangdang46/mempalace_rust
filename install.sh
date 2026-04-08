@@ -589,7 +589,7 @@ main() {
       unzip -o "$archive_path" -d "$tmpdir" > /dev/null 2>&1
       local extracted
       extracted=$(unzip -l "$archive_path" 2>/dev/null | grep -oE "[^[:space:]]+\.exe$" | head -1)
-      if [[ -n "$extracted" ]]; then
+      if [[ -n "$extracted" ]] && [[ "${tmpdir}/${extracted}" != "$bin_path" ]]; then
         mv "${tmpdir}/${extracted}" "$bin_path"
       fi
       ;;
@@ -598,7 +598,7 @@ main() {
       tar -xzf "$archive_path" -C "$tmpdir" 2>/dev/null
       local extracted
       extracted=$(tar -tzf "$archive_path" 2>/dev/null | grep -v '/$' | head -1)
-      if [[ -n "$extracted" ]]; then
+      if [[ -n "$extracted" ]] && [[ "${tmpdir}/${extracted}" != "$bin_path" ]]; then
         mv "${tmpdir}/${extracted}" "$bin_path"
       fi
       ;;
