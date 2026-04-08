@@ -8,8 +8,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rmcp::model::{
-    CallToolResult, Content, InitializeResult, JsonObject, ListToolsResult,
-    ServerInfo as McpServerInfo,
+    CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
+    ServerCapabilities, ServerInfo as McpServerInfo,
 };
 use rmcp::service::MaybeSendFuture;
 use rmcp::transport::stdio;
@@ -267,7 +267,9 @@ impl MempalaceServer {
 
 impl ServerHandler for MempalaceServer {
     fn get_info(&self) -> McpServerInfo {
-        InitializeResult::default()
+        InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("mempalace", env!("CARGO_PKG_VERSION")))
+            .with_instructions("MemPalace - AI memory palace. Search, mine, and manage memories.")
     }
 
     fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
@@ -698,7 +700,11 @@ pub fn run_server(read_only: bool) -> anyhow::Result<()> {
     let server = MempalaceServer::new(AppState::new(config, read_only)?);
     let (stdin, stdout) = stdio();
     let rt = Runtime::new()?;
-    rt.block_on(async { server.serve((stdin, stdout)).await })?;
+    rt.block_on(async {
+        let running = server.serve((stdin, stdout)).await?;
+        running.waiting().await?;
+        Ok::<(), anyhow::Error>(())
+    })?;
     Ok(())
 }
 
