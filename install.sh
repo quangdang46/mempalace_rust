@@ -547,11 +547,11 @@ main() {
   # Determine target triplet and artifact name
   local target artifact
   case "$os/$arch" in
-    linux/x86_64)   target="x86_64-unknown-linux-gnu"; artifact="mempalace-${version_num}-${target}.tar.gz";;
-    linux/aarch64)  target="aarch64-unknown-linux-gnu"; artifact="mempalace-${version_num}-${target}.tar.gz";;
-    macos/x86_64)   target="x86_64-apple-darwin";       artifact="mempalace-${version_num}-${target}.tar.gz";;
-    macos/aarch64)  target="aarch64-apple-darwin";     artifact="mempalace-${version_num}-${target}.tar.gz";;
-    windows/x86_64) target="x86_64-pc-windows-msvc";   artifact="mempalace-${version_num}-${target}.zip";;
+    linux/x86_64)   target="x86_64-unknown-linux-gnu"; artifact="mempalace-v${version_num}-${target}.tar.gz";;
+    linux/aarch64)  target="aarch64-unknown-linux-gnu"; artifact="mempalace-v${version_num}-${target}.tar.gz";;
+    macos/x86_64)   target="x86_64-apple-darwin";       artifact="mempalace-v${version_num}-${target}.tar.gz";;
+    macos/aarch64)  target="aarch64-apple-darwin";     artifact="mempalace-v${version_num}-${target}.tar.gz";;
+    windows/x86_64) target="x86_64-pc-windows-msvc";   artifact="mempalace-v${version_num}-${target}.zip";;
     *)              log_err "No release artifact for $os/$arch"; exit 1;;
   esac
 
