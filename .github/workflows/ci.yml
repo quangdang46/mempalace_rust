@@ -39,27 +39,27 @@ jobs:
 
       - name: Clippy (warnings as errors)
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if ($env:RUNNER_OS -eq "Windows") {
             cargo clippy --no-default-features --all-targets -- -D warnings
-          else
+          } else {
             cargo clippy --all-features --all-targets -- -D warnings
-          fi
+          }
 
       - name: Build
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if ($env:RUNNER_OS -eq "Windows") {
             cargo build --no-default-features --all-targets
-          else
+          } else {
             cargo build --all-features --all-targets
-          fi
+          }
 
       - name: Test
         run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if ($env:RUNNER_OS -eq "Windows") {
             cargo test --no-default-features --all-targets
-          else
+          } else {
             cargo test --all-features --all-targets
-          fi
+          }
 
       - name: Doc test
         run: cargo test --doc
