@@ -3,8 +3,7 @@
 //! Each language implements the Language trait with language-specific patterns.
 //! Currently supports Latin (default) and Russian (Cyrillic).
 
-use regex::{Regex, RegexBuilder};
-use std::collections::HashMap;
+use regex::Regex;
 
 /// Language trait for language-specific processing.
 pub trait Language {
@@ -25,12 +24,12 @@ pub trait Language {
 
     /// Check if a character is uppercase in this language.
     fn is_uppercase(&self, c: char) -> bool {
-        c.to_uppercase().to_string().chars().next() == Some(c)
+        c.to_uppercase().to_string().starts_with(c)
     }
 
     /// Check if a character is lowercase in this language.
     fn is_lowercase(&self, c: char) -> bool {
-        c.to_lowercase().to_string().chars().next() == Some(c)
+        c.to_lowercase().to_string().starts_with(c)
     }
 
     fn proper_noun_regex(&self) -> Regex {
@@ -192,11 +191,11 @@ enum UnicodeExt {
 impl UnicodeExt {
     fn from_char(c: char) -> Self {
         // Check Cyrillic uppercase (А-Я, includes Ё)
-        if '\u{0410}' <= c && c <= '\u{042F}' || c == '\u{0401}' {
+        if ('А'..='Я').contains(&c) || c == 'Ё' {
             return UnicodeExt::CyrillicLu;
         }
         // Check Cyrillic lowercase (а-я, includes ё)
-        if '\u{0430}' <= c && c <= '\u{044F}' || c == '\u{0451}' {
+        if ('а'..='я').contains(&c) || c == 'ё' {
             return UnicodeExt::CyrillicLl;
         }
         UnicodeExt::Other

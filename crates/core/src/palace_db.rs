@@ -149,7 +149,7 @@ impl PalaceDb {
         Ok(())
     }
 
-    pub(crate) fn get_document(&self, id: &str) -> Option<&DocumentEntry> {
+    pub(crate) fn _get_document(&self, id: &str) -> Option<&DocumentEntry> {
         self.documents.get(id)
     }
 

@@ -8,13 +8,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rmcp::model::{
-    CallToolResult, Content, InitializeResult, JsonObject, ListToolsResult, ProtocolVersion,
-    ServerCapabilities, ServerInfo as McpServerInfo, TextContent, ToolsCapability,
+    CallToolResult, Content, InitializeResult, JsonObject, ListToolsResult,
+    ServerInfo as McpServerInfo,
 };
 use rmcp::service::MaybeSendFuture;
 use rmcp::transport::stdio;
-use rmcp::{handler::server::ServerHandler, ErrorData, RoleServer, Service, ServiceExt};
+use rmcp::{handler::server::ServerHandler, ErrorData, RoleServer, ServiceExt};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::json;
 use tokio::runtime::Runtime;
 
@@ -265,7 +266,7 @@ impl ServerHandler for MempalaceServer {
         &self,
         request: rmcp::model::CallToolRequestParams,
         _ctx: rmcp::service::RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, rmcp::Error>> + MaybeSendFuture + '_
+    ) -> impl std::future::Future<Output = Result<CallToolResult, rmcp::ErrorData>> + MaybeSendFuture + '_
     {
         let dispatch = make_dispatch(self.state.clone());
         async move {
@@ -281,7 +282,7 @@ impl ServerHandler for MempalaceServer {
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _ctx: rmcp::service::RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListToolsResult, rmcp::Error>> + MaybeSendFuture + '_
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + MaybeSendFuture + '_
     {
         std::future::ready(Ok(ListToolsResult::with_all_items(make_tools())))
     }
@@ -698,7 +699,6 @@ pub fn run_server(read_only: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn test_state() -> AppState {
         let temp_dir = tempfile::tempdir().unwrap();

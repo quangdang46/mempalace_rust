@@ -206,7 +206,7 @@ fn resolve_palace_path(palace_arg: Option<&str>) -> Result<PathBuf> {
         Some(p) => {
             if p.starts_with("~/") {
                 if let Ok(home) = std::env::var("HOME") {
-                    Ok(PathBuf::from(home).join(&p[2..]))
+                    Ok(PathBuf::from(home).join(p.strip_prefix("~/").unwrap()))
                 } else {
                     Ok(PathBuf::from(p))
                 }
@@ -232,8 +232,8 @@ struct DetectedEntities {
 #[derive(Clone, Default, Debug)]
 struct UncertainEntity {
     name: String,
-    confidence: f32,
-    context: String,
+    _confidence: f32,
+    _context: String,
 }
 
 /// Scan directory for files that can be used for entity detection.
@@ -440,6 +440,7 @@ fn detect_mining_mode(dir: &PathBuf) -> MiningMode {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_mine(
     dir: &PathBuf,
     mode: &MiningMode,
@@ -872,7 +873,7 @@ fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
             if let Ok(home) = std::env::var("HOME") {
                 let path_str = palace_path.to_string_lossy();
                 if path_str.starts_with("~/") {
-                    PathBuf::from(home).join(&path_str[2..])
+                    PathBuf::from(home).join(path_str.strip_prefix("~/").unwrap())
                 } else {
                     PathBuf::from(path_str.replace("~", &home))
                 }
@@ -1018,7 +1019,7 @@ pub fn run() -> Result<()> {
             dry_run,
             min_sessions,
         } => cmd_split(dir, output_dir.as_ref(), *dry_run, *min_sessions)?,
-        Commands::Status {} => cmd_status(palace_arg)?,
+        Commands::Status => cmd_status(palace_arg)?,
         Commands::MineDevice { wing, dry_run } => {
             cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
         }
@@ -1195,7 +1196,7 @@ mod tests {
     #[test]
     fn test_cli_args_parse_status() {
         let args = Cli::try_parse_from(["mempalace", "status"]).unwrap();
-        assert!(matches!(args.command, Commands::Status {}));
+        assert!(matches!(args.command, Commands::Status));
     }
 
     #[test]

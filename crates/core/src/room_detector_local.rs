@@ -216,8 +216,7 @@ pub fn detect_rooms_from_folders(project_dir: &Path) -> Vec<RoomMapping> {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
                     if !is_skip_dir(&name_str) {
-                        let name_lower =
-                            name_str.to_lowercase().replace('-', "_").replace(' ', "_");
+                        let name_lower = name_str.to_lowercase().replace([' ', '-'], "_");
 
                         if let Some(room_name) = folder_map.get(&name_lower) {
                             if !found_rooms.contains_key(room_name) {
@@ -230,7 +229,7 @@ pub fn detect_rooms_from_folders(project_dir: &Path) -> Vec<RoomMapping> {
                                 .map(|c| c.is_alphabetic())
                                 .unwrap_or(false)
                         {
-                            let clean = name_lower.replace('-', "_").replace(' ', "_");
+                            let clean = name_lower.replace([' ', '-'], "_");
                             if !found_rooms.contains_key(&clean) {
                                 found_rooms.insert(clean.clone(), name_str.to_string());
                             }
@@ -257,8 +256,7 @@ pub fn detect_rooms_from_folders(project_dir: &Path) -> Vec<RoomMapping> {
                                         if !is_skip_dir(&subname_str) {
                                             let subname_lower = subname_str
                                                 .to_lowercase()
-                                                .replace('-', "_")
-                                                .replace(' ', "_");
+                                                .replace([' ', '-'], "_");
                                             if let Some(room_name) = folder_map.get(&subname_lower)
                                             {
                                                 if !found_rooms.contains_key(room_name) {
@@ -323,8 +321,7 @@ pub fn detect_rooms_from_files(project_dir: &Path) -> Vec<RoomMapping> {
                 .map(|n| {
                     n.to_string_lossy()
                         .to_lowercase()
-                        .replace('-', "_")
-                        .replace(' ', "_")
+                        .replace([' ', '-'], "_")
                 })
                 .unwrap_or_default();
 
@@ -510,8 +507,7 @@ pub fn detect_rooms_local(project_dir: &Path) -> anyhow::Result<Vec<RoomMapping>
         .map(|n| {
             n.to_string_lossy()
                 .to_lowercase()
-                .replace(' ', "_")
-                .replace('-', "_")
+                .replace([' ', '-'], "_")
         })
         .unwrap_or_else(|| "project".to_string());
 

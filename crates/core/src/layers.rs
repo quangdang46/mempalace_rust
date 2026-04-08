@@ -190,6 +190,12 @@ struct DrawerEntry {
 /// Layer 2: On-Demand (~200-500 tokens per retrieval).
 pub struct Layer2;
 
+impl Default for Layer2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Layer2 {
     pub fn new() -> Self {
         Self
@@ -216,7 +222,7 @@ impl Layer2 {
             }
             if let Some(r) = room {
                 if !label.is_empty() {
-                    label.push_str(" ");
+                label.push(' ');
                 }
                 label.push_str(&format!("room={}", r));
             }
@@ -258,6 +264,12 @@ impl Layer2 {
 
 /// Layer 3: Unlimited depth. Semantic search against the full palace.
 pub struct Layer3;
+
+impl Default for Layer3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Layer3 {
     pub fn new() -> Self {
@@ -434,13 +446,13 @@ impl MemoryStack {
     /// Status of all layers.
     pub fn status(&self) -> LayerStatus {
         let identity_exists = self.identity_path.exists();
-        let token_estimate = identity_exists
-            .then(|| {
-                std::fs::read_to_string(&self.identity_path)
-                    .map(|s| s.len() / 4)
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0);
+        let token_estimate = if identity_exists {
+            std::fs::read_to_string(&self.identity_path)
+                .map(|s| s.len() / 4)
+                .unwrap_or(0)
+        } else {
+            0
+        };
 
         let total_drawers = PalaceDb::open(&self.palace_path)
             .map(|db| db.count())
@@ -853,8 +865,7 @@ mod tests {
         let palace_path = temp_dir.path().join("palace");
         let stack = MemoryStack::new(Some(palace_path), Some(identity_path));
         let status = stack.status();
-        assert!(status.total_drawers >= 0); // usize is always >= 0
-        assert!(status.l0_identity.tokens >= 0); // usize is always >= 0
+        // usize comparison checks removed - clippy flags >= 0 on unsigned types
     }
 
     // truncate_snippet tests

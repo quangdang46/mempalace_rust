@@ -310,7 +310,7 @@ pub async fn mine(
     project_dir: &Path,
     palace_path: &Path,
     wing_override: Option<&str>,
-    exclude_patterns: Option<&[String]>,
+    _exclude_patterns: Option<&[String]>,
 ) -> anyhow::Result<MiningResult> {
     let (wing, rooms) = load_config(project_dir)?;
     let wing = wing_override.unwrap_or(&wing);
@@ -328,7 +328,6 @@ pub async fn mine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_chunk_text_basic() {

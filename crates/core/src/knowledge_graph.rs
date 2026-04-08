@@ -128,6 +128,7 @@ impl KnowledgeGraph {
         Ok(eid)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_triple(
         &mut self,
         subject: &str,

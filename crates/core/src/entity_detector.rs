@@ -697,6 +697,7 @@ pub struct DetectionResult {
 
 #[derive(Debug, Clone)]
 struct ScoredEntity {
+    #[allow(unused)]
     name: String,
     person_score: i32,
     project_score: i32,
@@ -816,7 +817,7 @@ fn score_entity(name: &str, text: &str, lines: &[&str]) -> ScoredEntity {
         }
     }
     if pronoun_hits > 0 {
-        person_score += (pronoun_hits * 2) as i32;
+        person_score += pronoun_hits * 2;
         person_signals.push(format!("pronoun nearby ({}x)", pronoun_hits));
     }
 

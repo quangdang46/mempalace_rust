@@ -135,7 +135,7 @@ pub fn decompress(aaak_text: &str, people_map: &HashMap<String, String>) -> Stri
     }
 
     // Apply people_map in reverse: expand codes back to names
-    for (canonical, alias) in people_map {
+    for canonical in people_map.keys() {
         let code = &canonical[..canonical.len().min(3)].to_uppercase();
         result = result.replace(code, canonical);
     }
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_compress_empty() {
-        let mut people = HashMap::new();
+        let people = HashMap::new();
         assert_eq!(compress("", &people), "");
         assert_eq!(decompress("", &people), "");
     }

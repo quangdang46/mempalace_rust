@@ -72,8 +72,11 @@ pub struct SplitResult {
 #[derive(Debug, Clone)]
 struct SessionBoundary {
     start_idx: usize,
+    #[allow(unused)]
     timestamp_human: Option<String>,
+    #[allow(unused)]
     timestamp_iso: Option<String>,
+    #[allow(unused)]
     people: Vec<String>,
     subject: String,
 }
@@ -183,7 +186,7 @@ fn extract_timestamp(
                 .to_string();
 
             let day_z = format!("{:0>2}", day_str);
-            let time_safe = time_str.replace(':', "").replace(' ', "");
+            let time_safe = time_str.replace([':', ' '], "");
             let iso = format!("{}-{}-{}", year_str, mon, day_z);
             let human = format!("{}_{}", iso, time_safe);
             return (Some(human), Some(iso));
@@ -235,7 +238,7 @@ fn extract_people(
 fn extract_subject(lines: &[String], skip_re: &Regex) -> String {
     for line in lines {
         if line.starts_with("> ") {
-            let prompt = line[2..].trim();
+            let prompt = line.strip_prefix("> ").unwrap_or(line).trim();
             if !prompt.is_empty() && prompt.len() > 5 && !skip_re.is_match(prompt) {
                 let subject = prompt
                     .chars()

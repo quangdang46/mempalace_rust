@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
 fn expand_path(path: &str) -> PathBuf {
     if path.starts_with("~/") {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(&path[2..]);
+            return PathBuf::from(home).join(path.strip_prefix("~/").unwrap());
         }
     }
     PathBuf::from(path)
@@ -41,6 +41,7 @@ fn default_topic_wings() -> Vec<String> {
 
 fn default_hall_keywords() -> HashMap<String, Vec<String>> {
     let mut m = HashMap::new();
+    #[allow(clippy::useless_vec)]
     m.insert(
         "emotions".to_string(),
         vec![
@@ -50,6 +51,7 @@ fn default_hall_keywords() -> HashMap<String, Vec<String>> {
         .map(|s| s.to_string())
         .collect(),
     );
+    #[allow(clippy::useless_vec)]
     m.insert(
         "consciousness".to_string(),
         vec![
@@ -66,6 +68,7 @@ fn default_hall_keywords() -> HashMap<String, Vec<String>> {
         .map(|s| s.to_string())
         .collect(),
     );
+    #[allow(clippy::useless_vec)]
     m.insert(
         "memory".to_string(),
         vec![
@@ -75,6 +78,7 @@ fn default_hall_keywords() -> HashMap<String, Vec<String>> {
         .map(|s| s.to_string())
         .collect(),
     );
+    #[allow(clippy::useless_vec)]
     m.insert(
         "technical".to_string(),
         vec![
@@ -281,6 +285,7 @@ impl Config {
 
     /// Get the XDG-compliant state directory for runtime files.
     /// Order: XDG_STATE_HOME env var → platform fallback → config_dir fallback
+    #[allow(dead_code)]
     fn state_dir() -> anyhow::Result<PathBuf> {
         // 1. XDG_STATE_HOME env var takes priority
         if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
@@ -302,6 +307,7 @@ impl Config {
 
     /// Check if the old ~/.mempalace path exists and needs migration.
     /// Returns the old path if migration is needed, None otherwise.
+    #[allow(dead_code)]
     fn old_path() -> Option<PathBuf> {
         let old = expand_path("~/.mempalace");
         if old.exists() && old.is_dir() {
@@ -316,6 +322,7 @@ impl Config {
 
     /// Attempt to migrate from old ~/.mempalace path to new XDG path.
     /// Returns the number of files migrated.
+    #[allow(dead_code)]
     fn migrate_from_old() -> anyhow::Result<usize> {
         let old = Self::old_path().context("No old config path found to migrate from")?;
         let new = Self::config_dir()?;

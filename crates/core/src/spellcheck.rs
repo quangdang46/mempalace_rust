@@ -12,7 +12,6 @@
 //!   - Genuine typos in lowercase, flowing text
 //!   - Common fat-finger words
 
-use regex::Regex;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -168,7 +167,7 @@ fn suggest_correction(word: &str) -> Option<String> {
 
     for dict_word in get_system_words().iter() {
         let dist = edit_distance(&lower, dict_word);
-        if dist <= 3 && dist >= 1 {
+        if (1..=3).contains(&dist) {
             if let Some((best_dist, _)) = &best {
                 if dist < *best_dist {
                     best = Some((dist, dict_word.clone()));

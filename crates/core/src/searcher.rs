@@ -1,4 +1,3 @@
-use crate::constants::DEFAULT_N_RESULTS;
 use crate::palace_db::{PalaceDb, QueryResult};
 use anyhow::Context;
 use std::path::Path;
@@ -45,7 +44,7 @@ pub async fn search_memories(
     wing: Option<&str>,
     room: Option<&str>,
     n_results: usize,
-    embedding_model: Option<&str>,
+    _embedding_model: Option<&str>,
 ) -> anyhow::Result<SearchResponse> {
     let palace_db = PalaceDb::open(palace_path).context("Failed to open palace database")?;
 

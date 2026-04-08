@@ -515,7 +515,7 @@ fn split_into_segments(text: &str) -> Vec<String> {
     paragraphs
 }
 
-fn split_by_turns<'a>(lines: &[&'a str], turn_patterns: &[Regex]) -> Vec<String> {
+fn split_by_turns(lines: &[&str], turn_patterns: &[Regex]) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
@@ -610,9 +610,9 @@ mod tests {
     #[test]
     fn test_skip_code_lines() {
         let text = "```python\ndef hello():\n    print('hello')\n```\n\nThis is prose content.";
-        let result = extract_memories(text, 0.3);
+        let _result = extract_memories(text, 0.3);
         // Should not error on code blocks
-        assert!(result.len() >= 0); // usize is always >= 0
+        // usize comparison check removed - clippy flags >= 0 on unsigned types
     }
 
     #[test]
