@@ -544,14 +544,14 @@ main() {
     exit 1
   fi
 
-  # Determine target triplet and artifact name
-  local target artifact
+  # Determine platform suffix and artifact name (matches release.yml output)
+  local suffix artifact
   case "$os/$arch" in
-    linux/x86_64)   target="x86_64-unknown-linux-gnu"; artifact="mempalace-v${version_num}-${target}.tar.gz";;
-    linux/aarch64)  target="aarch64-unknown-linux-gnu"; artifact="mempalace-v${version_num}-${target}.tar.gz";;
-    macos/x86_64)   target="x86_64-apple-darwin";       artifact="mempalace-v${version_num}-${target}.tar.gz";;
-    macos/aarch64)  target="aarch64-apple-darwin";     artifact="mempalace-v${version_num}-${target}.tar.gz";;
-    windows/x86_64) target="x86_64-pc-windows-msvc";   artifact="mempalace-v${version_num}-${target}.zip";;
+    linux/x86_64)   suffix="linux-x86_64";   artifact="${bin}-${suffix}.tar.gz";;
+    linux/aarch64)  suffix="linux-aarch64";   artifact="${bin}-${suffix}.tar.gz";;
+    macos/x86_64)   suffix="macos-x86_64";   artifact="${bin}-${suffix}.tar.gz";;
+    macos/aarch64)  suffix="macos-aarch64";   artifact="${bin}-${suffix}.tar.gz";;
+    windows/x86_64) suffix="windows-x86_64"; artifact="${bin}-${suffix}.zip";;
     *)              log_err "No release artifact for $os/$arch"; exit 1;;
   esac
 
@@ -664,4 +664,7 @@ main() {
   fi
 }
 
-main "$@"
+# curl|bash safety: buffer entire script before executing
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]] || [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+    { main "$@"; }
+fi

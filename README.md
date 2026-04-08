@@ -53,7 +53,7 @@ Other memory systems try to fix this by letting AI decide what's worth rememberi
 
 ```bash
 # One-line install (Linux / macOS / Windows Git Bash)
-curl -fsSL https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh?$(date +%s)" | bash
 
 # Or build from source
 cargo install --path .
@@ -84,7 +84,7 @@ Three mining modes: **projects** (code and docs), **convos** (conversation expor
 The `install.sh` script automatically detects your installed AI tools and registers `mpr` as an MCP server — no manual config editing needed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh?$(date +%s)" | bash
 # → builds mpr, detects Claude Code / Cursor / Windsurf / ..., injects MCP config into each
 ```
 
@@ -885,7 +885,7 @@ No API key. No internet after install. Everything local.
 
 ```bash
 # Install
-curl -fsSL https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh?$(date +%s)" | bash
 
 # Or from source
 git clone https://github.com/quangdang46/mempalace_rust.git
