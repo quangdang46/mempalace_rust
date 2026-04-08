@@ -540,8 +540,8 @@ main() {
   # Determine target triplet and artifact name
   local target artifact
   case "$os/$arch" in
-    linux/x86_64)   target="x86_64-unknown-linux-musl"; artifact="mempalace-${version_num}-${target}.tar.gz";;
-    linux/aarch64)  target="aarch64-unknown-linux-musl"; artifact="mempalace-${version_num}-${target}.tar.gz";;
+    linux/x86_64)   target="x86_64-unknown-linux-gnu"; artifact="mempalace-${version_num}-${target}.tar.gz";;
+    linux/aarch64)  target="aarch64-unknown-linux-gnu"; artifact="mempalace-${version_num}-${target}.tar.gz";;
     macos/x86_64)   target="x86_64-apple-darwin";       artifact="mempalace-${version_num}-${target}.tar.gz";;
     macos/aarch64)  target="aarch64-apple-darwin";     artifact="mempalace-${version_num}-${target}.tar.gz";;
     windows/x86_64) target="x86_64-pc-windows-msvc";   artifact="mempalace-${version_num}-${target}.zip";;
