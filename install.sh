@@ -178,11 +178,11 @@ install_binary() {
 # -----------------------------------------------------------------------------
 acquire_lock() {
   local lockfile="${TMPDIR:-/tmp}/mempalace-install.lock"
-  local fd=200
 
-  # Attempt to create lock file
-  if (set -e; eval "exec $fd>\"$lockfile\"" 2>/dev/null); then
-    flock -n $fd && return 0 || true
+  # Attempt to create lock file atomically
+  if mkdir "$lockfile" 2>/dev/null; then
+    echo $$ > "$lockfile/pid"
+    return 0
   fi
 
   # Lock held — wait briefly
@@ -190,11 +190,18 @@ acquire_lock() {
   sleep 3
 
   # Try again
-  (set -e; eval "exec $fd>\"$lockfile\"") 2>/dev/null || true
-  flock -w 30 $fd && return 0 || {
-    log_err "Could not acquire install lock"
-    return 1
-  }
+  if mkdir "$lockfile" 2>/dev/null; then
+    echo $$ > "$lockfile/pid"
+    return 0
+  fi
+
+  log_err "Could not acquire install lock"
+  return 1
+}
+
+cleanup_lock() {
+  local lockfile="${TMPDIR:-/tmp}/mempalace-install.lock"
+  rm -rf "$lockfile"
 }
 
 # -----------------------------------------------------------------------------
@@ -568,7 +575,7 @@ main() {
   # Temporary directory for downloads
   local tmpdir
   tmpdir=$(mktemp -d)
-  trap "rm -rf $tmpdir" EXIT
+  trap "cleanup_lock; rm -rf $tmpdir" EXIT
 
   # Download
   local archive_path="${tmpdir}/${artifact}"
