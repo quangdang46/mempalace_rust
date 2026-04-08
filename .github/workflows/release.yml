@@ -12,8 +12,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: 'true'
+    steps:
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+
   release-linux:
     name: Release (linux)
+    needs: create-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +50,7 @@ jobs:
 
   release-macos:
     name: Release (macOS)
+    needs: create-release
     runs-on: macos-latest
     strategy:
       matrix:
@@ -60,6 +76,7 @@ jobs:
 
   release-windows:
     name: Release (Windows)
+    needs: create-release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
