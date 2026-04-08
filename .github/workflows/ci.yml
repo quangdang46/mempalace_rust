@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         toolchain: [stable]
 
     steps:
@@ -38,28 +38,49 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (warnings as errors)
-        run: |
-          if ($env:RUNNER_OS -eq "Windows") {
-            cargo clippy --no-default-features --all-targets -- -D warnings
-          } else {
-            cargo clippy --all-features --all-targets -- -D warnings
-          }
+        run: cargo clippy --all-features --all-targets -- -D warnings
 
       - name: Build
-        run: |
-          if ($env:RUNNER_OS -eq "Windows") {
-            cargo build --no-default-features --all-targets
-          } else {
-            cargo build --all-features --all-targets
-          }
+        run: cargo build --all-targets
 
       - name: Test
-        run: |
-          if ($env:RUNNER_OS -eq "Windows") {
-            cargo test --no-default-features --all-targets
-          } else {
-            cargo test --all-features --all-targets
-          }
+        run: cargo test --all-features --all-targets
+
+  windows-build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        toolchain: [stable]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings as errors)
+        run: cargo clippy --no-default-features --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --no-default-features --all-targets
+
+      - name: Test
+        run: cargo test --no-default-features --all-targets
 
       - name: Doc test
         run: cargo test --doc
