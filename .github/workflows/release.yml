@@ -12,23 +12,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   release:
-    name: Release (${{ matrix.target }})
-    needs: create-release
+    name: Release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -37,9 +22,6 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             tarball: mempalace-${{ github.ref_name }}-x86_64-unknown-linux-musl.tar.gz
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
-            tarball: mempalace-${{ github.ref_name }}-aarch64-unknown-linux-musl.tar.gz
           - os: macos-latest
             target: x86_64-apple-darwin
             tarball: mempalace-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz
@@ -60,16 +42,10 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          rustup target add aarch64-unknown-linux-musl
-          cargo install cross --version 1.6.0 || true
-
       - name: Build release
         run: |
           cargo build --release --locked --target ${{ matrix.target }}
-          if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
+          if [[ "${{ matrix.target }}" == "x86_64-pc-windows-msvc" ]]; then
             cd target/${{ matrix.target }}/release
             powershell -Command "Compress-Archive -Path 'mpr.exe' -DestinationPath '${{ matrix.tarball }}' -Force"
           else
@@ -78,23 +54,12 @@ jobs:
           fi
 
       - name: Generate SHA256
-        shell: bash
         run: |
-          if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
-            sha256sum target/${{ matrix.target }}/release/${{ matrix.tarball }} > target/${{ matrix.target }}/release/${{ matrix.tarball }}.sha256
-          else
-            sha256sum target/${{ matrix.target }}/release/${{ matrix.tarball }} > target/${{ matrix.target }}/release/${{ matrix.tarball }}.sha256
-          fi
-          cat target/${{ matrix.target }}/release/${{ matrix.tarball }}.sha256
+          sha256sum target/${{ matrix.target }}/release/${{ matrix.tarball }} > target/${{ matrix.target }}/release/${{ matrix.tarball }}.sha256
 
       - name: Upload artifact
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload ${{ github.ref_name }} target/${{ matrix.target }}/release/${{ matrix.tarball }} --clobber
-
-      - name: Upload SHA256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
           gh release upload ${{ github.ref_name }} target/${{ matrix.target }}/release/${{ matrix.tarball }}.sha256 --clobber
