@@ -612,7 +612,7 @@ mod tests {
         let text = "```python\ndef hello():\n    print('hello')\n```\n\nThis is prose content.";
         let result = extract_memories(text, 0.3);
         // Should not error on code blocks
-        assert!(result.len() >= 0);
+        assert!(result.len() >= 0); // usize is always >= 0
     }
 
     #[test]

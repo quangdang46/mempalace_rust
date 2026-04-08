@@ -853,8 +853,8 @@ mod tests {
         let palace_path = temp_dir.path().join("palace");
         let stack = MemoryStack::new(Some(palace_path), Some(identity_path));
         let status = stack.status();
-        assert!(status.total_drawers >= 0);
-        assert!(status.l0_identity.tokens >= 0);
+        assert!(status.total_drawers >= 0); // usize is always >= 0
+        assert!(status.l0_identity.tokens >= 0); // usize is always >= 0
     }
 
     // truncate_snippet tests
