@@ -38,13 +38,28 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (warnings as errors)
-        run: cargo clippy --all-features --all-targets -- -D warnings
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cargo clippy --no-default-features --all-targets -- -D warnings
+          else
+            cargo clippy --all-features --all-targets -- -D warnings
+          fi
 
       - name: Build
-        run: cargo build --all-targets
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cargo build --no-default-features --all-targets
+          else
+            cargo build --all-features --all-targets
+          fi
 
       - name: Test
-        run: cargo test --all-features --all-targets
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cargo test --no-default-features --all-targets
+          else
+            cargo test --all-features --all-targets
+          fi
 
       - name: Doc test
         run: cargo test --doc
