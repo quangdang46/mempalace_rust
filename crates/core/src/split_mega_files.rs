@@ -426,10 +426,12 @@ pub type SplitOutput = SplitResult;
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
     fn get_test_palace_path() -> PathBuf {
         PathBuf::from("/tmp/mempalace_test").join(".mempalace")
     }
 
+    #[allow(dead_code)]
     fn setup_test_palace() -> PathBuf {
         let palace_path = get_test_palace_path();
         let _ = fs::create_dir_all(&palace_path);

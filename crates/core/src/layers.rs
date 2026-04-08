@@ -643,7 +643,7 @@ mod tests {
     fn test_layer1_generate_with_content() {
         let temp_dir = tempdir().unwrap();
         let db = create_test_palace_db(temp_dir.path());
-        let palace_path = temp_dir.path().join("palace");
+        let _palace_path = temp_dir.path().join("palace");
         let l1 = Layer1::new(None);
         let text = l1.generate(&db);
         assert!(text.contains("L1 — ESSENTIAL STORY"));
@@ -737,7 +737,7 @@ mod tests {
     async fn test_layer3_search_no_results() {
         let temp_dir = tempdir().unwrap();
         let db = create_test_palace_db(temp_dir.path());
-        let palace_path = temp_dir.path().join("palace");
+        let _palace_path = temp_dir.path().join("palace");
         let l3 = Layer3::new();
         let text = l3.search(&db, "nonexistent query xyz", None, None, 5).await;
         assert!(text.contains("No results") || text.contains("L3"));
@@ -747,7 +747,7 @@ mod tests {
     async fn test_layer3_search_with_results() {
         let temp_dir = tempdir().unwrap();
         let db = create_test_palace_db(temp_dir.path());
-        let palace_path = temp_dir.path().join("palace");
+        let _palace_path = temp_dir.path().join("palace");
         let l3 = Layer3::new();
         let text = l3.search(&db, "Rust programming", None, None, 5).await;
         assert!(text.contains("L3 — SEARCH RESULTS"));
@@ -758,7 +758,7 @@ mod tests {
     async fn test_layer3_search_raw() {
         let temp_dir = tempdir().unwrap();
         let db = create_test_palace_db(temp_dir.path());
-        let palace_path = temp_dir.path().join("palace");
+        let _palace_path = temp_dir.path().join("palace");
         let l3 = Layer3::new();
         let hits = l3.search_raw(&db, "family", None, None, 5).await;
         assert!(!hits.is_empty());
@@ -772,7 +772,7 @@ mod tests {
     async fn test_layer3_search_respects_n_results() {
         let temp_dir = tempdir().unwrap();
         let db = create_test_palace_db(temp_dir.path());
-        let palace_path = temp_dir.path().join("palace");
+        let _palace_path = temp_dir.path().join("palace");
         let l3 = Layer3::new();
         let hits = l3.search_raw(&db, "the", None, None, 2).await;
         assert!(hits.len() <= 2);
@@ -782,7 +782,7 @@ mod tests {
     async fn test_layer3_search_with_wing_filter() {
         let temp_dir = tempdir().unwrap();
         let db = create_test_palace_db(temp_dir.path());
-        let palace_path = temp_dir.path().join("palace");
+        let _palace_path = temp_dir.path().join("palace");
         let l3 = Layer3::new();
         let hits = l3
             .search_raw(&db, "project", Some("personal"), None, 5)
@@ -864,7 +864,7 @@ mod tests {
         std::fs::write(&identity_path, "Test identity content").unwrap();
         let palace_path = temp_dir.path().join("palace");
         let stack = MemoryStack::new(Some(palace_path), Some(identity_path));
-        let status = stack.status();
+        let _status = stack.status();
         // usize comparison checks removed - clippy flags >= 0 on unsigned types
     }
 
