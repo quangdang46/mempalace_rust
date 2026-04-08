@@ -309,8 +309,7 @@ fn text_result(text: String) -> Result<CallToolResult, ErrorData> {
 }
 
 fn ok_json<T: serde::Serialize>(value: T) -> Result<CallToolResult, ErrorData> {
-    let s = serde_json::to_string(&value)
-        .map_err(|e| internal_error_safe(&e))?;
+    let s = serde_json::to_string(&value).map_err(|e| internal_error_safe(&e))?;
     text_result(s)
 }
 
@@ -611,8 +610,7 @@ fn tool_set_config(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     if input.key == "collection_name" {
         let mut cfg = state.config.clone();
         cfg.collection_name = input.value;
-        cfg.save()
-            .map_err(|e| internal_error_safe(&e))?;
+        cfg.save().map_err(|e| internal_error_safe(&e))?;
     }
     ok_json(serde_json::json!({ "updated": input.key }))
 }

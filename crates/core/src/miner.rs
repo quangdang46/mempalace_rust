@@ -10,8 +10,8 @@ const MIN_CHUNK_SIZE: usize = 50;
 
 static READABLE_EXTENSIONS: &[&str] = &[
     ".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml", ".html", ".css",
-    ".java", ".go", ".rs", ".rb", ".sh", ".csv", ".sql", ".toml",
-    ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ixx",
+    ".java", ".go", ".rs", ".rb", ".sh", ".csv", ".sql", ".toml", ".c", ".cc", ".cpp", ".cxx",
+    ".h", ".hh", ".hpp", ".hxx", ".inl", ".ixx",
 ];
 
 static SKIP_DIRS: &[&str] = &[
