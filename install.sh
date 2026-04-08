@@ -217,7 +217,7 @@ Options:
   --version VERSION   Specific version to install (default: latest from GitHub)
   --path DIR          Installation directory (default: /usr/local/bin or ~/.local/bin)
   --easy-mode        Add installation directory to PATH automatically
-  --auto-mcp         Auto-install MCP server config into Claude Code, Codex, Cursor, etc.
+  --no-auto-mcp  Skip auto-installing MCP server config into Claude Code, Codex, Cursor, etc.
   --dry-run           Show what would be installed without installing
   --repo USER/REPO   GitHub repository (default: quangdang46/mempalace_rust)
   --bin NAME         Binary name (default: mpr)
@@ -515,14 +515,14 @@ auto_install_mcp() {
 # -----------------------------------------------------------------------------
 main() {
   local version="" install_dir="" easy_mode="false" dry_run="false"
-  local auto_mcp="false" repo="${DEFAULT_REPO}" bin="${DEFAULT_BIN}"
+  local auto_mcp="true" repo="${DEFAULT_REPO}" bin="${DEFAULT_BIN}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --version)      version="$2"; shift 2;;
       --path)         install_dir="$2"; shift 2;;
       --easy-mode)    easy_mode="true"; shift;;
       --dry-run)      dry_run="true"; shift;;
-      --auto-mcp)    auto_mcp="true"; shift;;
+      --no-auto-mcp) auto_mcp="false"; shift;;
       --repo)         repo="$2"; shift 2;;
       --bin)          bin="$2"; shift 2;;
       -h|--help)      usage; exit 0;;
