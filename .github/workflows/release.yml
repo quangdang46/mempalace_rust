@@ -20,7 +20,6 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
             tarball: mempalace-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
           - os: macos-latest
             target: x86_64-apple-darwin
@@ -29,8 +28,7 @@ jobs:
             target: aarch64-apple-darwin
             tarball: mempalace-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz
           - os: windows-latest
-            target: x86_64-pc-windows-gnu
-            tarball: mempalace-${{ github.ref_name }}-x86_64-pc-windows-gnu.zip
+            tarball: mempalace-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
 
     steps:
       - name: Checkout
@@ -40,26 +38,32 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
 
       - name: Build release
         run: |
+          cargo build --release --locked
+          tar -czf ${{ matrix.tarball }} -C target/release mpr
+
+      - name: Build macOS targets
+        if: matrix.target != ''
+        run: |
           cargo build --release --locked --target ${{ matrix.target }}
-          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cd target/${{ matrix.target }}/release
-            powershell -Command "Compress-Archive -Path 'mpr.exe' -DestinationPath '../${{ matrix.tarball }}' -Force"
-          else
-            cd target/${{ matrix.target }}/release
-            tar -czf ../${{ matrix.tarball }} mpr
-          fi
+          tar -czf ${{ matrix.tarball }} -C target/${{ matrix.target }}/release mpr
+
+      - name: Build Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          cargo build --release --locked
+          cd target/release
+          powershell -Command "Compress-Archive -Path 'mpr.exe' -DestinationPath '../${{ matrix.tarball }}' -Force"
 
       - name: Generate SHA256
         run: |
-          sha256sum target/${{ matrix.target }}/release/${{ matrix.tarball }} > target/${{ matrix.target }}/release/${{ matrix.tarball }}.sha256
+          sha256sum ${{ matrix.tarball }} > ${{ matrix.tarball }}.sha256
 
       - name: Upload artifact
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.ref_name }} target/${{ matrix.target }}/release/${{ matrix.tarball }} --clobber
-          gh release upload ${{ github.ref_name }} target/${{ matrix.target }}/release/${{ matrix.tarball }}.sha256 --clobber
+          gh release upload ${{ github.ref_name }} ${{ matrix.tarball }} --clobber
+          gh release upload ${{ github.ref_name }} ${{ matrix.tarball }}.sha256 --clobber
