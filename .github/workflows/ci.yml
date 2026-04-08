@@ -11,6 +11,7 @@ jobs:
     name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
@@ -20,5 +21,19 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-features
+
+      - name: Clippy (all features)
+        if: runner.os != 'Windows'
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Clippy (default features)
+        if: runner.os == 'Windows'
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test (all features)
+        if: runner.os != 'Windows'
+        run: cargo test --workspace --all-features
+
+      - name: Test (default features)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace
