@@ -378,20 +378,35 @@ mod tests {
     #[test]
     fn test_data_dir_respects_xdg_data_home() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let xdg_path = temp_dir.path().to_str().unwrap();
-        std::env::set_var("XDG_DATA_HOME", xdg_path);
+        // Canonicalize to resolve symlinks that may cause path mismatches
+        let xdg_path = temp_dir.path().canonicalize().unwrap();
+        let xdg_str = xdg_path.to_str().unwrap();
+        std::env::set_var("XDG_DATA_HOME", xdg_str);
         let result = Config::data_dir().unwrap();
-        assert!(result.to_str().unwrap().starts_with(xdg_path));
+        let result_str = result.to_str().unwrap();
+        assert!(
+            result_str.starts_with(xdg_str) || result_str.starts_with(&*xdg_path.to_string_lossy()),
+            "result {} should start with {}",
+            result_str,
+            xdg_str
+        );
         std::env::remove_var("XDG_DATA_HOME");
     }
 
     #[test]
     fn test_state_dir_respects_xdg_state_home() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let xdg_path = temp_dir.path().to_str().unwrap();
-        std::env::set_var("XDG_STATE_HOME", xdg_path);
+        let xdg_path = temp_dir.path().canonicalize().unwrap();
+        let xdg_str = xdg_path.to_str().unwrap();
+        std::env::set_var("XDG_STATE_HOME", xdg_str);
         let result = Config::state_dir().unwrap();
-        assert!(result.to_str().unwrap().starts_with(xdg_path));
+        let result_str = result.to_str().unwrap();
+        assert!(
+            result_str.starts_with(xdg_str) || result_str.starts_with(&*xdg_path.to_string_lossy()),
+            "result {} should start with {}",
+            result_str,
+            xdg_str
+        );
         std::env::remove_var("XDG_STATE_HOME");
     }
 
