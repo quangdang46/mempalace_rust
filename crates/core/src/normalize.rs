@@ -539,7 +539,11 @@ fn try_aider_md(content: &str) -> Option<String> {
             }
 
             // User message (strip the "> " prefix)
-            let user_text = trimmed_line.strip_prefix("> ").unwrap_or(trimmed_line).trim().to_string();
+            let user_text = trimmed_line
+                .strip_prefix("> ")
+                .unwrap_or(trimmed_line)
+                .trim()
+                .to_string();
             if !user_text.is_empty() {
                 messages.push(("user".to_string(), user_text));
             }

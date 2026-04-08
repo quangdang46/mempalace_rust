@@ -222,7 +222,7 @@ impl Layer2 {
             }
             if let Some(r) = room {
                 if !label.is_empty() {
-                label.push(' ');
+                    label.push(' ');
                 }
                 label.push_str(&format!("room={}", r));
             }
