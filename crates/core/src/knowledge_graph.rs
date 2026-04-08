@@ -55,6 +55,8 @@ impl KnowledgeGraph {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(db_path)?;
+        // Enable WAL mode for better concurrent read performance and reduced SQLITE_BUSY risk
+        let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
         let kg = Self { conn };
         kg.init_db()?;
         Ok(kg)
