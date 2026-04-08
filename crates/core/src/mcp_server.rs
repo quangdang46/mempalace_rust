@@ -18,6 +18,18 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
 use tokio::runtime::Runtime;
+use tracing::warn;
+
+// ---------------------------------------------------------------------------
+// Error helpers
+// ---------------------------------------------------------------------------
+
+/// Returns a generic error to the client while logging the actual error server-side.
+/// This prevents leaking internal paths/schemas through error messages.
+fn internal_error_safe<E: std::fmt::Display>(e: &E) -> ErrorData {
+    warn!("Internal error: {}", e);
+    ErrorData::internal_error("Internal tool error", None)
+}
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -298,7 +310,7 @@ fn text_result(text: String) -> Result<CallToolResult, ErrorData> {
 
 fn ok_json<T: serde::Serialize>(value: T) -> Result<CallToolResult, ErrorData> {
     let s = serde_json::to_string(&value)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     text_result(s)
 }
 
@@ -375,13 +387,13 @@ fn tool_mine(state: &AppState, args: JsonObject) -> Result<CallToolResult, Error
             None,
         ));
     }
-    let rt = Runtime::new().map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+    let rt = Runtime::new().map_err(|e| internal_error_safe(&e))?;
     rt.block_on(async {
         let mut miner = crate::miner::Miner::new(&state.palace_path, "general", vec![])
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            .map_err(|e| internal_error_safe(&e))?;
         match miner.mine_file(std::path::Path::new(&input.path)).await {
             Ok(count) => ok_json(serde_json::json!({ "mined": count })),
-            Err(e) => Err(ErrorData::internal_error(e.to_string(), None)),
+            Err(e) => Err(internal_error_safe(&e)),
         }
     })
 }
@@ -398,7 +410,7 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     let input: Input = parse_args(args)?;
     // Sync fallback: open DB and search without async
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     // Search synchronously using naive similarity matching
     let results = db.get_all(
         input.drawer.as_deref(),
@@ -433,7 +445,7 @@ fn tool_full_search(state: &AppState, args: JsonObject) -> Result<CallToolResult
     let input: Input = parse_args(args)?;
     // Sync fallback: search all entries by keyword similarity
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     let results = db.get_all(None, None, 10);
     let out: Vec<serde_json::Value> = results
         .into_iter()
@@ -485,12 +497,12 @@ fn tool_write_memory(state: &AppState, args: JsonObject) -> Result<CallToolResul
     let id = format!("mem_{}", uuid::Uuid::new_v4());
     let wing = input.drawer.as_deref().unwrap_or("general");
     let mut db = crate::palace_db::PalaceDb::open(&state.palace_path)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     db.add(
         &[(&id, &input.value)],
         &[&[("wing", wing), ("key", &input.key)]],
     )
-    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+    .map_err(|e| internal_error_safe(&e))?;
     ok_json(serde_json::json!({ "id": id }))
 }
 
@@ -520,9 +532,9 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
     let input: Input = parse_args(args)?;
     let id = format!("diary_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
     let mut db = crate::palace_db::PalaceDb::open(&state.palace_path)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     db.add(&[(&id, &input.text)], &[&[("wing", "diary")]])
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     ok_json(serde_json::json!({ "id": id }))
 }
 
@@ -547,7 +559,7 @@ fn tool_get_entity(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     let input: Input = parse_args(args)?;
     let _result = crate::entity_registry::EntityRegistry::load(&state.palace_path)
         .map(|r| r.lookup(&input.name, ""))
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     ok_json(serde_json::json!({ "entity": { "name": input.name } }))
 }
 
@@ -576,7 +588,7 @@ fn tool_doctor(state: &AppState, _args: JsonObject) -> Result<CallToolResult, Er
         Ok(report) => ok_json(
             serde_json::json!({ "healthy": report.healthy, "check_count": report.checks.len() }),
         ),
-        Err(e) => Err(ErrorData::internal_error(e.to_string(), None)),
+        Err(e) => Err(internal_error_safe(&e)),
     }
 }
 
@@ -600,7 +612,7 @@ fn tool_set_config(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         let mut cfg = state.config.clone();
         cfg.collection_name = input.value;
         cfg.save()
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            .map_err(|e| internal_error_safe(&e))?;
     }
     ok_json(serde_json::json!({ "updated": input.key }))
 }
@@ -621,7 +633,7 @@ fn tool_set_people(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     state
         .config
         .save_people_map(&input.people)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     ok_json(serde_json::json!({ "saved": input.people.len() }))
 }
 
@@ -668,9 +680,9 @@ fn tool_feedback(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
     }
     let input: Input = parse_args(args)?;
     let kg = crate::knowledge_graph::KnowledgeGraph::open(&state.palace_path.join("knowledge.db"))
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     kg.record_feedback(&input.drawer_id, &input.query, &input.outcome)
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        .map_err(|e| internal_error_safe(&e))?;
     ok_json(serde_json::json!({
         "drawer_id": input.drawer_id,
         "query": input.query,
