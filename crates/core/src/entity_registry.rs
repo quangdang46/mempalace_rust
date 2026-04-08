@@ -51,7 +51,7 @@ pub struct EntityRegistry {
     path: std::path::PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct LookupResult {
     pub entity_type: String,
     pub confidence: f64,

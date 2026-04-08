@@ -558,14 +558,25 @@ fn tool_get_entity(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         name: String,
     }
     let input: Input = parse_args(args)?;
-    let _result = crate::entity_registry::EntityRegistry::load(&state.palace_path)
-        .map(|r| r.lookup(&input.name, ""))
-        .map_err(|e| internal_error_safe(&e))?;
-    ok_json(serde_json::json!({ "entity": { "name": input.name } }))
+    match crate::entity_registry::EntityRegistry::load(&state.palace_path) {
+        Ok(r) => {
+            let result = r.lookup(&input.name, "");
+            ok_json(serde_json::json!({ "entity": result }))
+        }
+        Err(_) => ok_json(serde_json::json!({ "entity": { "name": input.name, "found": false, "note": "entity registry not initialized" } })),
+    }
+}
+
+fn kg_path(state: &AppState) -> std::path::PathBuf {
+    state
+        .palace_path
+        .parent()
+        .unwrap_or(&state.palace_path)
+        .join("knowledge_graph.db")
 }
 
 fn tool_graph_dump(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    let stats = crate::knowledge_graph::KnowledgeGraph::open(&state.palace_path)
+    let stats = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
         .and_then(|kg| kg.stats())
         .map(|s| {
             serde_json::json!({
@@ -679,7 +690,7 @@ fn tool_feedback(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
         outcome: String,
     }
     let input: Input = parse_args(args)?;
-    let kg = crate::knowledge_graph::KnowledgeGraph::open(&state.palace_path.join("knowledge.db"))
+    let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
         .map_err(|e| internal_error_safe(&e))?;
     kg.record_feedback(&input.drawer_id, &input.query, &input.outcome)
         .map_err(|e| internal_error_safe(&e))?;
