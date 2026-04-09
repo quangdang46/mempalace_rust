@@ -459,20 +459,59 @@ impl Miner {
     }
 
     fn detect_room(&self, filepath: &Path, _content: &str) -> String {
-        let project_path = filepath.parent().unwrap_or(filepath);
-        if let Ok(relative) = filepath.strip_prefix(project_path) {
-            let relative_str = relative.to_string_lossy().to_lowercase();
-            let filename = filepath
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
+        let filename = filepath
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let path_parts: Vec<String> = filepath
+            .parent()
+            .into_iter()
+            .flat_map(|parent| parent.components())
+            .map(|part| part.as_os_str().to_string_lossy().to_lowercase())
+            .collect();
 
+        for part in path_parts {
             for room in &self.rooms {
-                let room_name_lower = room.name.to_lowercase();
-
-                if relative_str.contains(&room_name_lower) || room_name_lower.contains(&filename) {
+                let mut candidates = vec![room.name.to_lowercase()];
+                candidates.extend(room.keywords.iter().map(|keyword| keyword.to_lowercase()));
+                if candidates.iter().any(|candidate| {
+                    part == *candidate || candidate.contains(&part) || part.contains(candidate)
+                }) {
                     return room.name.clone();
                 }
+            }
+        }
+
+        for room in &self.rooms {
+            let room_name_lower = room.name.to_lowercase();
+            if room_name_lower.contains(&filename) || filename.contains(&room_name_lower) {
+                return room.name.clone();
+            }
+        }
+
+        let content_lower = _content
+            .chars()
+            .take(2000)
+            .collect::<String>()
+            .to_lowercase();
+        let mut best_room = None;
+        let mut best_score = 0;
+        for room in &self.rooms {
+            let score: usize = room
+                .keywords
+                .iter()
+                .chain(std::iter::once(&room.name))
+                .map(|keyword| content_lower.matches(&keyword.to_lowercase()).count())
+                .sum();
+            if score > best_score {
+                best_score = score;
+                best_room = Some(room.name.clone());
+            }
+        }
+
+        if best_score > 0 {
+            if let Some(room) = best_room {
+                return room;
             }
         }
 
@@ -817,6 +856,22 @@ mod tests {
         let mut remine = remine;
         let second = remine.mine_file(&file).await.unwrap();
         assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn test_detect_room_matches_room_keywords_and_path_segments() {
+        let rooms = vec![RoomMapping {
+            name: "backend".to_string(),
+            description: "Backend code".to_string(),
+            keywords: vec!["authentication".to_string(), "jwt".to_string()],
+        }];
+        let miner = Miner::new(std::path::Path::new("/tmp"), "test", rooms).unwrap();
+
+        let room = miner.detect_room(
+            std::path::Path::new("/tmp/project/backend/auth.py"),
+            "JWT authentication uses bearer tokens",
+        );
+        assert_eq!(room, "backend");
     }
 
     #[test]

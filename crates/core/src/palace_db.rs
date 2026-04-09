@@ -49,6 +49,16 @@ impl PalaceDb {
         room: Option<&str>,
         n_results: usize,
     ) -> anyhow::Result<Vec<QueryResult>> {
+        self.query_sync(query_text, wing, room, n_results)
+    }
+
+    pub fn query_sync(
+        &self,
+        query_text: &str,
+        wing: Option<&str>,
+        room: Option<&str>,
+        n_results: usize,
+    ) -> anyhow::Result<Vec<QueryResult>> {
         let query_lower = query_text.to_lowercase();
 
         let mut results: Vec<(String, f64, &DocumentEntry)> = self

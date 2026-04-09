@@ -409,32 +409,28 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
         limit: Option<usize>,
     }
     let input: Input = parse_args(args)?;
-    // Sync fallback: open DB and search without async
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
-    // Search synchronously using naive similarity matching
-    let results = db.get_all(
-        input.drawer.as_deref(),
-        input.room.as_deref(),
-        input.limit.unwrap_or(10),
-    );
-    let out: Vec<serde_json::Value> = results
-        .into_iter()
-        .filter(|r| {
-            r.documents
-                .first()
-                .map(|c| c.contains(&input.query))
-                .unwrap_or(false)
-        })
-        .map(|r| {
-            serde_json::json!({
-                "id": r.ids.first(),
-                "content": r.documents.first(),
-                "distance": r.distances.first(),
-            })
-        })
-        .collect();
-    ok_json(out)
+    let query_results = db
+        .query_sync(
+            &input.query,
+            input.drawer.as_deref(),
+            input.room.as_deref(),
+            input.limit.unwrap_or(crate::constants::DEFAULT_N_RESULTS),
+        )
+        .map_err(|e| internal_error_safe(&e))?;
+    let response = crate::searcher::SearchResponse {
+        query: input.query,
+        filters: crate::searcher::SearchFilters {
+            wing: input.drawer,
+            room: input.room,
+        },
+        results: query_results
+            .into_iter()
+            .map(crate::searcher::SearchResult::from)
+            .collect(),
+    };
+    ok_json(serde_json::to_value(response).map_err(|e| internal_error_safe(&e))?)
 }
 
 fn tool_full_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -563,7 +559,9 @@ fn tool_get_entity(state: &AppState, args: JsonObject) -> Result<CallToolResult,
             let result = r.lookup(&input.name, "");
             ok_json(serde_json::json!({ "entity": result }))
         }
-        Err(_) => ok_json(serde_json::json!({ "entity": { "name": input.name, "found": false, "note": "entity registry not initialized" } })),
+        Err(_) => ok_json(
+            serde_json::json!({ "entity": { "name": input.name, "found": false, "note": "entity registry not initialized" } }),
+        ),
     }
 }
 
