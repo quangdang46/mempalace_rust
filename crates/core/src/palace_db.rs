@@ -129,6 +129,39 @@ impl PalaceDb {
         Ok(())
     }
 
+    pub fn file_already_mined(&self, source_file: &str, check_mtime: bool) -> bool {
+        let Some(entry) = self.documents.values().find(|entry| {
+            entry.metadata.get("source_file").and_then(|v| v.as_str()) == Some(source_file)
+        }) else {
+            return false;
+        };
+
+        if !check_mtime {
+            return true;
+        }
+
+        let Some(stored_mtime) = entry
+            .metadata
+            .get("source_mtime")
+            .and_then(|v| v.as_str())
+            .and_then(|v| v.parse::<f64>().ok())
+        else {
+            return false;
+        };
+
+        let Ok(metadata) = std::fs::metadata(source_file) else {
+            return false;
+        };
+        let Ok(modified) = metadata.modified() else {
+            return false;
+        };
+        let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) else {
+            return false;
+        };
+
+        (duration.as_secs_f64() - stored_mtime).abs() < f64::EPSILON
+    }
+
     pub fn flush(&mut self) -> anyhow::Result<()> {
         self.save()
     }

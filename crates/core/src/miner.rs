@@ -1,14 +1,13 @@
+use crate::constants::{CHUNK_OVERLAP, CHUNK_SIZE, MIN_CHUNK_SIZE};
 use crate::palace_db::PalaceDb;
 use crate::room_detector_local::{detect_rooms_from_folders, RoomMapping};
+use chrono::Utc;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use walkdir::WalkDir;
 
-const CHUNK_SIZE: usize = 800;
-const CHUNK_OVERLAP: usize = 100;
-const MIN_CHUNK_SIZE: usize = 50;
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 static READABLE_EXTENSIONS: &[&str] = &[
@@ -504,7 +503,7 @@ impl Miner {
                             chunks.push((chunk.to_string(), chunk_index));
                             chunk_index += 1;
                         }
-                        start = actual_end + 2;
+                        start = actual_end.saturating_sub(CHUNK_OVERLAP);
                         continue;
                     }
                 }
@@ -517,7 +516,7 @@ impl Miner {
                             chunks.push((chunk.to_string(), chunk_index));
                             chunk_index += 1;
                         }
-                        start = actual_end + 1;
+                        start = actual_end.saturating_sub(CHUNK_OVERLAP);
                         continue;
                     }
                 }
@@ -540,16 +539,26 @@ impl Miner {
     }
 
     fn generate_drawer_id(wing: &str, room: &str, source_file: &str, chunk_index: usize) -> String {
-        let input = format!("{}_{}_{}_{}", source_file, wing, room, chunk_index);
+        let input = format!("{}{}", source_file, chunk_index);
         let mut hasher = Sha256::new();
         hasher.update(input.as_bytes());
         let result = hasher.finalize();
-        let hex_str = hex::encode(&result[..4]);
-        format!("drawer_{}_{}_{}_{}", wing, room, chunk_index, hex_str)
+        let hex_str = hex::encode(result);
+        format!("drawer_{}_{}_{}", wing, room, &hex_str[..24])
     }
 
     pub async fn mine_file(&mut self, filepath: &Path) -> anyhow::Result<usize> {
         let source_file = filepath.to_string_lossy().to_string();
+
+        if self.palace_db.file_already_mined(&source_file, true) {
+            return Ok(0);
+        }
+
+        let source_mtime = std::fs::metadata(filepath)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs_f64().to_string());
 
         let content = match std::fs::read_to_string(filepath) {
             Ok(c) => c,
@@ -584,13 +593,25 @@ impl Miner {
             .map(|(id, (content, _))| (id.as_str(), content.as_str()))
             .collect();
 
+        let filed_at = Utc::now().to_rfc3339();
+        let chunk_indexes: Vec<String> = chunks
+            .iter()
+            .map(|(_, chunk_index)| chunk_index.to_string())
+            .collect();
         let mut metadata: Vec<Vec<(&str, &str)>> = Vec::new();
-        for _ in &drawer_ids {
-            metadata.push(vec![
+        for (i, _) in drawer_ids.iter().enumerate() {
+            let mut chunk_metadata = vec![
                 ("wing", self.wing.as_str()),
                 ("room", room.as_str()),
                 ("source_file", source_file.as_str()),
-            ]);
+                ("chunk_index", chunk_indexes[i].as_str()),
+                ("added_by", "mempalace"),
+                ("filed_at", filed_at.as_str()),
+            ];
+            if let Some(source_mtime) = source_mtime.as_deref() {
+                chunk_metadata.push(("source_mtime", source_mtime));
+            }
+            metadata.push(chunk_metadata);
         }
         let metadata_refs: Vec<&[(&str, &str)]> = metadata.iter().map(|v| v.as_slice()).collect();
 
@@ -610,8 +631,10 @@ impl Miner {
         for filepath in file_paths {
             match self.mine_file(&filepath).await {
                 Ok(count) => {
-                    files_processed += 1;
-                    chunks_created += count;
+                    if count > 0 {
+                        files_processed += 1;
+                        chunks_created += count;
+                    }
                 }
                 Err(e) => {
                     errors.push(format!("Error mining {:?}: {}", filepath, e));
@@ -692,8 +715,10 @@ pub async fn mine(
     for filepath in file_paths {
         match miner.mine_file(&filepath).await {
             Ok(count) => {
-                files_processed += 1;
-                chunks_created += count;
+                if count > 0 {
+                    files_processed += 1;
+                    chunks_created += count;
+                }
             }
             Err(e) => errors.push(format!("Error mining {:?}: {}", filepath, e)),
         }
@@ -762,7 +787,36 @@ mod tests {
 
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
-        assert!(id1.starts_with("drawer_wing1_room1_0_"));
+        assert!(id1.starts_with("drawer_wing1_room1_"));
+        assert_eq!(id1.len(), "drawer_wing1_room1_".len() + 24);
+    }
+
+    #[tokio::test]
+    async fn test_mine_file_skips_when_source_mtime_matches() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let palace = temp.path().join("palace");
+        let file = temp.path().join("app.py");
+        std::fs::write(&file, "print('hello')\n".repeat(40)).unwrap();
+
+        let rooms = vec![RoomMapping {
+            name: "general".to_string(),
+            description: "General".to_string(),
+            keywords: vec![],
+        }];
+
+        let mut miner = Miner::new(&palace, "wing", rooms.clone()).unwrap();
+        let first = miner.mine_file(&file).await.unwrap();
+        assert!(first > 0);
+        miner.palace_db.flush().unwrap();
+
+        let remine = Miner::new(&palace, "wing", rooms).unwrap();
+        assert!(remine
+            .palace_db
+            .file_already_mined(&file.to_string_lossy(), true));
+
+        let mut remine = remine;
+        let second = remine.mine_file(&file).await.unwrap();
+        assert_eq!(second, 0);
     }
 
     #[test]
