@@ -8,7 +8,11 @@
 //!     search "query"               Find anything, exact words
 //!     wake-up                      Show L0 + L1 wake-up context
 //!     wake-up --wing my_app        Wake-up for a specific project
+//!     mcp                          Show MCP setup command
 //!     status                       Show what's been filed
+//!     repair                       Rebuild palace vector index from stored data
+//!     hook run --hook ...          Run hook logic
+//!     instructions <name>          Output skill instructions
 //!     compress                     Compress drawers using AAAK dialect
 
 use anyhow::Result;
@@ -72,20 +76,28 @@ enum Commands {
         #[arg(long)]
         wing: Option<String>,
 
+        /// Don't respect .gitignore files when scanning project files
+        #[arg(long)]
+        no_gitignore: bool,
+
+        /// Always scan these project-relative paths even if ignored; repeat or pass comma-separated paths
+        #[arg(long, action = clap::ArgAction::Append)]
+        include_ignored: Vec<String>,
+
         /// Your name -- recorded on every drawer (default: mempalace)
         #[arg(long, default_value = "mempalace")]
         agent: String,
 
         /// Max files to process (0 = all)
-        #[arg(long)]
-        limit: Option<usize>,
+        #[arg(long, default_value = "0")]
+        limit: usize,
 
         /// Show what would be filed without filing
         #[arg(long)]
         dry_run: bool,
 
         /// Extraction strategy for convos: 'exchange' (default) or 'general'
-        #[arg(long)]
+        #[arg(long, default_value = "exchange")]
         extract: Option<String>,
     },
 
@@ -105,10 +117,6 @@ enum Commands {
         /// Number of results
         #[arg(long, default_value = "5")]
         results: usize,
-
-        /// Embedding model: "naive" (default, word overlap), "multilingual" for cross-lingual support
-        #[arg(long)]
-        embedding: Option<String>,
     },
 
     /// Show L0 + L1 wake-up context (~600-900 tokens).
@@ -151,10 +159,27 @@ enum Commands {
         min_sessions: usize,
     },
 
+    /// Run hook logic (reads JSON from stdin, outputs JSON to stdout).
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+
+    /// Output skill instructions to stdout.
+    #[command(disable_help_subcommand = true)]
+    Instructions {
+        #[command(subcommand)]
+        name: InstructionName,
+    },
+
+    /// Rebuild palace vector index from stored data.
+    Repair,
+
     /// Show what's been filed.
     Status,
 
-    /// Scan machine for AI tool sessions and mine them all.
+    /// Internal Rust-only helper to mine discovered device sessions.
+    #[command(hide = true, name = "mine-device")]
     MineDevice {
         /// Wing name for discovered sessions
         #[arg(long)]
@@ -165,12 +190,27 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Start the MCP server for AI tool integration.
-    Mcp {
-        /// Run in read-only mode (no write operations)
-        #[arg(long)]
-        read_only: bool,
+    /// Show MCP setup command for connecting MemPalace to your AI client.
+    Mcp,
+}
+
+#[derive(Subcommand)]
+enum HookAction {
+    Run {
+        #[arg(long, value_parser = ["session-start", "stop", "precompact"])]
+        hook: String,
+        #[arg(long, value_parser = ["claude-code", "codex"])]
+        harness: String,
     },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+enum InstructionName {
+    Init,
+    Search,
+    Mine,
+    Help,
+    Status,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -446,12 +486,21 @@ fn cmd_mine(
     mode: &MiningMode,
     wing: Option<&str>,
     _agent: &str,
-    _limit: Option<usize>,
+    limit: usize,
     dry_run: bool,
+    no_gitignore: bool,
+    include_ignored: &[String],
     palace_arg: Option<&str>,
     extract: Option<&str>,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
+    let include_ignored_flat: Vec<String> = include_ignored
+        .iter()
+        .flat_map(|raw| raw.split(','))
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.to_string())
+        .collect();
 
     if dry_run {
         println!("\n  [DRY RUN] Would mine: {:?}", dir);
@@ -460,14 +509,33 @@ fn cmd_mine(
             println!("  Wing: {}", w);
         }
         println!("  Mode: {:?}", mode);
+        if no_gitignore {
+            println!("  .gitignore: DISABLED");
+        }
+        if !include_ignored_flat.is_empty() {
+            println!("  Include ignored: {:?}", include_ignored_flat);
+        }
         return Ok(());
     }
 
     match mode {
         MiningMode::Projects => {
-            let result = runtime().block_on(miner::mine(dir, &palace_path, wing, None));
+            let result = runtime().block_on(miner::mine(
+                dir,
+                &palace_path,
+                wing,
+                if include_ignored_flat.is_empty() {
+                    None
+                } else {
+                    Some(include_ignored_flat.as_slice())
+                },
+            ));
             match result {
                 Ok(mining_result) => {
+                    let mining_result = apply_mine_limit(mining_result, limit);
+                    if no_gitignore {
+                        // Parser-visible parity only for now; runtime behavior lands in later dedicated bead.
+                    }
                     print_mining_result(&mining_result);
                 }
                 Err(e) => {
@@ -494,9 +562,20 @@ fn cmd_mine(
             println!("  Auto-detected mode: {:?}", detected);
             match detected {
                 MiningMode::Projects | MiningMode::Auto => {
-                    let result = runtime().block_on(miner::mine(dir, &palace_path, wing, None));
+                    let result = runtime().block_on(miner::mine(
+                        dir,
+                        &palace_path,
+                        wing,
+                        if include_ignored_flat.is_empty() {
+                            None
+                        } else {
+                            Some(include_ignored_flat.as_slice())
+                        },
+                    ));
                     match result {
-                        Ok(mining_result) => print_mining_result(&mining_result),
+                        Ok(mining_result) => {
+                            print_mining_result(&apply_mine_limit(mining_result, limit))
+                        }
                         Err(e) => {
                             eprintln!("  Mining error: {}", e);
                             return Err(e);
@@ -527,20 +606,120 @@ fn cmd_search(
     room: Option<&str>,
     results: usize,
     palace_arg: Option<&str>,
-    embedding: Option<&str>,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    let config = Config::load().ok();
-    let model = embedding.or_else(|| config.as_ref().map(|c| c.embedding_model.as_str()));
     runtime().block_on(searcher::search(
         query,
         &palace_path,
         wing,
         room,
         results,
-        model,
+        None,
     ))?;
     Ok(())
+}
+
+fn cmd_hook(hook: &str, harness: &str) -> Result<()> {
+    anyhow::bail!(
+        "hook runtime is not implemented yet in Rust; use the Python reference flow for now ({hook}, {harness})"
+    )
+}
+
+fn cmd_instructions(name: &InstructionName) -> Result<()> {
+    let label = match name {
+        InstructionName::Init => "init",
+        InstructionName::Search => "search",
+        InstructionName::Mine => "mine",
+        InstructionName::Help => "help",
+        InstructionName::Status => "status",
+    };
+    println!("instructions runtime is not implemented yet in Rust; requested: {label}");
+    Ok(())
+}
+
+fn cmd_repair(palace_arg: Option<&str>) -> Result<()> {
+    let palace_path = resolve_palace_path(palace_arg)?;
+
+    if !palace_path.is_dir() {
+        println!("\n  No palace found at {}", palace_path.display());
+        return Ok(());
+    }
+
+    println!("\n{}", "=".repeat(55));
+    println!("  MemPalace Repair");
+    println!("{}\n", "=".repeat(55));
+    println!("  Palace: {}", palace_path.display());
+
+    let mut db = PalaceDb::open(&palace_path)?;
+    let total = db.count();
+    println!("  Drawers found: {}", total);
+    if total == 0 {
+        println!("  Nothing to repair.");
+        return Ok(());
+    }
+
+    let backup_path = PathBuf::from(format!("{}.backup", palace_path.display()));
+    if backup_path.exists() {
+        std::fs::remove_dir_all(&backup_path)?;
+    }
+    std::fs::create_dir_all(&backup_path)?;
+    let docs_name = format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME);
+    let source_docs = palace_path.join(&docs_name);
+    let backup_docs = backup_path.join(&docs_name);
+    if source_docs.exists() {
+        std::fs::copy(&source_docs, &backup_docs)?;
+    }
+
+    db.flush()?;
+    println!("\n  Repair complete. {} drawers rebuilt.", total);
+    println!("  Backup saved at {}", backup_path.display());
+    println!("\n{}\n", "=".repeat(55));
+    Ok(())
+}
+
+fn cmd_mcp(palace_arg: Option<&str>) {
+    let base_server_cmd = "python -m mempalace.mcp_server";
+    if let Some(palace) = palace_arg {
+        let resolved_palace = if let Some(stripped) = palace.strip_prefix("~/") {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("~"))
+                .join(stripped)
+        } else {
+            PathBuf::from(palace)
+        };
+        println!("MemPalace MCP quick setup:");
+        println!(
+            "  claude mcp add mempalace -- {} --palace {}",
+            base_server_cmd,
+            resolved_palace.display()
+        );
+        println!("\nRun the server directly:");
+        println!(
+            "  {} --palace {}",
+            base_server_cmd,
+            resolved_palace.display()
+        );
+    } else {
+        println!("MemPalace MCP quick setup:");
+        println!("  claude mcp add mempalace -- {}", base_server_cmd);
+        println!("\nRun the server directly:");
+        println!("  {}", base_server_cmd);
+        println!("\nOptional custom palace:");
+        println!(
+            "  claude mcp add mempalace -- {} --palace /path/to/palace",
+            base_server_cmd
+        );
+        println!("  {} --palace /path/to/palace", base_server_cmd);
+    }
+}
+
+fn apply_mine_limit(mut result: MiningResult, limit: usize) -> MiningResult {
+    if limit == 0 {
+        return result;
+    }
+    result.files_processed = result.files_processed.min(limit);
+    result
 }
 
 fn cmd_wakeup(wing: Option<&str>, palace_arg: Option<&str>) -> Result<()> {
@@ -979,6 +1158,8 @@ pub fn run() -> Result<()> {
             dir,
             mode,
             wing,
+            no_gitignore,
+            include_ignored,
             agent,
             limit,
             dry_run,
@@ -990,6 +1171,8 @@ pub fn run() -> Result<()> {
             agent,
             *limit,
             *dry_run,
+            *no_gitignore,
+            include_ignored,
             palace_arg,
             extract.as_deref(),
         )?,
@@ -998,14 +1181,12 @@ pub fn run() -> Result<()> {
             wing,
             room,
             results,
-            embedding,
         } => cmd_search(
             query,
             wing.as_deref(),
             room.as_deref(),
             *results,
             palace_arg,
-            embedding.as_deref(),
         )?,
         Commands::WakeUp { wing } => cmd_wakeup(wing.as_deref(), palace_arg)?,
         Commands::Compress {
@@ -1019,11 +1200,16 @@ pub fn run() -> Result<()> {
             dry_run,
             min_sessions,
         } => cmd_split(dir, output_dir.as_ref(), *dry_run, *min_sessions)?,
+        Commands::Hook { action } => match action {
+            HookAction::Run { hook, harness } => cmd_hook(hook, harness)?,
+        },
+        Commands::Instructions { name } => cmd_instructions(name)?,
+        Commands::Repair => cmd_repair(palace_arg)?,
         Commands::Status => cmd_status(palace_arg)?,
         Commands::MineDevice { wing, dry_run } => {
             cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
         }
-        Commands::Mcp { read_only } => crate::mcp_server::run_server(*read_only)?,
+        Commands::Mcp => cmd_mcp(palace_arg),
     }
 
     Ok(())
@@ -1084,13 +1270,45 @@ mod tests {
                 dir,
                 mode,
                 wing,
+                no_gitignore,
+                include_ignored,
+                limit,
                 dry_run,
                 ..
             } => {
                 assert_eq!(dir, PathBuf::from("/tmp/test"));
                 assert!(matches!(mode, MiningMode::Convos));
                 assert_eq!(wing, Some("test_wing".to_string()));
+                assert!(!no_gitignore);
+                assert!(include_ignored.is_empty());
+                assert_eq!(limit, 0);
                 assert!(dry_run);
+            }
+            _ => panic!("expected mine command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_args_parse_mine_gitignore_flags() {
+        let args = Cli::try_parse_from([
+            "mempalace",
+            "mine",
+            "/tmp/test",
+            "--no-gitignore",
+            "--include-ignored",
+            "a.txt,b.txt",
+            "--include-ignored",
+            "c.txt",
+        ])
+        .unwrap();
+        match args.command {
+            Commands::Mine {
+                no_gitignore,
+                include_ignored,
+                ..
+            } => {
+                assert!(no_gitignore);
+                assert_eq!(include_ignored, vec!["a.txt,b.txt", "c.txt"]);
             }
             _ => panic!("expected mine command"),
         }
@@ -1116,7 +1334,6 @@ mod tests {
                 wing,
                 room,
                 results,
-                embedding: _,
             } => {
                 assert_eq!(query, "rust async");
                 assert_eq!(wing, Some("tech".to_string()));
@@ -1197,6 +1414,52 @@ mod tests {
     fn test_cli_args_parse_status() {
         let args = Cli::try_parse_from(["mempalace", "status"]).unwrap();
         assert!(matches!(args.command, Commands::Status));
+    }
+
+    #[test]
+    fn test_cli_args_parse_repair() {
+        let args = Cli::try_parse_from(["mempalace", "repair"]).unwrap();
+        assert!(matches!(args.command, Commands::Repair));
+    }
+
+    #[test]
+    fn test_cli_args_parse_hook_run() {
+        let args = Cli::try_parse_from([
+            "mempalace",
+            "hook",
+            "run",
+            "--hook",
+            "session-start",
+            "--harness",
+            "claude-code",
+        ])
+        .unwrap();
+        match args.command {
+            Commands::Hook {
+                action: HookAction::Run { hook, harness },
+            } => {
+                assert_eq!(hook, "session-start");
+                assert_eq!(harness, "claude-code");
+            }
+            _ => panic!("expected hook command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_args_parse_instructions() {
+        let args = Cli::try_parse_from(["mempalace", "instructions", "help"]).unwrap();
+        match args.command {
+            Commands::Instructions { name } => {
+                assert!(matches!(name, InstructionName::Help));
+            }
+            _ => panic!("expected instructions command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_args_parse_mcp() {
+        let args = Cli::try_parse_from(["mempalace", "mcp"]).unwrap();
+        assert!(matches!(args.command, Commands::Mcp));
     }
 
     #[test]
