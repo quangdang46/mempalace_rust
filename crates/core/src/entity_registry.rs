@@ -60,7 +60,7 @@ pub struct LookupResult {
     pub needs_disambiguation: bool,
 }
 
-static COMMON_ENGLISH_WORDS: &[&str] = &[
+pub static COMMON_ENGLISH_WORDS: &[&str] = &[
     "ever",
     "grace",
     "will",
@@ -139,6 +139,22 @@ impl EntityRegistry {
         let content = serde_json::to_string_pretty(&self.data)?;
         std::fs::write(&self.path, content)?;
         Ok(())
+    }
+
+    pub fn mode(&self) -> &str {
+        &self.data.mode
+    }
+
+    pub fn people(&self) -> &HashMap<String, EntityEntry> {
+        &self.data.people
+    }
+
+    pub fn projects(&self) -> &[String] {
+        &self.data.projects
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub fn seed(

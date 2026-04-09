@@ -11,7 +11,7 @@
 //! from minute one — before a single session is indexed.
 
 use crate::entity_detector::{detect_from_content, PersonEntity};
-use crate::entity_registry::EntityRegistry;
+use crate::entity_registry::{EntityRegistry, COMMON_ENGLISH_WORDS};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -146,6 +146,53 @@ pub struct PersonEntry {
     pub context: String,
 }
 
+fn hr() {
+    println!("\n{}", "─".repeat(58));
+}
+
+fn header(text: &str) {
+    println!("\n{}", "=".repeat(58));
+    println!("  {}", text);
+    println!("{}", "=".repeat(58));
+}
+
+fn ask(prompt: &str, default: Option<&str>) -> String {
+    if let Some(default) = default {
+        prompt_string(prompt, default)
+    } else if is_interactive() {
+        print!("  {}: ", prompt);
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_ok() {
+            input.trim().to_string()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    }
+}
+
+fn yn(prompt: &str, default_yes: bool) -> bool {
+    if !is_interactive() {
+        return default_yes;
+    }
+
+    let default = if default_yes { "Y/n" } else { "y/N" };
+    print!("  {} [{}]: ", prompt, default);
+    std::io::Write::flush(&mut std::io::stdout()).ok();
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() {
+        let trimmed = input.trim().to_lowercase();
+        if trimmed.is_empty() {
+            return default_yes;
+        }
+        trimmed.starts_with('y')
+    } else {
+        default_yes
+    }
+}
+
 /// Generate AAAK entity registry + critical facts bootstrap from onboarding data.
 /// These files teach the AI about the user's world from session one.
 pub fn generate_aaak_bootstrap(
@@ -155,15 +202,13 @@ pub fn generate_aaak_bootstrap(
     mode: Mode,
     config_dir: &Path,
 ) -> anyhow::Result<(PathBuf, PathBuf)> {
-    // If config_dir is a file path (e.g., registry.json), use its parent
-    let base_dir = if config_dir.is_file() {
-        config_dir.parent().unwrap_or(config_dir)
+    let mempalace_dir = if config_dir.as_os_str().is_empty() {
+        std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".mempalace"))
+            .unwrap_or_else(|_| PathBuf::from(".mempalace"))
     } else {
-        config_dir
+        config_dir.to_path_buf()
     };
-    let mempalace_dir = std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join(".mempalace"))
-        .unwrap_or_else(|_| base_dir.to_path_buf());
     if !mempalace_dir.exists() {
         std::fs::create_dir_all(&mempalace_dir)?;
     }
@@ -280,13 +325,14 @@ pub fn generate_aaak_bootstrap(
 /// Programmatic setup without interactive prompts.
 /// Used in tests and CLI with --non-interactive flag.
 pub fn quick_setup(
-    config_path: &Path,
+    config_dir: &Path,
     mode: Mode,
     people: Vec<(String, String, String)>,
     projects: Vec<String>,
-    _aliases: Option<HashMap<String, String>>,
-) -> anyhow::Result<HashMap<String, String>> {
-    let mut registry = EntityRegistry::load(config_path)?;
+    aliases: Option<HashMap<String, String>>,
+) -> anyhow::Result<EntityRegistry> {
+    let registry_path = config_dir.join("entity_registry.json");
+    let mut registry = EntityRegistry::load(&registry_path)?;
 
     let people_refs: Vec<(&str, &str, &str)> = people
         .iter()
@@ -295,42 +341,14 @@ pub fn quick_setup(
 
     let projects_refs: Vec<&str> = projects.iter().map(|s| s.as_str()).collect();
 
-    // Aliases seeding handled separately if needed
-    registry.seed(mode.as_str(), people_refs, projects_refs, None)?;
+    let alias_refs = aliases.as_ref().map(|map| {
+        map.iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect::<HashMap<&str, &str>>()
+    });
 
-    let summary = registry.summary();
-    tracing::info!("Registry seeded:\n{}", summary);
-
-    // Generate bootstrap files
-    let people_entries: Vec<PersonEntry> = people
-        .into_iter()
-        .map(|(name, context, relationship)| PersonEntry {
-            name,
-            context,
-            relationship,
-        })
-        .collect();
-
-    let (registry_path, facts_path) = generate_aaak_bootstrap(
-        &people_entries,
-        &projects,
-        &mode.default_wings(),
-        mode,
-        config_path,
-    )?;
-
-    let mut result = HashMap::new();
-    result.insert(
-        "registry_path".to_string(),
-        registry_path.to_string_lossy().to_string(),
-    );
-    result.insert(
-        "facts_path".to_string(),
-        facts_path.to_string_lossy().to_string(),
-    );
-    result.insert("summary".to_string(), summary);
-
-    Ok(result)
+    registry.seed(mode.as_str(), people_refs, projects_refs, alias_refs)?;
+    Ok(registry)
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +392,179 @@ pub fn auto_detect_from_directory(
         .into_iter()
         .filter(|p| !known_names.contains(&p.name.to_lowercase()) && p.confidence >= 0.7)
         .collect()
+}
+
+pub fn warn_ambiguous(people: &[PersonEntry]) -> Vec<String> {
+    people
+        .iter()
+        .filter(|p| COMMON_ENGLISH_WORDS.contains(&p.name.to_lowercase().as_str()))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+fn ask_projects(mode: Mode) -> Vec<String> {
+    if mode == Mode::Personal {
+        return Vec::new();
+    }
+
+    hr();
+    println!(
+        "\n  What are your main projects? (These help MemPalace distinguish project\n  names from person names — e.g. \"Lantern\" the project vs. \"Lantern\" the word.)\n\n  Type 'done' when finished.\n"
+    );
+
+    let mut projects = Vec::new();
+    loop {
+        let proj = ask("Project", None);
+        let trimmed = proj.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("done") {
+            break;
+        }
+        projects.push(trimmed.to_string());
+    }
+    projects
+}
+
+fn ask_wings(mode: Mode) -> Vec<String> {
+    let defaults = mode.default_wings();
+    hr();
+    println!(
+        "\n  Wings are the top-level categories in your memory palace.\n\n  Suggested wings for {} mode:\n    {}\n\n  Press enter to keep these, or type your own comma-separated list.\n",
+        mode.as_str(),
+        defaults.join(", ")
+    );
+
+    let custom = ask("Wings", None);
+    if custom.trim().is_empty() {
+        defaults
+    } else {
+        custom
+            .split(',')
+            .map(|w| w.trim())
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_string())
+            .collect()
+    }
+}
+
+fn save_wing_config(config_dir: &Path, wings: &[String]) -> anyhow::Result<PathBuf> {
+    std::fs::create_dir_all(config_dir)?;
+    let wing_config_path = config_dir.join("wing_config.json");
+    let payload = serde_json::json!({
+        "default_wing": "wing_general",
+        "wings": wings
+            .iter()
+            .map(|wing| {
+                let key = format!("wing_{}", wing.to_lowercase().replace(' ', "_"));
+                (
+                    key,
+                    serde_json::json!({
+                        "type": "topic",
+                        "keywords": [wing],
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
+    });
+    std::fs::write(&wing_config_path, serde_json::to_string_pretty(&payload)?)?;
+    Ok(wing_config_path)
+}
+
+pub fn run_onboarding(
+    directory: &Path,
+    config_dir: &Path,
+    auto_detect: bool,
+) -> anyhow::Result<EntityRegistry> {
+    let mode = prompt_mode();
+    let (mut people, aliases) = prompt_people(mode);
+    let projects = ask_projects(mode);
+    let wings = ask_wings(mode);
+
+    if auto_detect
+        && yn(
+            "\nScan your files for additional names we might have missed?",
+            true,
+        )
+    {
+        let dir_input = ask("Directory to scan", Some(&directory.to_string_lossy()));
+        let scan_dir = PathBuf::from(dir_input);
+        let known_people: Vec<PersonEntity> = people
+            .iter()
+            .map(|p| PersonEntity {
+                name: p.name.clone(),
+                confidence: 1.0,
+                context: p.context.clone(),
+            })
+            .collect();
+
+        let detected = auto_detect_from_directory(&scan_dir, &known_people);
+        if !detected.is_empty() {
+            hr();
+            println!("\n  Found {} additional name candidates:\n", detected.len());
+            for entity in detected {
+                println!(
+                    "    {:20} confidence={:.0}%",
+                    entity.name,
+                    entity.confidence * 100.0
+                );
+                if ask("    Add as (p)erson or (s)kip?", None)
+                    .trim()
+                    .eq_ignore_ascii_case("p")
+                {
+                    let rel = ask(&format!("    Relationship/role for {}?", entity.name), None);
+                    let ctx = if mode == Mode::Personal {
+                        "personal".to_string()
+                    } else if mode == Mode::Work {
+                        "work".to_string()
+                    } else {
+                        let raw = ask("    Context — (p)ersonal or (w)ork?", None);
+                        if raw.trim().to_lowercase().starts_with('w') {
+                            "work".to_string()
+                        } else {
+                            "personal".to_string()
+                        }
+                    };
+                    people.push(PersonEntry {
+                        name: entity.name,
+                        relationship: rel,
+                        context: ctx,
+                    });
+                }
+            }
+        }
+    }
+
+    let ambiguous = warn_ambiguous(&people);
+    if !ambiguous.is_empty() {
+        hr();
+        println!(
+            "\n  Heads up — these names are also common English words:\n    {}\n\n  MemPalace will check the context before treating them as person names.\n  For example: \"I picked up Riley\" → person.\n               \"Have you ever tried\" → adverb.\n",
+            ambiguous.join(", ")
+        );
+    }
+
+    let people_tuples = people
+        .iter()
+        .map(|p| (p.name.clone(), p.context.clone(), p.relationship.clone()))
+        .collect();
+    let registry = quick_setup(
+        config_dir,
+        mode,
+        people_tuples,
+        projects.clone(),
+        Some(aliases),
+    )?;
+    let _ = generate_aaak_bootstrap(&people, &projects, &wings, mode, config_dir)?;
+    let _ = save_wing_config(config_dir, &wings)?;
+
+    header("Setup Complete");
+    println!();
+    println!("  {}", registry.summary());
+    println!("\n  Wings: {}", wings.join(", "));
+    println!("\n  Registry saved to: {}", registry.path().display());
+    println!("\n  Your AI will know your world from the first session.");
+    println!();
+
+    Ok(registry)
 }
 
 // ---------------------------------------------------------------------------
@@ -420,11 +611,64 @@ pub fn prompt_mode() -> Mode {
     }
 }
 
-/// Prompt user for people (non-interactive stub for testing).
-pub fn prompt_people(_mode: Mode) -> Vec<PersonEntry> {
-    // Interactive prompts require a full CLI — this is a placeholder
-    // that returns empty vec. Use quick_setup() for programmatic use.
-    Vec::new()
+/// Prompt user for people and aliases.
+pub fn prompt_people(mode: Mode) -> (Vec<PersonEntry>, HashMap<String, String>) {
+    let mut people = Vec::new();
+    let mut aliases = HashMap::new();
+
+    if mode == Mode::Personal || mode == Mode::Combo {
+        hr();
+        println!(
+            "\n  Personal world — who are the important people in your life?\n\n  Format: name, relationship (e.g. \"Riley, daughter\" or just \"Devon\")\n  For nicknames, you'll be asked separately.\n  Type 'done' when finished.\n"
+        );
+        loop {
+            let entry = ask("Person", None);
+            let trimmed = entry.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("done") {
+                break;
+            }
+            let mut parts = trimmed.splitn(2, ',').map(|s| s.trim());
+            let name = parts.next().unwrap_or_default().to_string();
+            let relationship = parts.next().unwrap_or_default().to_string();
+            if !name.is_empty() {
+                let nick = ask(&format!("Nickname for {}? (or enter to skip)", name), None);
+                if !nick.trim().is_empty() {
+                    aliases.insert(nick.trim().to_string(), name.clone());
+                }
+                people.push(PersonEntry {
+                    name,
+                    relationship,
+                    context: "personal".to_string(),
+                });
+            }
+        }
+    }
+
+    if mode == Mode::Work || mode == Mode::Combo {
+        hr();
+        println!(
+            "\n  Work world — who are the colleagues, clients, or collaborators\n  you'd want to find in your notes?\n\n  Format: name, role (e.g. \"Ben, co-founder\" or just \"Sarah\")\n  Type 'done' when finished.\n"
+        );
+        loop {
+            let entry = ask("Person", None);
+            let trimmed = entry.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("done") {
+                break;
+            }
+            let mut parts = trimmed.splitn(2, ',').map(|s| s.trim());
+            let name = parts.next().unwrap_or_default().to_string();
+            let relationship = parts.next().unwrap_or_default().to_string();
+            if !name.is_empty() {
+                people.push(PersonEntry {
+                    name,
+                    relationship,
+                    context: "work".to_string(),
+                });
+            }
+        }
+    }
+
+    (people, aliases)
 }
 
 #[cfg(test)]
@@ -449,8 +693,6 @@ mod tests {
     #[test]
     fn test_quick_setup() {
         let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("registry.json");
-
         let people = vec![
             (
                 "Alice".to_string(),
@@ -465,11 +707,12 @@ mod tests {
         ];
         let projects = vec!["ProjectX".to_string()];
 
-        let result = quick_setup(&config_path, Mode::Personal, people, projects, None).unwrap();
+        let result = quick_setup(temp_dir.path(), Mode::Personal, people, projects, None).unwrap();
 
-        assert!(result.contains_key("registry_path"));
-        assert!(result.contains_key("facts_path"));
-        assert!(result.contains_key("summary"));
+        assert_eq!(result.mode(), "personal");
+        assert!(result.people().contains_key("Alice"));
+        assert!(result.projects().contains(&"ProjectX".to_string()));
+        assert!(temp_dir.path().join("entity_registry.json").exists());
     }
 
     #[test]
@@ -500,6 +743,78 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_aaak_bootstrap_collision() {
+        let temp_dir = TempDir::new().unwrap();
+        let people = vec![
+            PersonEntry {
+                name: "Alice".to_string(),
+                relationship: "friend".to_string(),
+                context: "work".to_string(),
+            },
+            PersonEntry {
+                name: "Alison".to_string(),
+                relationship: "coworker".to_string(),
+                context: "work".to_string(),
+            },
+        ];
+
+        let (registry_path, _) = generate_aaak_bootstrap(
+            &people,
+            &[],
+            &["work".to_string()],
+            Mode::Work,
+            temp_dir.path(),
+        )
+        .unwrap();
+        let registry_content = std::fs::read_to_string(registry_path).unwrap();
+        assert!(registry_content.contains("ALI=Alice"));
+        assert!(registry_content.contains("ALIS=Alison"));
+    }
+
+    #[test]
+    fn test_generate_aaak_bootstrap_no_relationship() {
+        let temp_dir = TempDir::new().unwrap();
+        let people = vec![PersonEntry {
+            name: "Bob".to_string(),
+            relationship: "".to_string(),
+            context: "work".to_string(),
+        }];
+
+        let (registry_path, _) = generate_aaak_bootstrap(
+            &people,
+            &[],
+            &["work".to_string()],
+            Mode::Work,
+            temp_dir.path(),
+        )
+        .unwrap();
+        let registry_content = std::fs::read_to_string(registry_path).unwrap();
+        assert!(registry_content.contains("BOB=Bob"));
+    }
+
+    #[test]
+    fn test_generate_aaak_bootstrap_respects_config_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let people = vec![PersonEntry {
+            name: "Riley".to_string(),
+            relationship: "daughter".to_string(),
+            context: "personal".to_string(),
+        }];
+
+        let (registry_path, facts_path) = generate_aaak_bootstrap(
+            &people,
+            &[],
+            &["family".to_string()],
+            Mode::Personal,
+            temp_dir.path(),
+        )
+        .unwrap();
+
+        assert_eq!(registry_path.parent(), Some(temp_dir.path()));
+        assert_eq!(facts_path.parent(), Some(temp_dir.path()));
+    }
+
+    #[test]
     fn test_auto_detect_from_directory() {
         let temp_dir = TempDir::new().unwrap();
         let dir = temp_dir.path();
@@ -516,5 +831,47 @@ mod tests {
         // Just verify it runs without error
         let _detected = auto_detect_from_directory(dir, &known_people);
         // Detection results depend on entity_detector confidence thresholds
+    }
+
+    #[test]
+    fn test_warn_ambiguous_flags_common_words() {
+        let people = vec![
+            PersonEntry {
+                name: "Grace".to_string(),
+                relationship: "friend".to_string(),
+                context: "personal".to_string(),
+            },
+            PersonEntry {
+                name: "Riley".to_string(),
+                relationship: "daughter".to_string(),
+                context: "personal".to_string(),
+            },
+        ];
+        let result = warn_ambiguous(&people);
+        assert!(result.contains(&"Grace".to_string()));
+        assert!(!result.contains(&"Riley".to_string()));
+    }
+
+    #[test]
+    fn test_quick_setup_preserves_aliases() {
+        let temp_dir = TempDir::new().unwrap();
+        let people = vec![(
+            "Alice".to_string(),
+            "personal".to_string(),
+            "daughter".to_string(),
+        )];
+        let aliases = HashMap::from([("Ali".to_string(), "Alice".to_string())]);
+
+        let registry = quick_setup(
+            temp_dir.path(),
+            Mode::Personal,
+            people,
+            Vec::new(),
+            Some(aliases),
+        )
+        .unwrap();
+
+        assert!(registry.people().contains_key("Alice"));
+        assert!(registry.people().contains_key("Ali"));
     }
 }

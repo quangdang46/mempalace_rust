@@ -321,11 +321,17 @@ fn scan_and_detect_entities(dir: &PathBuf) -> DetectedEntities {
 /// - In interactive mode, could prompt for confirmations (stub for now)
 fn confirm_entities(detected: &DetectedEntities, yes: bool) -> DetectedEntities {
     // Load registry to check rejected entities from default path
-    let registry_path = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mempalace")
-        .join("registry.json");
+    let registry_path = Config::load()
+        .ok()
+        .and_then(|cfg| cfg.init().ok())
+        .map(|path| path.parent().unwrap_or(&path).join("entity_registry.json"))
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".mempalace")
+                .join("entity_registry.json")
+        });
     let rejected_names: Vec<String> = EntityRegistry::load(&registry_path)
         .ok()
         .map(|r| r.get_rejected().to_vec())
@@ -371,6 +377,21 @@ fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
     println!("  MemPalace Init");
     println!("{}", "=".repeat(55));
 
+    let config = Config::load()?;
+    let config_path = config.init()?;
+    let config_dir = config_path.parent().unwrap_or(&config_path);
+
+    if !yes {
+        let _registry = crate::onboarding::run_onboarding(dir, config_dir, true)?;
+        println!("  Config saved: {:?}", config_path);
+        println!();
+        println!("  Next step:");
+        println!("    mempalace mine {:?}", dir);
+        println!();
+        println!("{}", "=".repeat(55));
+        return Ok(());
+    }
+
     // Pass 1: scan for entities
     println!("\n  Scanning for entities in: {:?}", dir);
     let detected = scan_and_detect_entities(dir);
@@ -412,8 +433,6 @@ fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
     }
 
     // Pass 3: initialize config
-    let config = Config::load()?;
-    let config_path = config.init()?;
     println!();
     println!("  Config saved: {:?}", config_path);
     println!();
@@ -999,10 +1018,11 @@ fn cmd_split(
         ));
         match result {
             Ok(split_result) => {
+                let created_any = !split_result.files_created.is_empty();
                 total_sessions += split_result.sessions_found;
                 files_created.extend(split_result.files_created);
                 errors.extend(split_result.errors);
-                if !dry_run && !split_result.files_created.is_empty() {
+                if !dry_run && created_any {
                     let backup = file_path.with_extension("mega_backup");
                     match std::fs::rename(&file_path, &backup) {
                         Ok(_) => println!("  → Original renamed to {}", backup.display()),
