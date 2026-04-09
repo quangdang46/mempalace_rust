@@ -1,12 +1,15 @@
 use crate::palace_db::PalaceDb;
 use crate::room_detector_local::{detect_rooms_from_folders, RoomMapping};
+use regex::Regex;
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use walkdir::WalkDir;
 
 const CHUNK_SIZE: usize = 800;
 const CHUNK_OVERLAP: usize = 100;
 const MIN_CHUNK_SIZE: usize = 50;
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 static READABLE_EXTENSIONS: &[&str] = &[
     ".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml", ".html", ".css",
@@ -26,18 +29,387 @@ static SKIP_DIRS: &[&str] = &[
     ".next",
     "coverage",
     ".mempalace",
-    ".target",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".cache",
+    ".tox",
+    ".nox",
+    ".idea",
+    ".vscode",
+    ".ipynb_checkpoints",
+    ".eggs",
+    "htmlcov",
+    "target",
 ];
 
 static SKIP_FILES: &[&str] = &[
     "mempalace.yaml",
     "mempalace.yml",
-    "mempalace.json",
-    "mempalace.lock",
+    "mempal.yaml",
+    "mempal.yml",
     ".gitignore",
     "package-lock.json",
-    "Cargo.lock",
 ];
+
+#[derive(Debug, Clone)]
+struct GitignoreRule {
+    pattern: String,
+    anchored: bool,
+    dir_only: bool,
+    negated: bool,
+}
+
+#[derive(Debug, Clone)]
+struct GitignoreMatcher {
+    base_dir: std::path::PathBuf,
+    rules: Vec<GitignoreRule>,
+}
+
+impl GitignoreMatcher {
+    fn from_dir(dir_path: &Path) -> Option<Self> {
+        let gitignore_path = dir_path.join(".gitignore");
+        if !gitignore_path.is_file() {
+            return None;
+        }
+
+        let content = std::fs::read_to_string(&gitignore_path).ok()?;
+        let mut rules = Vec::new();
+
+        for raw_line in content.lines() {
+            let mut line = raw_line.trim().to_string();
+            if line.is_empty() {
+                continue;
+            }
+
+            if line.starts_with("\\#") || line.starts_with("\\!") {
+                line = line[1..].to_string();
+            } else if line.starts_with('#') {
+                continue;
+            }
+
+            let negated = line.starts_with('!');
+            if negated {
+                line = line[1..].to_string();
+            }
+
+            let anchored = line.starts_with('/');
+            if anchored {
+                line = line.trim_start_matches('/').to_string();
+            }
+
+            let dir_only = line.ends_with('/');
+            if dir_only {
+                line = line.trim_end_matches('/').to_string();
+            }
+
+            if line.is_empty() {
+                continue;
+            }
+
+            rules.push(GitignoreRule {
+                pattern: line,
+                anchored,
+                dir_only,
+                negated,
+            });
+        }
+
+        if rules.is_empty() {
+            None
+        } else {
+            Some(Self {
+                base_dir: dir_path.to_path_buf(),
+                rules,
+            })
+        }
+    }
+
+    fn matches(&self, path: &Path, is_dir: bool) -> Option<bool> {
+        let relative = path.strip_prefix(&self.base_dir).ok()?.to_string_lossy();
+        let relative = relative.replace('\\', "/").trim_matches('/').to_string();
+        if relative.is_empty() {
+            return None;
+        }
+
+        let mut ignored = None;
+        for rule in &self.rules {
+            if self.rule_matches(rule, &relative, is_dir) {
+                ignored = Some(!rule.negated);
+            }
+        }
+        ignored
+    }
+
+    fn rule_matches(&self, rule: &GitignoreRule, relative: &str, is_dir: bool) -> bool {
+        let parts: Vec<&str> = relative.split('/').collect();
+        let pattern_parts: Vec<&str> = rule.pattern.split('/').collect();
+
+        if rule.dir_only {
+            let target_parts = if is_dir {
+                parts.clone()
+            } else if parts.is_empty() {
+                Vec::new()
+            } else {
+                parts[..parts.len().saturating_sub(1)].to_vec()
+            };
+
+            if target_parts.is_empty() {
+                return false;
+            }
+
+            if rule.anchored || pattern_parts.len() > 1 {
+                return Self::match_from_root(&target_parts, &pattern_parts);
+            }
+
+            return target_parts
+                .iter()
+                .any(|part| glob_matches(&rule.pattern, part));
+        }
+
+        if rule.anchored || pattern_parts.len() > 1 {
+            return Self::match_from_root(&parts, &pattern_parts);
+        }
+
+        parts.iter().any(|part| glob_matches(&rule.pattern, part))
+    }
+
+    fn match_from_root(target_parts: &[&str], pattern_parts: &[&str]) -> bool {
+        fn rec(target: &[&str], pattern: &[&str], ti: usize, pi: usize) -> bool {
+            if pi == pattern.len() {
+                return true;
+            }
+            if ti == target.len() {
+                return pattern[pi..].iter().all(|p| *p == "**");
+            }
+
+            let current = pattern[pi];
+            if current == "**" {
+                return rec(target, pattern, ti, pi + 1) || rec(target, pattern, ti + 1, pi);
+            }
+
+            if !glob_matches(current, target[ti]) {
+                return false;
+            }
+
+            rec(target, pattern, ti + 1, pi + 1)
+        }
+
+        rec(target_parts, pattern_parts, 0, 0)
+    }
+}
+
+fn glob_matches(pattern: &str, candidate: &str) -> bool {
+    let mut regex = String::from("^");
+    for ch in pattern.chars() {
+        match ch {
+            '*' => regex.push_str(".*"),
+            '?' => regex.push('.'),
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' | '[' | ']' | '\\' => {
+                regex.push('\\');
+                regex.push(ch);
+            }
+            _ => regex.push(ch),
+        }
+    }
+    regex.push('$');
+    Regex::new(&regex)
+        .map(|re| re.is_match(candidate))
+        .unwrap_or(false)
+}
+
+fn load_gitignore_matcher(
+    dir_path: &Path,
+    cache: &mut HashMap<std::path::PathBuf, Option<GitignoreMatcher>>,
+) -> Option<GitignoreMatcher> {
+    if let Some(existing) = cache.get(dir_path) {
+        return existing.clone();
+    }
+
+    let matcher = GitignoreMatcher::from_dir(dir_path);
+    cache.insert(dir_path.to_path_buf(), matcher.clone());
+    matcher
+}
+
+fn is_gitignored(path: &Path, matchers: &[GitignoreMatcher], is_dir: bool) -> bool {
+    let mut ignored = false;
+    for matcher in matchers {
+        if let Some(decision) = matcher.matches(path, is_dir) {
+            ignored = decision;
+        }
+    }
+    ignored
+}
+
+fn has_gitignored_ancestor(
+    path: &Path,
+    project_path: &Path,
+    matchers: &[GitignoreMatcher],
+) -> bool {
+    let Ok(relative) = path.strip_prefix(project_path) else {
+        return false;
+    };
+
+    let mut current = project_path.to_path_buf();
+    let components: Vec<_> = relative.components().collect();
+    if components.len() <= 1 {
+        return false;
+    }
+
+    for component in &components[..components.len() - 1] {
+        current.push(component.as_os_str());
+        if is_gitignored(&current, matchers, true) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn normalize_include_paths(include_ignored: Option<&[String]>) -> HashSet<String> {
+    include_ignored
+        .unwrap_or(&[])
+        .iter()
+        .flat_map(|raw| raw.split(','))
+        .map(|raw| raw.trim().trim_matches('/').replace('\\', "/"))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn relative_posix(path: &Path, project_path: &Path) -> Option<String> {
+    path.strip_prefix(project_path).ok().map(|p| {
+        p.to_string_lossy()
+            .replace('\\', "/")
+            .trim_matches('/')
+            .to_string()
+    })
+}
+
+fn is_exact_force_include(
+    path: &Path,
+    project_path: &Path,
+    include_paths: &HashSet<String>,
+) -> bool {
+    relative_posix(path, project_path)
+        .map(|relative| include_paths.contains(&relative))
+        .unwrap_or(false)
+}
+
+fn is_force_included(path: &Path, project_path: &Path, include_paths: &HashSet<String>) -> bool {
+    let Some(relative) = relative_posix(path, project_path) else {
+        return false;
+    };
+    if relative.is_empty() {
+        return false;
+    }
+
+    include_paths.iter().any(|include_path| {
+        relative == *include_path
+            || relative.starts_with(&format!("{include_path}/"))
+            || include_path.starts_with(&format!("{relative}/"))
+    })
+}
+
+pub fn scan_project(
+    project_dir: &Path,
+    respect_gitignore: bool,
+    include_ignored: Option<&[String]>,
+) -> Vec<std::path::PathBuf> {
+    let project_path = match project_dir.canonicalize() {
+        Ok(path) => path,
+        Err(_) => project_dir.to_path_buf(),
+    };
+
+    let include_paths = normalize_include_paths(include_ignored);
+    let mut files = Vec::new();
+    let mut active_matchers: Vec<GitignoreMatcher> = Vec::new();
+    let mut matcher_cache: HashMap<std::path::PathBuf, Option<GitignoreMatcher>> = HashMap::new();
+
+    for entry in WalkDir::new(&project_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path().to_path_buf();
+
+        if entry.file_type().is_dir() {
+            if respect_gitignore {
+                active_matchers.retain(|matcher| {
+                    path == matcher.base_dir || path.starts_with(&matcher.base_dir)
+                });
+                if let Some(current_matcher) = load_gitignore_matcher(&path, &mut matcher_cache) {
+                    active_matchers.push(current_matcher);
+                }
+            }
+            continue;
+        }
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+        let Some(file_name) = path.file_name() else {
+            continue;
+        };
+
+        let force_include = is_force_included(&path, &project_path, &include_paths);
+        let exact_force_include = is_exact_force_include(&path, &project_path, &include_paths);
+
+        let dir_components: Vec<_> = parent
+            .strip_prefix(&project_path)
+            .ok()
+            .into_iter()
+            .flat_map(|p| p.components())
+            .collect();
+
+        if !force_include
+            && dir_components.iter().any(|component| {
+                let name = component.as_os_str();
+                Miner::should_skip_dir(name)
+            })
+        {
+            continue;
+        }
+
+        if !force_include && Miner::should_skip_file(file_name) {
+            continue;
+        }
+
+        if !exact_force_include && !Miner::is_readable_file(&path) {
+            continue;
+        }
+
+        if respect_gitignore && !force_include && is_gitignored(&path, &active_matchers, false) {
+            continue;
+        }
+
+        if respect_gitignore
+            && !force_include
+            && has_gitignored_ancestor(&path, &project_path, &active_matchers)
+        {
+            continue;
+        }
+
+        if path.is_symlink() {
+            continue;
+        }
+
+        let Ok(metadata) = path.metadata() else {
+            continue;
+        };
+        if metadata.len() > MAX_FILE_SIZE {
+            continue;
+        }
+
+        files.push(path);
+    }
+
+    files.sort();
+    files
+}
 
 #[derive(Debug)]
 pub struct MiningResult {
@@ -73,7 +445,7 @@ impl Miner {
 
     fn should_skip_dir(name: &std::ffi::OsStr) -> bool {
         if let Some(name_str) = name.to_str() {
-            SKIP_DIRS.contains(&name_str)
+            SKIP_DIRS.contains(&name_str) || name_str.ends_with(".egg-info")
         } else {
             false
         }
@@ -228,22 +600,7 @@ impl Miner {
     }
 
     pub async fn scan_and_mine(&mut self, project_dir: &Path) -> MiningResult {
-        let file_paths: Vec<_> = WalkDir::new(project_dir)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| {
-                if e.file_type().is_dir() {
-                    !Self::should_skip_dir(e.file_name())
-                } else if e.file_type().is_file() {
-                    !Self::should_skip_file(e.file_name()) && Self::is_readable_file(e.path())
-                } else {
-                    false
-                }
-            })
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .map(|e| e.path().to_path_buf())
-            .collect();
+        let file_paths = scan_project(project_dir, true, None);
 
         // Sequential processing (parallelization requires mutable borrow of palace_db)
         let mut files_processed = 0;
@@ -294,7 +651,10 @@ pub fn load_config(project_dir: &Path) -> anyhow::Result<(String, Vec<RoomMappin
         .ok_or_else(|| anyhow::anyhow!("No mempalace config found in {:?}", project_dir))?;
 
     let content = std::fs::read_to_string(config_path)?;
-    let config: Config = serde_json::from_str(&content)?;
+    let config: Config = match config_path.extension().and_then(|ext| ext.to_str()) {
+        Some("yaml") | Some("yml") => serde_yaml::from_str(&content)?,
+        _ => serde_json::from_str(&content)?,
+    };
 
     let rooms = config.rooms.unwrap_or_else(|| {
         vec![RoomMapping {
@@ -311,7 +671,7 @@ pub async fn mine(
     project_dir: &Path,
     palace_path: &Path,
     wing_override: Option<&str>,
-    _exclude_patterns: Option<&[String]>,
+    exclude_patterns: Option<&[String]>,
 ) -> anyhow::Result<MiningResult> {
     let (wing, rooms) = load_config(project_dir)?;
     let wing = wing_override.unwrap_or(&wing);
@@ -323,7 +683,29 @@ pub async fn mine(
     };
 
     let mut miner = Miner::new(palace_path, wing, rooms_to_use)?;
-    Ok(miner.scan_and_mine(project_dir).await)
+
+    let file_paths = scan_project(project_dir, true, exclude_patterns);
+    let mut files_processed = 0;
+    let mut chunks_created = 0;
+    let mut errors = Vec::new();
+
+    for filepath in file_paths {
+        match miner.mine_file(&filepath).await {
+            Ok(count) => {
+                files_processed += 1;
+                chunks_created += count;
+            }
+            Err(e) => errors.push(format!("Error mining {:?}: {}", filepath, e)),
+        }
+    }
+
+    miner.palace_db.flush().ok();
+
+    Ok(MiningResult {
+        files_processed,
+        chunks_created,
+        errors,
+    })
 }
 
 #[cfg(test)]
@@ -381,5 +763,138 @@ mod tests {
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
         assert!(id1.starts_with("drawer_wing1_room1_0_"));
+    }
+
+    #[test]
+    fn test_scan_project_respects_gitignore() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join(".gitignore"), "ignored.py\ngenerated/\n").unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("generated")).unwrap();
+        std::fs::write(root.join("src/app.py"), "print('hello')\n".repeat(20)).unwrap();
+        std::fs::write(root.join("ignored.py"), "print('ignore')\n".repeat(20)).unwrap();
+        std::fs::write(
+            root.join("generated/artifact.py"),
+            "print('artifact')\n".repeat(20),
+        )
+        .unwrap();
+
+        let files = scan_project(root, true, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["src/app.py"]);
+    }
+
+    #[test]
+    fn test_scan_project_nested_gitignore_override() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join(".gitignore"), "*.csv\n").unwrap();
+        std::fs::create_dir_all(root.join("subrepo")).unwrap();
+        std::fs::write(root.join("subrepo/.gitignore"), "!keep.csv\n").unwrap();
+        std::fs::write(root.join("drop.csv"), "a,b,c\n".repeat(20)).unwrap();
+        std::fs::write(root.join("subrepo/keep.csv"), "a,b,c\n".repeat(20)).unwrap();
+
+        let files = scan_project(root, true, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["subrepo/keep.csv"]);
+    }
+
+    #[test]
+    fn test_scan_project_does_not_reinclude_file_from_ignored_directory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join(".gitignore"), "generated/\n!generated/keep.py\n").unwrap();
+        std::fs::create_dir_all(root.join("generated")).unwrap();
+        std::fs::write(root.join("generated/drop.py"), "print('drop')\n".repeat(20)).unwrap();
+        std::fs::write(root.join("generated/keep.py"), "print('keep')\n".repeat(20)).unwrap();
+
+        let files = scan_project(root, true, None);
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_scan_project_can_disable_gitignore() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join(".gitignore"), "data/\n").unwrap();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::write(root.join("data/stuff.csv"), "a,b,c\n".repeat(20)).unwrap();
+
+        let files = scan_project(root, false, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["data/stuff.csv"]);
+    }
+
+    #[test]
+    fn test_scan_project_can_include_specific_ignored_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join(".gitignore"), "generated/\n").unwrap();
+        std::fs::create_dir_all(root.join("generated")).unwrap();
+        std::fs::write(root.join("generated/drop.py"), "print('drop')\n".repeat(20)).unwrap();
+        std::fs::write(root.join("generated/keep.py"), "print('keep')\n".repeat(20)).unwrap();
+
+        let includes = vec!["generated/keep.py".to_string()];
+        let files = scan_project(root, true, Some(&includes));
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["generated/keep.py"]);
+    }
+
+    #[test]
+    fn test_scan_project_include_override_beats_skip_dirs() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(".pytest_cache")).unwrap();
+        std::fs::write(
+            root.join(".pytest_cache/cache.py"),
+            "print('cache')\n".repeat(20),
+        )
+        .unwrap();
+
+        let includes = vec![".pytest_cache".to_string()];
+        let files = scan_project(root, false, Some(&includes));
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec![".pytest_cache/cache.py"]);
     }
 }
