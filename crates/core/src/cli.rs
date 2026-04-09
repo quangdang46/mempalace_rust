@@ -321,23 +321,22 @@ fn scan_and_detect_entities(dir: &PathBuf) -> DetectedEntities {
 /// - In interactive mode, could prompt for confirmations (stub for now)
 fn confirm_entities(detected: &DetectedEntities, yes: bool) -> DetectedEntities {
     // Load registry to check rejected entities from default path
-    let registry_path = Config::load()
-        .ok()
-        .and_then(|cfg| cfg.init().ok())
-        .map(|path| path.parent().unwrap_or(&path).join("entity_registry.json"))
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".mempalace")
-                .join("entity_registry.json")
-        });
+    let registry_path = Config::registry_file_path().unwrap_or_else(|_| {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".mempalace")
+            .join("entity_registry.json")
+    });
     let rejected_names: Vec<String> = EntityRegistry::load(&registry_path)
         .ok()
         .map(|r| r.get_rejected().to_vec())
         .unwrap_or_default();
 
-    let is_rejected = |name: &str| rejected_names.iter().any(|r| r == name);
+    let is_rejected = |name: &str| {
+        let lowered = name.to_lowercase();
+        rejected_names.iter().any(|r| r == &lowered)
+    };
 
     if yes {
         // Non-interactive: accept all non-rejected entities
@@ -1199,11 +1198,13 @@ fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
     }
 
     // Show identity info
-    let identity_path = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mempalace")
-        .join("identity.txt");
+    let identity_path = Config::identity_file_path().unwrap_or_else(|_| {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".mempalace")
+            .join("identity.txt")
+    });
 
     if identity_path.exists() {
         let tokens = std::fs::read_to_string(&identity_path)
@@ -1212,7 +1213,7 @@ fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
         println!("  L0 Identity: exists (~{} tokens)", tokens);
     } else {
         println!("  L0 Identity: not configured");
-        println!("  Create: ~/.mempalace/identity.txt");
+        println!("  Create: {}", identity_path.display());
     }
 
     println!("{}", "=".repeat(55));
@@ -1597,5 +1598,36 @@ mod tests {
         let detected = DetectedEntities::default();
         let confirmed = confirm_entities(&detected, false);
         assert!(confirmed.people.is_empty());
+    }
+
+    #[test]
+    fn test_confirm_entities_uses_config_registry_path() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let xdg_root = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_root);
+
+        let registry_path = Config::registry_file_path().unwrap();
+        if let Some(parent) = registry_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+
+        let mut registry = EntityRegistry::load(&registry_path).unwrap();
+        registry.reject_entity("alice");
+        registry.save().unwrap();
+
+        let detected = DetectedEntities {
+            people: vec![PersonEntity {
+                name: "Alice".to_string(),
+                confidence: 0.9,
+                context: "work".to_string(),
+            }],
+            projects: vec![],
+            uncertain: vec![],
+        };
+
+        let confirmed = confirm_entities(&detected, true);
+        assert!(confirmed.people.is_empty());
+
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }

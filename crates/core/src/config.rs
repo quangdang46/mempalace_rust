@@ -15,8 +15,8 @@ fn expand_path(path: &str) -> PathBuf {
 }
 
 fn default_palace_path() -> PathBuf {
-    Config::data_dir()
-        .unwrap_or_else(|_| expand_path("~/.mempalace/palace"))
+    Config::config_dir()
+        .unwrap_or_else(|_| expand_path("~/.mempalace"))
         .join("palace")
 }
 
@@ -189,7 +189,10 @@ impl Config {
             Ok(Self {
                 palace_path,
                 collection_name,
-                people_map: HashMap::new(),
+                people_map: file_config
+                    .get("people_map")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default(),
                 topic_wings,
                 hall_keywords,
                 embedding_model: file_config
@@ -232,7 +235,7 @@ impl Config {
             let map: HashMap<String, String> = serde_json::from_str(&content)?;
             Ok(map)
         } else {
-            Ok(HashMap::new())
+            Ok(self.people_map.clone())
         }
     }
 
@@ -243,6 +246,14 @@ impl Config {
         let content = serde_json::to_string_pretty(people_map)?;
         std::fs::write(&people_map_path, content)?;
         Ok(people_map_path)
+    }
+
+    pub fn registry_file_path() -> anyhow::Result<PathBuf> {
+        Ok(Self::config_dir()?.join("entity_registry.json"))
+    }
+
+    pub fn identity_file_path() -> anyhow::Result<PathBuf> {
+        Ok(Self::config_dir()?.join("identity.txt"))
     }
 
     /// Get the XDG-compliant config directory for mempalace.
@@ -421,12 +432,51 @@ mod tests {
     #[test]
     fn test_default_palace_path_uses_data_dir() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let xdg_data = temp_dir.path().to_str().unwrap();
-        std::env::set_var("XDG_DATA_HOME", xdg_data);
+        let xdg_config = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_config);
         let palace = default_palace_path();
-        assert!(palace.to_str().unwrap().starts_with(xdg_data));
+        assert!(palace.to_str().unwrap().starts_with(xdg_config));
         assert!(palace.to_str().unwrap().ends_with("palace"));
-        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn test_load_people_map_falls_back_to_embedded_config_value() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg_root = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_root);
+
+        let config = Config {
+            palace_path: PathBuf::from("/tmp/palace"),
+            collection_name: DEFAULT_COLLECTION_NAME.to_string(),
+            people_map: HashMap::from([("bob".to_string(), "Robert".to_string())]),
+            topic_wings: default_topic_wings(),
+            hall_keywords: default_hall_keywords(),
+            embedding_model: default_embedding_model(),
+        };
+        let people_map = config.load_people_map().unwrap();
+        assert_eq!(people_map.get("bob"), Some(&"Robert".to_string()));
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn test_registry_and_identity_paths_use_config_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg_root = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_root);
+
+        let config_dir = Config::config_dir().unwrap();
+        assert_eq!(
+            Config::registry_file_path().unwrap(),
+            config_dir.join("entity_registry.json")
+        );
+        assert_eq!(
+            Config::identity_file_path().unwrap(),
+            config_dir.join("identity.txt")
+        );
+
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 
     #[test]
