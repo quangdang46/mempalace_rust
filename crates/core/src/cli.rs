@@ -485,7 +485,7 @@ fn cmd_mine(
     dir: &PathBuf,
     mode: &MiningMode,
     wing: Option<&str>,
-    _agent: &str,
+    agent: &str,
     limit: usize,
     dry_run: bool,
     no_gitignore: bool,
@@ -502,7 +502,7 @@ fn cmd_mine(
         .map(|part| part.to_string())
         .collect();
 
-    if dry_run {
+    if dry_run && !matches!(mode, MiningMode::Convos) {
         println!("\n  [DRY RUN] Would mine: {:?}", dir);
         println!("  Palace: {:?}", palace_path);
         if let Some(w) = wing {
@@ -545,7 +545,15 @@ fn cmd_mine(
             }
         }
         MiningMode::Convos => {
-            let result = runtime().block_on(mine_conversations(dir, &palace_path, wing, extract));
+            let result = runtime().block_on(mine_conversations(
+                dir,
+                &palace_path,
+                wing,
+                agent,
+                limit,
+                dry_run,
+                extract,
+            ));
             match result {
                 Ok(convo_result) => {
                     print_convo_result(&convo_result);
@@ -583,8 +591,15 @@ fn cmd_mine(
                     }
                 }
                 MiningMode::Convos => {
-                    let result =
-                        runtime().block_on(mine_conversations(dir, &palace_path, wing, extract));
+                    let result = runtime().block_on(mine_conversations(
+                        dir,
+                        &palace_path,
+                        wing,
+                        agent,
+                        limit,
+                        dry_run,
+                        extract,
+                    ));
                     match result {
                         Ok(convo_result) => print_convo_result(&convo_result),
                         Err(e) => {
