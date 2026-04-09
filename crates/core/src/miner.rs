@@ -859,6 +859,26 @@ mod tests {
     }
 
     #[test]
+    fn test_file_already_mined_without_mtime_fails_check_mtime() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let palace = temp.path().join("palace");
+        let file = temp.path().join("test.txt");
+        std::fs::write(&file, "hello world").unwrap();
+
+        let mut db = PalaceDb::open(&palace).unwrap();
+        let file_path = file.to_string_lossy().to_string();
+        db.add(
+            &[("d1", "hello world")],
+            &[&[("source_file", file_path.as_str())]],
+        )
+        .unwrap();
+        db.flush().unwrap();
+
+        assert!(db.file_already_mined(file_path.as_str(), false));
+        assert!(!db.file_already_mined(file_path.as_str(), true));
+    }
+
+    #[test]
     fn test_detect_room_matches_room_keywords_and_path_segments() {
         let rooms = vec![RoomMapping {
             name: "backend".to_string(),
@@ -1005,5 +1025,86 @@ mod tests {
             })
             .collect();
         assert_eq!(rel, vec![".pytest_cache/cache.py"]);
+    }
+
+    #[test]
+    fn test_scan_project_can_include_exact_file_without_known_extension() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join(".gitignore"), "README\n").unwrap();
+        std::fs::write(root.join("README"), "hello\n".repeat(20)).unwrap();
+
+        let includes = vec!["README".to_string()];
+        let files = scan_project(root, true, Some(&includes));
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["README"]);
+    }
+
+    #[test]
+    fn test_scan_project_skip_dirs_still_apply_without_override() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(".pytest_cache")).unwrap();
+        std::fs::write(
+            root.join(".pytest_cache/cache.py"),
+            "print('cache')\n".repeat(20),
+        )
+        .unwrap();
+        std::fs::write(root.join("main.py"), "print('main')\n".repeat(20)).unwrap();
+
+        let files = scan_project(root, false, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["main.py"]);
+    }
+
+    #[tokio::test]
+    async fn test_mine_reports_backend_room_metadata_for_project_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(project.join("backend")).unwrap();
+        std::fs::write(
+            project.join("backend/auth.py"),
+            "JWT authentication uses bearer tokens\n".repeat(30),
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("mempalace.yaml"),
+            "wing: project\nrooms:\n  - name: backend\n    description: Backend code\n    keywords: [JWT, authentication]\n",
+        )
+        .unwrap();
+
+        let result = mine(&project, &palace, None, None).await.unwrap();
+        assert_eq!(result.files_processed, 1);
+        assert!(result.chunks_created > 0);
+
+        let db = PalaceDb::open(&palace).unwrap();
+        let entries = db.get_all(Some("project"), Some("backend"), 10);
+        assert!(!entries.is_empty());
+
+        let metadata = entries[0].metadatas.first().unwrap();
+        assert_eq!(
+            metadata.get("room").and_then(|v| v.as_str()),
+            Some("backend")
+        );
+        assert!(metadata.get("chunk_index").is_some());
+        assert!(metadata.get("filed_at").is_some());
+        assert!(metadata.get("source_mtime").is_some());
     }
 }

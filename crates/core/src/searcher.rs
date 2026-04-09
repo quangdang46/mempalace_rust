@@ -82,6 +82,10 @@ pub async fn search_memories(
     n_results: usize,
     _embedding_model: Option<&str>,
 ) -> anyhow::Result<SearchResponse> {
+    if !palace_path.exists() {
+        return Err(SearchError::NoPalace(palace_path.display().to_string()).into());
+    }
+
     let palace_db = PalaceDb::open(palace_path)
         .map_err(|_| SearchError::NoPalace(palace_path.display().to_string()))?;
 
@@ -249,5 +253,100 @@ mod tests {
         assert_eq!(hit.room, "backend");
         assert_eq!(hit.source_file, "auth.py");
         assert!(hit.similarity >= 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_search_memories_respects_n_results_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace_path = temp.path().join("palace");
+        std::fs::create_dir_all(&palace_path).unwrap();
+        let mut db = PalaceDb::open(&palace_path).unwrap();
+        db.add(
+            &[
+                ("id1", "code code backend"),
+                ("id2", "code frontend planning"),
+                ("id3", "code architecture note"),
+            ],
+            &[
+                &[
+                    ("wing", "project"),
+                    ("room", "backend"),
+                    ("source_file", "/tmp/a.py"),
+                ],
+                &[
+                    ("wing", "project"),
+                    ("room", "frontend"),
+                    ("source_file", "/tmp/b.ts"),
+                ],
+                &[
+                    ("wing", "notes"),
+                    ("room", "general"),
+                    ("source_file", "/tmp/c.md"),
+                ],
+            ],
+        )
+        .unwrap();
+        db.flush().unwrap();
+
+        let response = search_memories("code", &palace_path, None, None, 2, None)
+            .await
+            .unwrap();
+        assert_eq!(response.results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_search_memories_no_palace_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        let error = search_memories("anything", &missing, None, None, DEFAULT_N_RESULTS, None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("No palace found"));
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_returns_top_match_above_threshold() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace_path = temp.path().join("palace");
+        std::fs::create_dir_all(&palace_path).unwrap();
+        let mut db = PalaceDb::open(&palace_path).unwrap();
+        db.add(
+            &[("dup1", "JWT authentication uses bearer tokens")],
+            &[&[
+                ("wing", "project"),
+                ("room", "backend"),
+                ("source_file", "/tmp/auth.py"),
+            ]],
+        )
+        .unwrap();
+        db.flush().unwrap();
+
+        let duplicate = check_duplicate("JWT authentication uses bearer tokens", &palace_path, 0.9)
+            .await
+            .unwrap();
+        assert_eq!(duplicate.as_deref(), Some("dup1"));
+    }
+
+    #[tokio::test]
+    async fn test_check_duplicate_respects_threshold() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace_path = temp.path().join("palace");
+        std::fs::create_dir_all(&palace_path).unwrap();
+        let mut db = PalaceDb::open(&palace_path).unwrap();
+        db.add(
+            &[("dup1", "JWT authentication uses bearer tokens")],
+            &[&[
+                ("wing", "project"),
+                ("room", "backend"),
+                ("source_file", "/tmp/auth.py"),
+            ]],
+        )
+        .unwrap();
+        db.flush().unwrap();
+
+        let duplicate = check_duplicate("JWT authentication", &palace_path, 0.95)
+            .await
+            .unwrap();
+        assert!(duplicate.is_none());
     }
 }
