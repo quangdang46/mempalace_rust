@@ -150,6 +150,10 @@ fn find_session_boundaries(lines: &[String]) -> Vec<usize> {
     boundaries
 }
 
+pub(crate) fn find_session_boundaries_for_cli(lines: &[String]) -> Vec<usize> {
+    find_session_boundaries(lines)
+}
+
 /// Extract timestamp from session lines
 fn extract_timestamp(
     lines: &[String],
@@ -278,19 +282,50 @@ fn get_home_dir() -> Option<PathBuf> {
 
 /// Split a single mega-file into per-session files
 pub async fn split_file(file_path: &Path, min_sessions: Option<usize>) -> Result<SplitResult> {
-    split_file_internal(file_path, min_sessions, None).await
+    split_file_internal(file_path, min_sessions, None, None, false).await
+}
+
+/// Split a single mega-file with CLI-facing options.
+pub async fn split_file_with_options(
+    file_path: &Path,
+    min_sessions: Option<usize>,
+    output_dir: Option<&Path>,
+    dry_run: bool,
+) -> Result<SplitResult> {
+    split_file_internal(
+        file_path,
+        min_sessions,
+        output_dir.map(|path| path.to_path_buf()),
+        None,
+        dry_run,
+    )
+    .await
 }
 
 /// Internal split with optional palace_path override (for testing)
 async fn split_file_internal(
     file_path: &Path,
     min_sessions: Option<usize>,
+    output_dir_override: Option<PathBuf>,
     palace_path_override: Option<PathBuf>,
+    dry_run: bool,
 ) -> Result<SplitResult> {
     let min_sessions = min_sessions.unwrap_or(2);
+    let max_size = 500 * 1024 * 1024;
 
     if !file_path.exists() {
         return Err(anyhow!("File not found: {:?}", file_path));
+    }
+    if file_path.metadata()?.len() > max_size {
+        return Ok(SplitResult {
+            sessions_found: 0,
+            files_created: vec![],
+            errors: vec![format!(
+                "SKIP: {} exceeds {} MB limit",
+                file_path.display(),
+                max_size / (1024 * 1024)
+            )],
+        });
     }
 
     let content =
@@ -384,7 +419,10 @@ async fn split_file_internal(
     let mut files_created = Vec::new();
     let mut errors = Vec::new();
 
-    let out_dir = file_path.parent().unwrap_or(Path::new("."));
+    let out_dir = output_dir_override
+        .as_deref()
+        .unwrap_or_else(|| file_path.parent().unwrap_or(Path::new(".")));
+    fs::create_dir_all(out_dir)?;
 
     for (i, session) in sessions.iter().enumerate() {
         let start = session.start_idx;
@@ -398,12 +436,16 @@ async fn split_file_internal(
         let content = chunk.join("\n");
 
         let out_path = out_dir.join(&session.subject);
-        match fs::write(&out_path, content) {
-            Ok(_) => {
-                files_created.push(out_path.to_string_lossy().to_string());
-            }
-            Err(e) => {
-                errors.push(format!("Failed to write {}: {}", out_path.display(), e));
+        if dry_run {
+            files_created.push(out_path.to_string_lossy().to_string());
+        } else {
+            match fs::write(&out_path, content) {
+                Ok(_) => {
+                    files_created.push(out_path.to_string_lossy().to_string());
+                }
+                Err(e) => {
+                    errors.push(format!("Failed to write {}: {}", out_path.display(), e));
+                }
             }
         }
     }
@@ -558,5 +600,47 @@ More content"#;
             result.errors.is_empty() || result.errors.len() < 2,
             "Should have minimal errors"
         );
+    }
+
+    #[tokio::test]
+    async fn test_split_file_with_output_dir_and_dry_run() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("mega.txt");
+        let output_dir = temp_dir.path().join("split");
+
+        let content = r#"Claude Code v1.2.3
+⏺ 2:30 PM Wednesday, April 07, 2026
+Alice: Hello
+> What is memory
+Session content here
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7
+Claude Code v1.2.3
+⏺ 3:30 PM Wednesday, April 07, 2026
+Bob: Greetings
+> Tell me about rust
+More content
+line 1
+line 2
+line 3
+line 4
+line 5
+line 6
+line 7"#;
+
+        fs::write(&file_path, content).unwrap();
+
+        let result = split_file_with_options(&file_path, Some(2), Some(&output_dir), true)
+            .await
+            .unwrap();
+        assert!(result.sessions_found >= 2);
+        assert!(!result.files_created.is_empty());
+        assert!(output_dir.exists());
+        assert_eq!(fs::read_dir(&output_dir).unwrap().count(), 0);
     }
 }

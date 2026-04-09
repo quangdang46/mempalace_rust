@@ -29,7 +29,7 @@ use crate::miner::{self, MiningResult};
 use crate::palace_db::PalaceDb;
 use crate::room_detector_local::detect_rooms_from_folders;
 use crate::searcher;
-use crate::split_mega_files::split_file;
+use crate::split_mega_files::split_file_with_options;
 
 // ---------------------------------------------------------------------------
 // CLI Arguments
@@ -903,13 +903,11 @@ fn cmd_compress(
 
 fn cmd_split(
     dir: &PathBuf,
-    _output_dir: Option<&PathBuf>,
-    _dry_run: bool,
+    output_dir: Option<&PathBuf>,
+    dry_run: bool,
     min_sessions: usize,
 ) -> Result<()> {
-    println!();
-    println!("  Splitting transcript files in: {:?}", dir);
-    println!();
+    let max_scan_size = 500 * 1024 * 1024;
 
     // Find .txt files that could be mega-files
     let txt_files: Vec<_> = walkdir::WalkDir::new(dir)
@@ -930,34 +928,116 @@ fn cmd_split(
         return Ok(());
     }
 
+    let mut mega_files = Vec::new();
+    for file_path in txt_files {
+        let Ok(metadata) = std::fs::metadata(&file_path) else {
+            continue;
+        };
+        if metadata.len() > max_scan_size {
+            println!(
+                "  SKIP: {} exceeds {} MB limit",
+                file_path.display(),
+                max_scan_size / (1024 * 1024)
+            );
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&file_path) else {
+            continue;
+        };
+        let lines: Vec<String> = content.split('\n').map(|s| s.to_string()).collect();
+        let boundaries = crate::split_mega_files::find_session_boundaries_for_cli(&lines);
+        if boundaries.len() >= min_sessions {
+            mega_files.push((file_path, boundaries.len(), metadata.len()));
+        }
+    }
+
+    if mega_files.is_empty() {
+        println!(
+            "No mega-files found in {:?} (min {} sessions).",
+            dir, min_sessions
+        );
+        return Ok(());
+    }
+
+    println!();
+    println!("{}", "=".repeat(60));
+    println!(
+        "  Mega-file splitter — {}",
+        if dry_run { "DRY RUN" } else { "SPLITTING" }
+    );
+    println!("{}", "=".repeat(60));
+    println!("  Source:      {}", dir.display());
+    println!(
+        "  Output:      {}",
+        output_dir
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "same dir as source".to_string())
+    );
+    println!("  Mega-files:  {}", mega_files.len());
+    println!("{}", "─".repeat(60));
+    println!();
+
     let mut total_sessions = 0;
     let mut files_created = Vec::new();
     let mut errors = Vec::new();
 
-    for file_path in txt_files {
-        let result = runtime().block_on(split_file(&file_path, Some(min_sessions)));
+    for (file_path, session_count, size_bytes) in mega_files {
+        println!(
+            "  {}  ({} sessions, {}KB)",
+            file_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| file_path.display().to_string()),
+            session_count,
+            size_bytes / 1024
+        );
+        let result = runtime().block_on(split_file_with_options(
+            &file_path,
+            Some(min_sessions),
+            output_dir.map(|path| path.as_path()),
+            dry_run,
+        ));
         match result {
             Ok(split_result) => {
                 total_sessions += split_result.sessions_found;
                 files_created.extend(split_result.files_created);
                 errors.extend(split_result.errors);
+                if !dry_run && !split_result.files_created.is_empty() {
+                    let backup = file_path.with_extension("mega_backup");
+                    match std::fs::rename(&file_path, &backup) {
+                        Ok(_) => println!("  → Original renamed to {}", backup.display()),
+                        Err(error) => errors.push(format!(
+                            "Failed to rename {} to {}: {}",
+                            file_path.display(),
+                            backup.display(),
+                            error
+                        )),
+                    }
+                }
+                println!();
             }
             Err(e) => {
                 errors.push(format!("Error processing {:?}: {}", file_path, e));
+                println!();
             }
         }
     }
 
-    println!();
-    println!("  Sessions found: {}", total_sessions);
-    if files_created.is_empty() {
-        println!("  No files created.");
+    println!("{}", "─".repeat(60));
+    if dry_run {
+        println!(
+            "  DRY RUN — would create {} files from {} mega-files",
+            files_created.len(),
+            total_sessions
+        );
     } else {
-        println!("  Files created:");
-        for f in &files_created {
-            println!("    {}", f);
-        }
+        println!(
+            "  Done — created {} files from {} mega-files",
+            files_created.len(),
+            total_sessions
+        );
     }
+    println!();
     if !errors.is_empty() {
         println!("  Errors:");
         for e in &errors {
