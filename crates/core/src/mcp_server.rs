@@ -345,11 +345,31 @@ fn parse_args<T: for<'de> serde::Deserialize<'de>>(args: JsonObject) -> Result<T
         .map_err(|e| ErrorData::invalid_params(e.to_string(), None))
 }
 
+fn no_palace() -> serde_json::Value {
+    serde_json::json!({
+        "error": "No palace found",
+        "hint": "Run: mempalace init <dir> && mempalace mine <dir>",
+    })
+}
+
+fn collection_missing(state: &AppState) -> bool {
+    !state
+        .palace_path
+        .join(format!(
+            "{}.json",
+            crate::palace_db::DEFAULT_COLLECTION_NAME
+        ))
+        .exists()
+}
+
 // ---------------------------------------------------------------------------
 // Tool handlers
 // ---------------------------------------------------------------------------
 
 fn tool_status(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     let entries = state.db.get_all(None, None, 10_000);
     let mut wings: HashMap<String, usize> = HashMap::new();
     let mut rooms: HashMap<String, usize> = HashMap::new();
@@ -378,6 +398,9 @@ fn tool_status(state: &AppState, _args: JsonObject) -> Result<CallToolResult, Er
 }
 
 fn tool_list_wings(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     let entries = state.db.get_all(None, None, 10_000);
     let mut wings: HashMap<String, usize> = HashMap::new();
     for entry in &entries {
@@ -393,6 +416,9 @@ fn tool_list_wings(state: &AppState, _args: JsonObject) -> Result<CallToolResult
 }
 
 fn tool_list_rooms(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
@@ -414,6 +440,9 @@ fn tool_list_rooms(state: &AppState, args: JsonObject) -> Result<CallToolResult,
 }
 
 fn tool_get_taxonomy(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     let entries = state.db.get_all(None, None, 10_000);
     let mut taxonomy: HashMap<String, HashMap<String, usize>> = HashMap::new();
     for entry in &entries {
@@ -441,6 +470,9 @@ fn tool_get_aaak_spec(_state: &AppState, _args: JsonObject) -> Result<CallToolRe
 }
 
 fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
@@ -475,6 +507,9 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
 }
 
 fn tool_check_duplicate(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     #[derive(Deserialize)]
     struct Input {
         content: String,
@@ -566,6 +601,9 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
 
 fn tool_delete_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     read_only_guard(state)?;
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     #[derive(Deserialize)]
     struct Input {
         drawer_id: String,
@@ -731,6 +769,9 @@ fn build_graph_from_db(state: &AppState) -> crate::palace_graph::PalaceGraph {
 }
 
 fn tool_traverse(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     #[derive(Deserialize)]
     struct Input {
         start_room: String,
@@ -743,6 +784,9 @@ fn tool_traverse(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
 }
 
 fn tool_find_tunnels(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     #[derive(Deserialize)]
     struct Input {
         wing_a: Option<String>,
@@ -758,6 +802,9 @@ fn tool_find_tunnels(state: &AppState, args: JsonObject) -> Result<CallToolResul
 }
 
 fn tool_graph_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     let graph = build_graph_from_db(state);
     let stats = graph.stats();
     ok_json(serde_json::json!({
@@ -769,6 +816,9 @@ fn tool_graph_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResul
 }
 
 fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
     #[derive(Deserialize)]
     struct Input {
         agent_name: String,
@@ -795,6 +845,13 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         b_ts.cmp(a_ts)
     });
     let showing = items.len().min(input.last_n.unwrap_or(10));
+    if items.is_empty() {
+        return ok_json(serde_json::json!({
+            "agent": input.agent_name,
+            "entries": [],
+            "message": "No diary entries yet.",
+        }));
+    }
     ok_json(serde_json::json!({
         "agent": input.agent_name,
         "entries": items.into_iter().take(input.last_n.unwrap_or(10)).collect::<Vec<_>>(),
@@ -948,6 +1005,23 @@ mod tests {
             json!({ "query": "nonexistent" }),
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_status_no_palace_returns_error_shape() {
+        let state = test_state();
+        let result = dispatch(&state, "mempalace_status", json!({})).unwrap();
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed.get("error").and_then(|v| v.as_str()),
+            Some("No palace found")
+        );
     }
 
     #[test]
@@ -1247,5 +1321,88 @@ mod tests {
             .unwrap()
             .get("drawer")
             .is_none());
+    }
+
+    #[test]
+    fn test_status_with_seeded_data_matches_python_shape() {
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[
+                    ("drawer_proj_backend_aaa", "auth backend"),
+                    ("drawer_proj_backend_bbb", "db backend"),
+                    ("drawer_proj_frontend_ccc", "frontend ui"),
+                    ("drawer_notes_planning_ddd", "planning notes"),
+                ],
+                &[
+                    &[("wing", "project"), ("room", "backend")],
+                    &[("wing", "project"), ("room", "backend")],
+                    &[("wing", "project"), ("room", "frontend")],
+                    &[("wing", "notes"), ("room", "planning")],
+                ],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+        let result = dispatch(&state, "mempalace_status", json!({})).unwrap();
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed.get("total_drawers").and_then(|v| v.as_u64()),
+            Some(4)
+        );
+        assert_eq!(
+            parsed
+                .get("wings")
+                .and_then(|v| v.get("project"))
+                .and_then(|v| v.as_u64()),
+            Some(3)
+        );
+        assert_eq!(
+            parsed
+                .get("wings")
+                .and_then(|v| v.get("notes"))
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_diary_read_empty_matches_python_shape() {
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.flush().unwrap();
+        }
+        let result = dispatch(
+            &state,
+            "mempalace_diary_read",
+            json!({ "agent_name": "Nobody" }),
+        )
+        .unwrap();
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed
+                .get("entries")
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(0)
+        );
+        assert_eq!(
+            parsed.get("message").and_then(|v| v.as_str()),
+            Some("No diary entries yet.")
+        );
     }
 }
