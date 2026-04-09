@@ -139,6 +139,14 @@ impl PalaceDb {
         Ok(())
     }
 
+    pub fn delete_id(&mut self, id: &str) -> anyhow::Result<bool> {
+        let removed = self.documents.remove(id).is_some();
+        if removed {
+            self.save()?;
+        }
+        Ok(removed)
+    }
+
     pub fn file_already_mined(&self, source_file: &str, check_mtime: bool) -> bool {
         let Some(entry) = self.documents.values().find(|entry| {
             entry.metadata.get("source_file").and_then(|v| v.as_str()) == Some(source_file)

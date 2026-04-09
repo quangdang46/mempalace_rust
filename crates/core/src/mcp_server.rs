@@ -14,11 +14,46 @@ use rmcp::model::{
 use rmcp::service::MaybeSendFuture;
 use rmcp::transport::stdio;
 use rmcp::{handler::server::ServerHandler, ErrorData, RoleServer, ServiceExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 #[cfg(test)]
 use serde_json::json;
 use tokio::runtime::Runtime;
 use tracing::warn;
+
+fn short_hash(input: &str, len: usize) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(input.as_bytes());
+    let hex = hex::encode(digest);
+    hex[..len.min(hex.len())].to_string()
+}
+
+const PALACE_PROTOCOL: &str = r#"IMPORTANT — MemPalace Memory Protocol:
+1. ON WAKE-UP: Call mempalace_status to load palace overview + AAAK spec.
+2. BEFORE RESPONDING about any person, project, or past event: call mempalace_kg_query or mempalace_search FIRST. Never guess — verify.
+3. IF UNSURE about a fact (name, gender, age, relationship): say "let me check" and query the palace. Wrong is worse than slow.
+4. AFTER EACH SESSION: call mempalace_diary_write to record what happened, what you learned, what matters.
+5. WHEN FACTS CHANGE: call mempalace_kg_invalidate on the old fact, mempalace_kg_add for the new one.
+
+This protocol ensures the AI KNOWS before it speaks. Storage is not memory — but storage + this protocol = memory."#;
+
+const AAAK_SPEC: &str = r#"AAAK is a compressed memory dialect that MemPalace uses for efficient storage.
+It is designed to be readable by both humans and LLMs without decoding.
+
+FORMAT:
+  ENTITIES: 3-letter uppercase codes. ALC=Alice, JOR=Jordan, RIL=Riley, MAX=Max, BEN=Ben.
+  EMOTIONS: *action markers* before/during text. *warm*=joy, *fierce*=determined, *raw*=vulnerable, *bloom*=tenderness.
+  STRUCTURE: Pipe-separated fields. FAM: family | PROJ: projects | ⚠: warnings/reminders.
+  DATES: ISO format (2026-03-31). COUNTS: Nx = N mentions (e.g., 570x).
+  IMPORTANCE: ★ to ★★★★★ (1-5 scale).
+  HALLS: hall_facts, hall_events, hall_discoveries, hall_preferences, hall_advice.
+  WINGS: wing_user, wing_agent, wing_team, wing_code, wing_myproject, wing_hardware, wing_ue5, wing_ai_research.
+  ROOMS: Hyphenated slugs representing named ideas (e.g., chromadb-setup, gpu-pricing).
+
+EXAMPLE:
+  FAM: ALC→♡JOR | 2D(kids): RIL(18,sports) MAX(11,chess+swimming) | BEN(contributor)
+
+Read AAAK naturally — expand codes mentally, treat *markers* as emotional context.
+When WRITING AAAK: use entity codes, mark emotions, keep structure tight."#;
 
 // ---------------------------------------------------------------------------
 // Error helpers
@@ -68,27 +103,24 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
         Box::pin(async move {
             match name.as_str() {
                 "mempalace_status" => tool_status(&state, args),
-                "mempalace_list_drawers" => tool_list_drawers(&state, args),
+                "mempalace_list_wings" => tool_list_wings(&state, args),
                 "mempalace_list_rooms" => tool_list_rooms(&state, args),
-                "mempalace_mine" => tool_mine(&state, args),
+                "mempalace_get_taxonomy" => tool_get_taxonomy(&state, args),
+                "mempalace_get_aaak_spec" => tool_get_aaak_spec(&state, args),
                 "mempalace_search" => tool_search(&state, args),
-                "mempalace_full_search" => tool_full_search(&state, args),
-                "mempalace_get_memory" => tool_get_memory(&state, args),
-                "mempalace_write_memory" => tool_write_memory(&state, args),
+                "mempalace_check_duplicate" => tool_check_duplicate(&state, args),
+                "mempalace_add_drawer" => tool_add_drawer(&state, args),
+                "mempalace_delete_drawer" => tool_delete_drawer(&state, args),
+                "mempalace_kg_query" => tool_kg_query(&state, args),
+                "mempalace_kg_add" => tool_kg_add(&state, args),
+                "mempalace_kg_invalidate" => tool_kg_invalidate(&state, args),
+                "mempalace_kg_timeline" => tool_kg_timeline(&state, args),
+                "mempalace_kg_stats" => tool_kg_stats(&state, args),
+                "mempalace_traverse" => tool_traverse(&state, args),
+                "mempalace_find_tunnels" => tool_find_tunnels(&state, args),
+                "mempalace_graph_stats" => tool_graph_stats(&state, args),
                 "mempalace_diary_read" => tool_diary_read(&state, args),
                 "mempalace_diary_write" => tool_diary_write(&state, args),
-                "mempalace_list_entities" => tool_list_entities(&state, args),
-                "mempalace_get_entity" => tool_get_entity(&state, args),
-                "mempalace_graph_dump" => tool_graph_dump(&state, args),
-                "mempalace_onboard" => tool_onboard(&state, args),
-                "mempalace_doctor" => tool_doctor(&state, args),
-                "mempalace_get_config" => tool_get_config(&state, args),
-                "mempalace_set_config" => tool_set_config(&state, args),
-                "mempalace_get_people" => tool_get_people(&state, args),
-                "mempalace_set_people" => tool_set_people(&state, args),
-                "mempalace_compress" => tool_compress(&state, args),
-                "mempalace_decompress" => tool_decompress(&state, args),
-                "mempalace_feedback" => tool_feedback(&state, args),
                 _ => Err(ErrorData::method_not_found::<
                     rmcp::model::CallToolRequestMethod,
                 >()),
@@ -117,134 +149,116 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
         tool(
             "mempalace_status",
             "Palace Status",
-            "Overview of the MemPalace memory palace.",
-            serde_json::json!({ "type": "object", "properties": {} }),
+            "Palace overview — total drawers, wing and room counts",
+            serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         ),
         tool(
-            "mempalace_list_drawers",
-            "List Drawers",
-            "List all drawers (wings/halls) in the palace.",
-            serde_json::json!({ "type": "object", "properties": {} }),
+            "mempalace_list_wings",
+            "List Wings",
+            "List all wings with drawer counts",
+            serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         ),
         tool(
             "mempalace_list_rooms",
             "List Rooms",
-            "List rooms within a specific drawer.",
-            serde_json::json!({ "type": "object", "properties": { "drawer": { "type": "string" } } }),
+            "List rooms within a wing (or all rooms if no wing given)",
+            serde_json::json!({ "type": "object", "properties": { "wing": { "type": "string", "description": "Wing to list rooms for (optional)" } } }),
         ),
         tool(
-            "mempalace_mine",
-            "Mine Memory",
-            "Mine a file and add entries to the palace.",
-            serde_json::json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }),
+            "mempalace_get_taxonomy",
+            "Get Taxonomy",
+            "Full taxonomy: wing → room → drawer count",
+            serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        ),
+        tool(
+            "mempalace_get_aaak_spec",
+            "Get AAAK Spec",
+            "Get the AAAK dialect specification — the compressed memory format MemPalace uses. Call this if you need to read or write AAAK-compressed memories.",
+            serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        ),
+        tool(
+            "mempalace_kg_query",
+            "KG Query",
+            "Query the knowledge graph for an entity's relationships. Returns typed facts with temporal validity. E.g. 'Max' → child_of Alice, loves chess, does swimming. Filter by date with as_of to see what was true at a point in time.",
+            serde_json::json!({ "type": "object", "properties": { "entity": { "type": "string", "description": "Entity to query (e.g. 'Max', 'MyProject', 'Alice')" }, "as_of": { "type": "string", "description": "Date filter — only facts valid at this date (YYYY-MM-DD, optional)" }, "direction": { "type": "string", "description": "outgoing (entity→?), incoming (?→entity), or both (default: both)" } }, "required": ["entity"] }),
+        ),
+        tool(
+            "mempalace_kg_add",
+            "KG Add",
+            "Add a fact to the knowledge graph. Subject → predicate → object with optional time window. E.g. ('Max', 'started_school', 'Year 7', valid_from='2026-09-01').",
+            serde_json::json!({ "type": "object", "properties": { "subject": { "type": "string", "description": "The entity doing/being something" }, "predicate": { "type": "string", "description": "The relationship type (e.g. 'loves', 'works_on', 'daughter_of')" }, "object": { "type": "string", "description": "The entity being connected to" }, "valid_from": { "type": "string", "description": "When this became true (YYYY-MM-DD, optional)" }, "source_closet": { "type": "string", "description": "Closet ID where this fact appears (optional)" } }, "required": ["subject", "predicate", "object"] }),
+        ),
+        tool(
+            "mempalace_kg_invalidate",
+            "KG Invalidate",
+            "Mark a fact as no longer true. E.g. ankle injury resolved, job ended, moved house.",
+            serde_json::json!({ "type": "object", "properties": { "subject": { "type": "string", "description": "Entity" }, "predicate": { "type": "string", "description": "Relationship" }, "object": { "type": "string", "description": "Connected entity" }, "ended": { "type": "string", "description": "When it stopped being true (YYYY-MM-DD, default: today)" } }, "required": ["subject", "predicate", "object"] }),
+        ),
+        tool(
+            "mempalace_kg_timeline",
+            "KG Timeline",
+            "Chronological timeline of facts. Shows the story of an entity (or everything) in order.",
+            serde_json::json!({ "type": "object", "properties": { "entity": { "type": "string", "description": "Entity to get timeline for (optional — omit for full timeline)" } } }),
+        ),
+        tool(
+            "mempalace_kg_stats",
+            "KG Stats",
+            "Knowledge graph overview: entities, triples, current vs expired facts, relationship types.",
+            serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        ),
+        tool(
+            "mempalace_traverse",
+            "Traverse Graph",
+            "Walk the palace graph from a room. Shows connected ideas across wings — the tunnels. Like following a thread through the palace: start at 'chromadb-setup' in wing_code, discover it connects to wing_myproject (planning) and wing_user (feelings about it).",
+            serde_json::json!({ "type": "object", "properties": { "start_room": { "type": "string", "description": "Room to start from (e.g. 'chromadb-setup', 'riley-school')" }, "max_hops": { "type": "integer", "description": "How many connections to follow (default: 2)" } }, "required": ["start_room"] }),
+        ),
+        tool(
+            "mempalace_find_tunnels",
+            "Find Tunnels",
+            "Find rooms that bridge two wings — the hallways connecting different domains. E.g. what topics connect wing_code to wing_team?",
+            serde_json::json!({ "type": "object", "properties": { "wing_a": { "type": "string", "description": "First wing (optional)" }, "wing_b": { "type": "string", "description": "Second wing (optional)" } } }),
+        ),
+        tool(
+            "mempalace_graph_stats",
+            "Graph Stats",
+            "Palace graph overview: total rooms, tunnel connections, edges between wings.",
+            serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         ),
         tool(
             "mempalace_search",
-            "Search Palace",
-            "Search palace entries by text.",
-            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" }, "drawer": { "type": "string" }, "room": { "type": "string" }, "limit": { "type": "integer" } }, "required": ["query"] }),
+            "Search",
+            "Semantic search. Returns verbatim drawer content with similarity scores.",
+            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "What to search for" }, "limit": { "type": "integer", "description": "Max results (default 5)" }, "wing": { "type": "string", "description": "Filter by wing (optional)" }, "room": { "type": "string", "description": "Filter by room (optional)" } }, "required": ["query"] }),
         ),
         tool(
-            "mempalace_full_search",
-            "Full Search",
-            "Full-text search.",
-            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }),
+            "mempalace_check_duplicate",
+            "Check Duplicate",
+            "Check if content already exists in the palace before filing",
+            serde_json::json!({ "type": "object", "properties": { "content": { "type": "string", "description": "Content to check" }, "threshold": { "type": "number", "description": "Similarity threshold 0-1 (default 0.9)" } }, "required": ["content"] }),
         ),
         tool(
-            "mempalace_get_memory",
-            "Get Memory",
-            "Get entries by key.",
-            serde_json::json!({ "type": "object", "properties": { "key": { "type": "string" }, "drawer": { "type": "string" } }, "required": ["key"] }),
+            "mempalace_add_drawer",
+            "Add Drawer",
+            "File verbatim content into the palace. Checks for duplicates first.",
+            serde_json::json!({ "type": "object", "properties": { "wing": { "type": "string", "description": "Wing (project name)" }, "room": { "type": "string", "description": "Room (aspect: backend, decisions, meetings...)" }, "content": { "type": "string", "description": "Verbatim content to store — exact words, never summarized" }, "source_file": { "type": "string", "description": "Where this came from (optional)" }, "added_by": { "type": "string", "description": "Who is filing this (default: mcp)" } }, "required": ["wing", "room", "content"] }),
         ),
         tool(
-            "mempalace_write_memory",
-            "Write Memory",
-            "Write a key-value entry.",
-            serde_json::json!({ "type": "object", "properties": { "key": { "type": "string" }, "value": { "type": "string" }, "drawer": { "type": "string" } }, "required": ["key", "value"] }),
-        ),
-        tool(
-            "mempalace_diary_read",
-            "Read Diary",
-            "Read diary entries.",
-            serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer" } } }),
+            "mempalace_delete_drawer",
+            "Delete Drawer",
+            "Delete a drawer by ID. Irreversible.",
+            serde_json::json!({ "type": "object", "properties": { "drawer_id": { "type": "string", "description": "ID of the drawer to delete" } }, "required": ["drawer_id"] }),
         ),
         tool(
             "mempalace_diary_write",
-            "Write Diary",
-            "Append a diary entry.",
-            serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
+            "Diary Write",
+            "Write to your personal agent diary in AAAK format. Your observations, thoughts, what you worked on, what matters. Each agent has their own diary with full history. Write in AAAK for compression.",
+            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Your name — each agent gets their own diary wing" }, "entry": { "type": "string", "description": "Your diary entry in AAAK format — compressed, entity-coded, emotion-marked" }, "topic": { "type": "string", "description": "Topic tag (optional, default: general)" } }, "required": ["agent_name", "entry"] }),
         ),
         tool(
-            "mempalace_list_entities",
-            "List Entities",
-            "List known entities.",
-            serde_json::json!({ "type": "object", "properties": {} }),
-        ),
-        tool(
-            "mempalace_get_entity",
-            "Get Entity",
-            "Get an entity by name.",
-            serde_json::json!({ "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] }),
-        ),
-        tool(
-            "mempalace_graph_dump",
-            "Graph Dump",
-            "Export knowledge graph stats.",
-            serde_json::json!({ "type": "object", "properties": {} }),
-        ),
-        tool(
-            "mempalace_onboard",
-            "Onboard",
-            "Run onboarding.",
-            serde_json::json!({ "type": "object", "properties": {} }),
-        ),
-        tool(
-            "mempalace_doctor",
-            "Doctor",
-            "Run health checks.",
-            serde_json::json!({ "type": "object", "properties": {} }),
-        ),
-        tool(
-            "mempalace_get_config",
-            "Get Config",
-            "Get configuration.",
-            serde_json::json!({ "type": "object", "properties": {} }),
-        ),
-        tool(
-            "mempalace_set_config",
-            "Set Config",
-            "Update configuration.",
-            serde_json::json!({ "type": "object", "properties": { "key": { "type": "string" }, "value": { "type": "string" } }, "required": ["key", "value"] }),
-        ),
-        tool(
-            "mempalace_get_people",
-            "Get People",
-            "Get people map.",
-            serde_json::json!({ "type": "object", "properties": {} }),
-        ),
-        tool(
-            "mempalace_set_people",
-            "Set People",
-            "Update people map.",
-            serde_json::json!({ "type": "object", "properties": { "people": { "type": "object" } }, "required": ["people"] }),
-        ),
-        tool(
-            "mempalace_compress",
-            "Compress Text",
-            "Compress text using AAAK shorthand dialect.",
-            serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
-        ),
-        tool(
-            "mempalace_decompress",
-            "Decompress Text",
-            "Decompress AAAK shorthand back to natural language.",
-            serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }),
-        ),
-        tool(
-            "mempalace_feedback",
-            "Record Feedback",
-            "Record retrieval feedback to improve future ranking. outcome: 'helpful', 'unhelpful', or 'neutral'.",
-            serde_json::json!({ "type": "object", "properties": { "drawer_id": { "type": "string" }, "query": { "type": "string" }, "outcome": { "type": "string", "enum": ["helpful", "unhelpful", "neutral"] } }, "required": ["drawer_id", "query", "outcome"] }),
+            "mempalace_diary_read",
+            "Diary Read",
+            "Read your recent diary entries (in AAAK). See what past versions of yourself recorded — your journal across sessions.",
+            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Your name — each agent gets their own diary wing" }, "last_n": { "type": "integer", "description": "Number of recent entries to read (default: 10)" } }, "required": ["agent_name"] }),
         ),
     ]
 }
@@ -336,67 +350,94 @@ fn parse_args<T: for<'de> serde::Deserialize<'de>>(args: JsonObject) -> Result<T
 // ---------------------------------------------------------------------------
 
 fn tool_status(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    #[derive(Serialize)]
-    struct StatusOutput {
-        total_entries: usize,
-        palace_path: String,
-        collection_name: String,
+    let entries = state.db.get_all(None, None, 10_000);
+    let mut wings: HashMap<String, usize> = HashMap::new();
+    let mut rooms: HashMap<String, usize> = HashMap::new();
+    for entry in &entries {
+        if let Some(meta) = entry.metadatas.first() {
+            let wing = meta
+                .get("wing")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let room = meta
+                .get("room")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            *wings.entry(wing.to_string()).or_insert(0) += 1;
+            *rooms.entry(room.to_string()).or_insert(0) += 1;
+        }
     }
-    ok_json(StatusOutput {
-        total_entries: state.db.count(),
-        palace_path: state.palace_path.display().to_string(),
-        collection_name: state.config.collection_name.clone(),
-    })
+    ok_json(serde_json::json!({
+        "total_drawers": state.db.count(),
+        "wings": wings,
+        "rooms": rooms,
+        "palace_path": state.palace_path.display().to_string(),
+        "protocol": PALACE_PROTOCOL,
+        "aaak_dialect": AAAK_SPEC,
+    }))
 }
 
-fn tool_list_drawers(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    ok_json(serde_json::json!({
-        "drawers": ["emotions", "consciousness", "memory", "technical", "identity", "family", "creative"],
-        "total": 7
-    }))
+fn tool_list_wings(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    let entries = state.db.get_all(None, None, 10_000);
+    let mut wings: HashMap<String, usize> = HashMap::new();
+    for entry in &entries {
+        if let Some(meta) = entry.metadatas.first() {
+            let wing = meta
+                .get("wing")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            *wings.entry(wing.to_string()).or_insert(0) += 1;
+        }
+    }
+    ok_json(serde_json::json!({ "wings": wings }))
 }
 
 fn tool_list_rooms(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
-        drawer: Option<String>,
+        wing: Option<String>,
     }
     let input: Input = parse_args(args)?;
-    let entries = state.db.get_all(input.drawer.as_deref(), None, 1000);
-    let mut rooms: Vec<&str> = entries
-        .iter()
-        .filter_map(|e| e.metadatas.first())
-        .filter_map(|m| m.get("room"))
-        .filter_map(|v| v.as_str())
-        .collect();
-    rooms.sort();
-    rooms.dedup();
-    ok_json(serde_json::json!({ "rooms": rooms }))
+    let entries = state.db.get_all(input.wing.as_deref(), None, 10_000);
+    let mut room_counts: HashMap<String, usize> = HashMap::new();
+    for entry in &entries {
+        if let Some(meta) = entry.metadatas.first() {
+            if let Some(room) = meta.get("room").and_then(|v| v.as_str()) {
+                *room_counts.entry(room.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    ok_json(
+        serde_json::json!({ "wing": input.wing.unwrap_or_else(|| "all".to_string()), "rooms": room_counts }),
+    )
 }
 
-fn tool_mine(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Input {
-        path: String,
-    }
-    let input: Input = parse_args(args)?;
-    if !std::path::Path::new(&input.path).is_file() {
-        return Err(ErrorData::invalid_params(
-            format!("not a file: {}", input.path),
-            None,
-        ));
-    }
-    let rt = Runtime::new().map_err(|e| internal_error_safe(&e))?;
-    rt.block_on(async {
-        let mut miner = crate::miner::Miner::new(&state.palace_path, "general", vec![])
-            .map_err(|e| internal_error_safe(&e))?;
-        match miner.mine_file(std::path::Path::new(&input.path)).await {
-            Ok(count) => ok_json(serde_json::json!({ "mined": count })),
-            Err(e) => Err(internal_error_safe(&e)),
+fn tool_get_taxonomy(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    let entries = state.db.get_all(None, None, 10_000);
+    let mut taxonomy: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    for entry in &entries {
+        if let Some(meta) = entry.metadatas.first() {
+            let wing = meta
+                .get("wing")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let room = meta
+                .get("room")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            *taxonomy
+                .entry(wing.to_string())
+                .or_default()
+                .entry(room.to_string())
+                .or_insert(0) += 1;
         }
-    })
+    }
+    ok_json(serde_json::json!({ "taxonomy": taxonomy }))
+}
+
+fn tool_get_aaak_spec(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    ok_json(serde_json::json!({ "aaak_spec": AAAK_SPEC }))
 }
 
 fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -404,7 +445,7 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     #[serde(rename_all = "camelCase")]
     struct Input {
         query: String,
-        drawer: Option<String>,
+        wing: Option<String>,
         room: Option<String>,
         limit: Option<usize>,
     }
@@ -414,15 +455,15 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     let query_results = db
         .query_sync(
             &input.query,
-            input.drawer.as_deref(),
+            input.wing.as_deref(),
             input.room.as_deref(),
-            input.limit.unwrap_or(crate::constants::DEFAULT_N_RESULTS),
+            input.limit.unwrap_or(5),
         )
         .map_err(|e| internal_error_safe(&e))?;
     let response = crate::searcher::SearchResponse {
         query: input.query,
         filters: crate::searcher::SearchFilters {
-            wing: input.drawer,
+            wing: input.wing,
             room: input.room,
         },
         results: query_results
@@ -433,136 +474,379 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     ok_json(serde_json::to_value(response).map_err(|e| internal_error_safe(&e))?)
 }
 
-fn tool_full_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_check_duplicate(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
-        query: String,
+        content: String,
+        threshold: Option<f64>,
     }
     let input: Input = parse_args(args)?;
-    // Sync fallback: search all entries by keyword similarity
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
-    let results = db.get_all(None, None, 10);
-    let out: Vec<serde_json::Value> = results
+    let duplicate = db
+        .query_sync(&input.content, None, None, 1)
+        .map_err(|e| internal_error_safe(&e))?
         .into_iter()
-        .filter(|r| {
-            r.documents
-                .first()
-                .map(|c| c.contains(&input.query))
-                .unwrap_or(false)
-        })
-        .map(|r| {
-            serde_json::json!({
-                "id": r.ids.first(),
-                "content": r.documents.first(),
+        .next()
+        .and_then(|result| {
+            let similarity =
+                (1.0 - result.distances.first().copied().unwrap_or(1.0)).clamp(0.0, 1.0);
+            if similarity >= input.threshold.unwrap_or(0.9) {
+                result.ids.first().cloned()
+            } else {
+                None
+            }
+        });
+    let matches = if let Some(id) = duplicate {
+        let entries = state.db.get_all(None, None, 10_000);
+        entries
+            .into_iter()
+            .find(|r| r.ids.first().map(|value| value == &id).unwrap_or(false))
+            .map(|r| {
+                let meta = r.metadatas.first().cloned().unwrap_or_default();
+                vec![serde_json::json!({
+                    "id": id,
+                    "wing": meta.get("wing").and_then(|v| v.as_str()).unwrap_or("?"),
+                    "room": meta.get("room").and_then(|v| v.as_str()).unwrap_or("?"),
+                    "similarity": crate::searcher::SearchResult::from(r.clone()).similarity,
+                    "content": r.documents.first().map(|doc| if doc.len() > 200 { format!("{}...", &doc[..200]) } else { doc.clone() }).unwrap_or_default(),
+                })]
             })
-        })
-        .collect();
-    ok_json(serde_json::json!({ "searched": input.query, "results": out }))
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+    ok_json(serde_json::json!({ "is_duplicate": !matches.is_empty(), "matches": matches }))
 }
 
-fn tool_get_memory(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Input {
-        key: String,
-        drawer: Option<String>,
-        limit: Option<usize>,
-    }
-    let input: Input = parse_args(args)?;
-    let entries = state
-        .db
-        .get_all(input.drawer.as_deref(), None, input.limit.unwrap_or(20));
-    let filtered: Vec<serde_json::Value> = entries.into_iter()
-        .filter(|e| e.documents.first().map(|c| c.contains(&input.key)).unwrap_or(false))
-        .map(|e| serde_json::json!({ "content": e.documents.first(), "metadata": e.metadatas.first() }))
-        .collect();
-    ok_json(filtered)
-}
-
-fn tool_write_memory(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     read_only_guard(state)?;
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
-        key: String,
-        value: String,
-        drawer: Option<String>,
+        wing: String,
+        room: String,
+        content: String,
+        source_file: Option<String>,
+        added_by: Option<String>,
     }
     let input: Input = parse_args(args)?;
-    let id = format!("mem_{}", uuid::Uuid::new_v4());
-    let wing = input.drawer.as_deref().unwrap_or("general");
+    let hash = short_hash(
+        &format!(
+            "{}{}{}",
+            input.wing,
+            input.room,
+            &input.content.chars().take(100).collect::<String>()
+        ),
+        24,
+    );
+    let drawer_id = format!("drawer_{}_{}_{}", input.wing, input.room, hash);
     let mut db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
+    if db._get_document(&drawer_id).is_some() {
+        return ok_json(
+            serde_json::json!({ "success": true, "reason": "already_exists", "drawer_id": drawer_id }),
+        );
+    }
     db.add(
-        &[(&id, &input.value)],
-        &[&[("wing", wing), ("key", &input.key)]],
+        &[(&drawer_id, &input.content)],
+        &[&[
+            ("wing", &input.wing),
+            ("room", &input.room),
+            ("source_file", input.source_file.as_deref().unwrap_or("")),
+            ("added_by", input.added_by.as_deref().unwrap_or("mcp")),
+            ("chunk_index", "0"),
+        ]],
     )
     .map_err(|e| internal_error_safe(&e))?;
-    ok_json(serde_json::json!({ "id": id }))
+    db.flush().map_err(|e| internal_error_safe(&e))?;
+    ok_json(
+        serde_json::json!({ "success": true, "drawer_id": drawer_id, "wing": input.wing, "room": input.room }),
+    )
+}
+
+fn tool_delete_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    struct Input {
+        drawer_id: String,
+    }
+    let input: Input = parse_args(args)?;
+    let mut db = crate::palace_db::PalaceDb::open(&state.palace_path)
+        .map_err(|e| internal_error_safe(&e))?;
+    let removed = db
+        .delete_id(&input.drawer_id)
+        .map_err(|e| internal_error_safe(&e))?;
+    if removed {
+        ok_json(serde_json::json!({ "success": true, "drawer_id": input.drawer_id }))
+    } else {
+        ok_json(
+            serde_json::json!({ "success": false, "error": format!("Drawer not found: {}", input.drawer_id) }),
+        )
+    }
+}
+
+fn tool_kg_query(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        entity: String,
+        as_of: Option<String>,
+        direction: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
+        .map_err(|e| internal_error_safe(&e))?;
+    let facts = kg
+        .query_entity(
+            &input.entity,
+            input.as_of.as_deref(),
+            input.direction.as_deref().unwrap_or("both"),
+        )
+        .map_err(|e| internal_error_safe(&e))?;
+    ok_json(
+        serde_json::json!({ "entity": input.entity, "as_of": input.as_of, "facts": facts, "count": facts.len() }),
+    )
+}
+
+fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    struct Input {
+        subject: String,
+        predicate: String,
+        object: String,
+        valid_from: Option<String>,
+        source_closet: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let mut kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
+        .map_err(|e| internal_error_safe(&e))?;
+    let triple_id = kg
+        .add_triple(
+            &input.subject,
+            &input.predicate,
+            &input.object,
+            input.valid_from.as_deref(),
+            None,
+            None,
+            input.source_closet.as_deref(),
+            None,
+        )
+        .map_err(|e| internal_error_safe(&e))?;
+    ok_json(
+        serde_json::json!({ "success": true, "triple_id": triple_id, "fact": format!("{} → {} → {}", input.subject, input.predicate, input.object) }),
+    )
+}
+
+fn tool_kg_invalidate(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    struct Input {
+        subject: String,
+        predicate: String,
+        object: String,
+        ended: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let mut kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
+        .map_err(|e| internal_error_safe(&e))?;
+    kg.invalidate(
+        &input.subject,
+        &input.predicate,
+        &input.object,
+        input.ended.as_deref(),
+    )
+    .map_err(|e| internal_error_safe(&e))?;
+    ok_json(
+        serde_json::json!({ "success": true, "fact": format!("{} → {} → {}", input.subject, input.predicate, input.object), "ended": input.ended.unwrap_or_else(|| "today".to_string()) }),
+    )
+}
+
+fn tool_kg_timeline(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        entity: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
+        .map_err(|e| internal_error_safe(&e))?;
+    let timeline = kg
+        .timeline(input.entity.as_deref())
+        .map_err(|e| internal_error_safe(&e))?;
+    ok_json(
+        serde_json::json!({ "entity": input.entity.clone().unwrap_or_else(|| "all".to_string()), "timeline": timeline, "count": timeline.len() }),
+    )
+}
+
+fn tool_kg_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
+        .map_err(|e| internal_error_safe(&e))?;
+    let stats = kg.stats().map_err(|e| internal_error_safe(&e))?;
+    ok_json(serde_json::json!({
+        "entities": stats.total_entities,
+        "triples": stats.total_triples,
+        "current_facts": stats.current_facts,
+        "expired_facts": stats.expired_facts,
+        "relationship_types": stats.relationship_types,
+    }))
+}
+
+fn build_graph_from_db(state: &AppState) -> crate::palace_graph::PalaceGraph {
+    use crate::palace_graph::{HallType, PalaceGraph, Room, Wing, WingType};
+    let mut by_wing: HashMap<String, Vec<Room>> = HashMap::new();
+    for entry in state.db.get_all(None, None, 10_000) {
+        if let Some(meta) = entry.metadatas.first() {
+            let wing = meta
+                .get("wing")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let room = meta
+                .get("room")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let hall = match meta.get("hall").and_then(|v| v.as_str()).unwrap_or("facts") {
+                "events" => HallType::Events,
+                "discoveries" => HallType::Discoveries,
+                "preferences" => HallType::Preferences,
+                "advice" => HallType::Advice,
+                _ => HallType::Facts,
+            };
+            by_wing.entry(wing).or_default().push(Room {
+                name: room,
+                hall,
+                closet_id: entry.ids.first().cloned(),
+            });
+        }
+    }
+    let mut graph = PalaceGraph::new();
+    for (wing_name, rooms) in by_wing {
+        graph.add_wing(Wing {
+            name: wing_name,
+            wing_type: WingType::Topic,
+            rooms,
+        });
+    }
+    graph
+}
+
+fn tool_traverse(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        start_room: String,
+        max_hops: Option<usize>,
+    }
+    let input: Input = parse_args(args)?;
+    let graph = build_graph_from_db(state);
+    let results = graph.traverse(&input.start_room, input.max_hops.unwrap_or(2));
+    ok_json(results)
+}
+
+fn tool_find_tunnels(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        wing_a: Option<String>,
+        wing_b: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let graph = build_graph_from_db(state);
+    let tunnels = match (input.wing_a.as_deref(), input.wing_b.as_deref()) {
+        (Some(a), Some(b)) => graph.find_tunnels(a, b),
+        _ => vec![],
+    };
+    ok_json(tunnels)
+}
+
+fn tool_graph_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    let graph = build_graph_from_db(state);
+    let stats = graph.stats();
+    ok_json(serde_json::json!({
+        "total_wings": stats.total_wings,
+        "total_rooms": stats.total_rooms,
+        "total_halls": stats.total_halls,
+        "total_tunnels": stats.total_tunnels,
+    }))
 }
 
 fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
-        limit: Option<usize>,
+        agent_name: String,
+        last_n: Option<usize>,
     }
     let input: Input = parse_args(args)?;
-    let entries = state
-        .db
-        .get_all(Some("diary"), None, input.limit.unwrap_or(50));
-    let out: Vec<serde_json::Value> = entries.iter()
-        .map(|e| serde_json::json!({ "content": e.documents.first(), "metadata": e.metadatas.first() }))
-        .collect();
-    ok_json(out)
+    let wing = format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_"));
+    let entries = state.db.get_all(Some(&wing), Some("diary"), 10_000);
+    let mut items: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|e| {
+            let meta = e.metadatas.first().cloned().unwrap_or_default();
+            serde_json::json!({
+                "date": meta.get("date").and_then(|v| v.as_str()).unwrap_or(""),
+                "timestamp": meta.get("filed_at").and_then(|v| v.as_str()).unwrap_or(""),
+                "topic": meta.get("topic").and_then(|v| v.as_str()).unwrap_or(""),
+                "content": e.documents.first().cloned().unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| {
+        let a_ts = a.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+        let b_ts = b.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+        b_ts.cmp(a_ts)
+    });
+    let showing = items.len().min(input.last_n.unwrap_or(10));
+    ok_json(serde_json::json!({
+        "agent": input.agent_name,
+        "entries": items.into_iter().take(input.last_n.unwrap_or(10)).collect::<Vec<_>>(),
+        "total": entries.len(),
+        "showing": showing,
+    }))
 }
 
 fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     read_only_guard(state)?;
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
-        text: String,
+        agent_name: String,
+        entry: String,
+        topic: Option<String>,
     }
     let input: Input = parse_args(args)?;
-    let id = format!("diary_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+    let now = chrono::Local::now();
+    let wing = format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_"));
+    let topic = input.topic.unwrap_or_else(|| "general".to_string());
+    let id = format!(
+        "diary_{}_{}_{}",
+        wing,
+        now.format("%Y%m%d_%H%M%S"),
+        &short_hash(&input.entry.chars().take(50).collect::<String>(), 12)
+    );
     let mut db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
-    db.add(&[(&id, &input.text)], &[&[("wing", "diary")]])
-        .map_err(|e| internal_error_safe(&e))?;
-    ok_json(serde_json::json!({ "id": id }))
-}
-
-fn tool_list_entities(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    let summary = crate::entity_registry::EntityRegistry::load(&state.palace_path)
-        .map(|r| {
-            serde_json::json!({
-                "people_count": r.people_count(),
-                "projects_count": r.projects_count(),
-            })
-        })
-        .unwrap_or(serde_json::json!({ "error": "could not load registry" }));
-    ok_json(summary)
-}
-
-fn tool_get_entity(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Input {
-        name: String,
-    }
-    let input: Input = parse_args(args)?;
-    match crate::entity_registry::EntityRegistry::load(&state.palace_path) {
-        Ok(r) => {
-            let result = r.lookup(&input.name, "");
-            ok_json(serde_json::json!({ "entity": result }))
-        }
-        Err(_) => ok_json(
-            serde_json::json!({ "entity": { "name": input.name, "found": false, "note": "entity registry not initialized" } }),
-        ),
-    }
+    let date = now.format("%Y-%m-%d").to_string();
+    let filed_at = now.to_rfc3339();
+    db.add(
+        &[(&id, &input.entry)],
+        &[&[
+            ("wing", &wing),
+            ("room", "diary"),
+            ("hall", "hall_diary"),
+            ("topic", &topic),
+            ("type", "diary_entry"),
+            ("agent", &input.agent_name),
+            ("filed_at", &filed_at),
+            ("date", &date),
+        ]],
+    )
+    .map_err(|e| internal_error_safe(&e))?;
+    db.flush().map_err(|e| internal_error_safe(&e))?;
+    ok_json(serde_json::json!({
+        "success": true,
+        "entry_id": id,
+        "agent": input.agent_name,
+        "topic": topic,
+        "timestamp": filed_at,
+    }))
 }
 
 fn kg_path(state: &AppState) -> std::path::PathBuf {
@@ -571,133 +855,6 @@ fn kg_path(state: &AppState) -> std::path::PathBuf {
         .parent()
         .unwrap_or(&state.palace_path)
         .join("knowledge_graph.db")
-}
-
-fn tool_graph_dump(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    let stats = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
-        .and_then(|kg| kg.stats())
-        .map(|s| {
-            serde_json::json!({
-                "total_entities": s.total_entities,
-                "total_triples": s.total_triples,
-                "current_facts": s.current_facts,
-            })
-        })
-        .unwrap_or(serde_json::json!({ "error": "could not load graph" }));
-    ok_json(stats)
-}
-
-fn tool_onboard(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    ok_json(
-        serde_json::json!({ "status": "onboarding_not_implemented", "message": "Use mempalace init to set up the palace" }),
-    )
-}
-
-fn tool_doctor(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    match crate::doctor::run_doctor(&state.palace_path) {
-        Ok(report) => ok_json(
-            serde_json::json!({ "healthy": report.healthy, "check_count": report.checks.len() }),
-        ),
-        Err(e) => Err(internal_error_safe(&e)),
-    }
-}
-
-fn tool_get_config(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    ok_json(serde_json::json!({
-        "palace_path": state.palace_path.display().to_string(),
-        "collection_name": state.config.collection_name,
-    }))
-}
-
-fn tool_set_config(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    read_only_guard(state)?;
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Input {
-        key: String,
-        value: String,
-    }
-    let input: Input = parse_args(args)?;
-    if input.key == "collection_name" {
-        let mut cfg = state.config.clone();
-        cfg.collection_name = input.value;
-        cfg.save().map_err(|e| internal_error_safe(&e))?;
-    }
-    ok_json(serde_json::json!({ "updated": input.key }))
-}
-
-fn tool_get_people(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    let people = state.config.load_people_map().unwrap_or_default();
-    ok_json(people)
-}
-
-fn tool_set_people(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    read_only_guard(state)?;
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Input {
-        people: HashMap<String, String>,
-    }
-    let input: Input = parse_args(args)?;
-    state
-        .config
-        .save_people_map(&input.people)
-        .map_err(|e| internal_error_safe(&e))?;
-    ok_json(serde_json::json!({ "saved": input.people.len() }))
-}
-
-fn tool_compress(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    #[derive(Deserialize)]
-    struct Input {
-        text: String,
-    }
-    let input: Input = parse_args(args)?;
-    let people_map = state.config.load_people_map().unwrap_or_default();
-    let compressed = crate::dialect::compress(&input.text, &people_map);
-    let stats = crate::dialect::compression_stats(&input.text, &compressed);
-    ok_json(serde_json::json!({
-        "original": input.text,
-        "compressed": compressed,
-        "stats": {
-            "original_tokens": stats.original_tokens,
-            "compressed_tokens": stats.compressed_tokens,
-            "ratio": stats.ratio
-        }
-    }))
-}
-
-fn tool_decompress(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    #[derive(Deserialize)]
-    struct Input {
-        text: String,
-    }
-    let input: Input = parse_args(args)?;
-    let people_map = state.config.load_people_map().unwrap_or_default();
-    let decompressed = crate::dialect::decompress(&input.text, &people_map);
-    ok_json(serde_json::json!({
-        "original": input.text,
-        "decompressed": decompressed
-    }))
-}
-
-fn tool_feedback(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    #[derive(Deserialize)]
-    struct Input {
-        drawer_id: String,
-        query: String,
-        outcome: String,
-    }
-    let input: Input = parse_args(args)?;
-    let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
-        .map_err(|e| internal_error_safe(&e))?;
-    kg.record_feedback(&input.drawer_id, &input.query, &input.outcome)
-        .map_err(|e| internal_error_safe(&e))?;
-    ok_json(serde_json::json!({
-        "drawer_id": input.drawer_id,
-        "query": input.query,
-        "outcome": input.outcome,
-        "recorded": true
-    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -724,6 +881,7 @@ pub fn run_server(read_only: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     fn test_state() -> AppState {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -771,19 +929,12 @@ mod tests {
     }
 
     #[test]
-    fn test_list_drawers() {
-        let state = test_state();
-        let result = dispatch(&state, "mempalace_list_drawers", json!({}));
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_list_rooms() {
         let state = test_state();
         let result = dispatch(
             &state,
             "mempalace_list_rooms",
-            json!({ "drawer": "emotions" }),
+            json!({ "wing": "emotions" }),
         );
         assert!(result.is_ok());
     }
@@ -800,12 +951,12 @@ mod tests {
     }
 
     #[test]
-    fn test_get_memory() {
+    fn test_check_duplicate() {
         let state = test_state();
         let result = dispatch(
             &state,
-            "mempalace_get_memory",
-            json!({ "key": "nonexistent" }),
+            "mempalace_check_duplicate",
+            json!({ "content": "nonexistent" }),
         );
         assert!(result.is_ok());
     }
@@ -813,54 +964,62 @@ mod tests {
     #[test]
     fn test_diary_read() {
         let state = test_state();
-        let result = dispatch(&state, "mempalace_diary_read", json!({}));
+        let result = dispatch(
+            &state,
+            "mempalace_diary_read",
+            json!({ "agent_name": "TestAgent" }),
+        );
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_list_entities() {
+    fn test_list_wings() {
         let state = test_state();
-        let result = dispatch(&state, "mempalace_list_entities", json!({}));
+        let result = dispatch(&state, "mempalace_list_wings", json!({}));
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_graph_dump() {
+    fn test_get_taxonomy() {
         let state = test_state();
-        let result = dispatch(&state, "mempalace_graph_dump", json!({}));
+        let result = dispatch(&state, "mempalace_get_taxonomy", json!({}));
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_get_config() {
+    fn test_get_aaak_spec() {
         let state = test_state();
-        let result = dispatch(&state, "mempalace_get_config", json!({}));
+        let result = dispatch(&state, "mempalace_get_aaak_spec", json!({}));
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_get_people() {
+    fn test_kg_stats() {
         let state = test_state();
-        let result = dispatch(&state, "mempalace_get_people", json!({}));
+        let result = dispatch(&state, "mempalace_kg_stats", json!({}));
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_onboard() {
+    fn test_graph_stats() {
         let state = test_state();
-        let result = dispatch(&state, "mempalace_onboard", json!({}));
+        let result = dispatch(&state, "mempalace_graph_stats", json!({}));
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_doctor() {
+    fn test_traverse() {
         let state = test_state();
-        let result = dispatch(&state, "mempalace_doctor", json!({}));
+        let result = dispatch(
+            &state,
+            "mempalace_traverse",
+            json!({ "start_room": "unknown" }),
+        );
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_read_only_blocks_write_memory() {
+    fn test_read_only_blocks_add_drawer() {
         let state = {
             let temp_dir = tempfile::tempdir().unwrap();
             let config = crate::Config {
@@ -876,8 +1035,8 @@ mod tests {
         };
         let result = dispatch(
             &state,
-            "mempalace_write_memory",
-            json!({ "key": "test", "value": "val" }),
+            "mempalace_add_drawer",
+            json!({ "wing": "test", "room": "backend", "content": "val" }),
         );
         assert!(result.is_err());
     }
@@ -897,12 +1056,16 @@ mod tests {
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
         };
-        let result = dispatch(&state, "mempalace_diary_write", json!({ "text": "hello" }));
+        let result = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({ "agent_name": "TestAgent", "entry": "hello" }),
+        );
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_read_only_blocks_set_config() {
+    fn test_read_only_blocks_kg_add() {
         let state = {
             let temp_dir = tempfile::tempdir().unwrap();
             let config = crate::Config {
@@ -918,14 +1081,14 @@ mod tests {
         };
         let result = dispatch(
             &state,
-            "mempalace_set_config",
-            json!({ "key": "collection_name", "value": "new" }),
+            "mempalace_kg_add",
+            json!({ "subject": "Alice", "predicate": "likes", "object": "coffee" }),
         );
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_read_only_blocks_set_people() {
+    fn test_read_only_blocks_delete_drawer() {
         let state = {
             let temp_dir = tempfile::tempdir().unwrap();
             let config = crate::Config {
@@ -941,8 +1104,8 @@ mod tests {
         };
         let result = dispatch(
             &state,
-            "mempalace_set_people",
-            json!({ "people": { "Alice": "A" } }),
+            "mempalace_delete_drawer",
+            json!({ "drawer_id": "drawer_x" }),
         );
         assert!(result.is_err());
     }
@@ -960,31 +1123,129 @@ mod tests {
         let write_result = dispatch(
             &state,
             "mempalace_diary_write",
-            json!({ "text": "Test diary entry" }),
+            json!({ "agent_name": "TestAgent", "entry": "Test diary entry", "topic": "architecture" }),
         );
         assert!(
             write_result.is_ok(),
             "diary write failed: {:?}",
             write_result
         );
-        let read_result = dispatch(&state, "mempalace_diary_read", json!({}));
+        let read_result = dispatch(
+            &state,
+            "mempalace_diary_read",
+            json!({ "agent_name": "TestAgent" }),
+        );
         assert!(read_result.is_ok(), "diary read failed: {:?}", read_result);
     }
 
     #[test]
-    fn test_write_memory_and_get_memory_roundtrip() {
+    fn test_add_drawer_and_delete_roundtrip() {
         let state = test_state();
-        let write_result = dispatch(
+        let add_result = dispatch(
             &state,
-            "mempalace_write_memory",
-            json!({ "key": "test_key", "value": "test_value", "drawer": "emotions" }),
+            "mempalace_add_drawer",
+            json!({ "wing": "project", "room": "backend", "content": "test_value" }),
+        );
+        assert!(add_result.is_ok(), "add_drawer failed: {:?}", add_result);
+        let add_json = add_result.unwrap();
+        let text = serde_json::to_value(&add_json.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let drawer_id = parsed
+            .get("drawer_id")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+
+        let delete_result = dispatch(
+            &state,
+            "mempalace_delete_drawer",
+            json!({ "drawer_id": drawer_id }),
         );
         assert!(
-            write_result.is_ok(),
-            "write_memory failed: {:?}",
-            write_result
+            delete_result.is_ok(),
+            "delete_drawer failed: {:?}",
+            delete_result
         );
-        let read_result = dispatch(&state, "mempalace_get_memory", json!({ "key": "test_key" }));
-        assert!(read_result.is_ok(), "get_memory failed: {:?}", read_result);
+    }
+
+    #[test]
+    fn test_catalog_matches_python_surface() {
+        let tools = make_tools();
+        let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
+        let expected = vec![
+            "mempalace_status",
+            "mempalace_list_wings",
+            "mempalace_list_rooms",
+            "mempalace_get_taxonomy",
+            "mempalace_get_aaak_spec",
+            "mempalace_kg_query",
+            "mempalace_kg_add",
+            "mempalace_kg_invalidate",
+            "mempalace_kg_timeline",
+            "mempalace_kg_stats",
+            "mempalace_traverse",
+            "mempalace_find_tunnels",
+            "mempalace_graph_stats",
+            "mempalace_search",
+            "mempalace_check_duplicate",
+            "mempalace_add_drawer",
+            "mempalace_delete_drawer",
+            "mempalace_diary_write",
+            "mempalace_diary_read",
+        ];
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn test_catalog_schemas_match_key_python_fields() {
+        let tools = make_tools();
+        let search = tools.iter().find(|t| t.name == "mempalace_search").unwrap();
+        assert!(search
+            .input_schema
+            .get("properties")
+            .unwrap()
+            .get("wing")
+            .is_some());
+        assert!(search
+            .input_schema
+            .get("properties")
+            .unwrap()
+            .get("drawer")
+            .is_none());
+
+        let diary_write = tools
+            .iter()
+            .find(|t| t.name == "mempalace_diary_write")
+            .unwrap();
+        let required = diary_write
+            .input_schema
+            .get("required")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert!(required.iter().any(|v| v.as_str() == Some("agent_name")));
+        assert!(required.iter().any(|v| v.as_str() == Some("entry")));
+
+        let list_rooms = tools
+            .iter()
+            .find(|t| t.name == "mempalace_list_rooms")
+            .unwrap();
+        assert!(list_rooms
+            .input_schema
+            .get("properties")
+            .unwrap()
+            .get("wing")
+            .is_some());
+        assert!(list_rooms
+            .input_schema
+            .get("properties")
+            .unwrap()
+            .get("drawer")
+            .is_none());
     }
 }

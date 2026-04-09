@@ -36,7 +36,7 @@ pub struct KgStats {
     pub relationship_types: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityQueryResult {
     pub direction: String,
     pub subject: String,
