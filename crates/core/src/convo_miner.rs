@@ -493,6 +493,7 @@ fn memory_type_name(memory_type: &MemoryType) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::searcher::search_memories;
 
     #[test]
     fn test_chunk_exchanges_exchange_chunking() {
@@ -588,6 +589,22 @@ mod tests {
             meta.get("extract_mode").and_then(|v| v.as_str()),
             Some("exchange")
         );
+
+        let search = search_memories(
+            "memory persistence",
+            &palace,
+            Some("test_convos"),
+            None,
+            3,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!search.results.is_empty());
+        assert!(search
+            .results
+            .iter()
+            .any(|result| result.text.to_lowercase().contains("memory is persistence")));
     }
 
     #[tokio::test]

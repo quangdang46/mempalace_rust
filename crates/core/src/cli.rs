@@ -1338,6 +1338,12 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_mining_mode_parsing() {
@@ -1562,6 +1568,15 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_args_hook_requires_subcommand() {
+        let err = Cli::try_parse_from(["mempalace", "hook"]).err().unwrap();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
     fn test_cli_args_parse_instructions() {
         let args = Cli::try_parse_from(["mempalace", "instructions", "help"]).unwrap();
         match args.command {
@@ -1573,9 +1588,37 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_args_instructions_requires_subcommand() {
+        let err = Cli::try_parse_from(["mempalace", "instructions"])
+            .err()
+            .unwrap();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
     fn test_cli_args_parse_mcp() {
         let args = Cli::try_parse_from(["mempalace", "mcp"]).unwrap();
         assert!(matches!(args.command, Commands::Mcp));
+    }
+
+    #[test]
+    fn test_cli_args_parse_compress_defaults() {
+        let args = Cli::try_parse_from(["mempalace", "compress"]).unwrap();
+        match args.command {
+            Commands::Compress {
+                wing,
+                dry_run,
+                config,
+            } => {
+                assert_eq!(wing, None);
+                assert!(!dry_run);
+                assert_eq!(config, None);
+            }
+            _ => panic!("expected compress command"),
+        }
     }
 
     #[test]
@@ -1602,6 +1645,7 @@ mod tests {
 
     #[test]
     fn test_confirm_entities_uses_config_registry_path() {
+        let _guard = env_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let xdg_root = temp_dir.path().to_str().unwrap();
         std::env::set_var("XDG_CONFIG_HOME", xdg_root);
@@ -1629,5 +1673,49 @@ mod tests {
         assert!(confirmed.people.is_empty());
 
         std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn test_detect_mining_mode_prefers_convos_for_chat_exports() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("conversation.jsonl"), "{}\n{}").unwrap();
+        std::fs::write(temp.path().join("chatgpt-export.json"), "{}").unwrap();
+
+        assert!(matches!(
+            detect_mining_mode(&temp.path().to_path_buf()),
+            MiningMode::Convos
+        ));
+    }
+
+    #[test]
+    fn test_detect_mining_mode_prefers_projects_for_source_trees() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::create_dir_all(temp.path().join("tests")).unwrap();
+        std::fs::write(temp.path().join("README.md"), "project docs").unwrap();
+        std::fs::write(temp.path().join("src").join("main.rs"), "fn main() {}\n").unwrap();
+
+        assert!(matches!(
+            detect_mining_mode(&temp.path().to_path_buf()),
+            MiningMode::Projects
+        ));
+    }
+
+    #[test]
+    fn test_cmd_mine_flattens_include_ignored_for_project_mode_dry_run() {
+        let result = cmd_mine(
+            &PathBuf::from("/tmp/project"),
+            &MiningMode::Projects,
+            None,
+            "mempalace",
+            0,
+            true,
+            false,
+            &["a.txt,b.txt".to_string(), "c.txt".to_string()],
+            Some("/tmp/palace"),
+            Some("exchange"),
+        );
+
+        assert!(result.is_ok());
     }
 }

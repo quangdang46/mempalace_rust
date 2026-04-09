@@ -688,6 +688,13 @@ mod tests {
         assert!(!Mode::Work.default_wings().is_empty());
         assert!(!Mode::Personal.default_wings().is_empty());
         assert!(!Mode::Combo.default_wings().is_empty());
+        assert!(Mode::Work.default_wings().contains(&"projects".to_string()));
+        assert!(Mode::Personal
+            .default_wings()
+            .contains(&"family".to_string()));
+        let combo = Mode::Combo.default_wings();
+        assert!(combo.contains(&"family".to_string()));
+        assert!(combo.contains(&"work".to_string()));
     }
 
     #[test]
@@ -713,6 +720,23 @@ mod tests {
         assert!(result.people().contains_key("Alice"));
         assert!(result.projects().contains(&"ProjectX".to_string()));
         assert!(temp_dir.path().join("entity_registry.json").exists());
+    }
+
+    #[test]
+    fn test_quick_setup_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = quick_setup(
+            temp_dir.path(),
+            Mode::Personal,
+            Vec::new(),
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.mode(), "personal");
+        assert!(result.people().is_empty());
+        assert!(result.projects().is_empty());
     }
 
     #[test]
@@ -793,6 +817,28 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_aaak_bootstrap_empty_people_and_projects() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let (registry_path, facts_path) = generate_aaak_bootstrap(
+            &[],
+            &[],
+            &["general".to_string()],
+            Mode::Personal,
+            temp_dir.path(),
+        )
+        .unwrap();
+
+        assert!(registry_path.exists());
+        assert!(facts_path.exists());
+        let registry_content = std::fs::read_to_string(registry_path).unwrap();
+        let facts_content = std::fs::read_to_string(facts_path).unwrap();
+        assert!(registry_content.contains("## People"));
+        assert!(facts_content.contains("## Palace"));
+        assert!(facts_content.contains("Mode: personal"));
+    }
+
+    #[test]
     fn test_generate_aaak_bootstrap_respects_config_dir() {
         let temp_dir = TempDir::new().unwrap();
         let people = vec![PersonEntry {
@@ -850,6 +896,37 @@ mod tests {
         let result = warn_ambiguous(&people);
         assert!(result.contains(&"Grace".to_string()));
         assert!(!result.contains(&"Riley".to_string()));
+    }
+
+    #[test]
+    fn test_warn_ambiguous_empty_list() {
+        assert!(warn_ambiguous(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_warn_ambiguous_multiple_hits() {
+        let people = vec![
+            PersonEntry {
+                name: "Grace".to_string(),
+                relationship: "friend".to_string(),
+                context: "personal".to_string(),
+            },
+            PersonEntry {
+                name: "May".to_string(),
+                relationship: "aunt".to_string(),
+                context: "personal".to_string(),
+            },
+            PersonEntry {
+                name: "Joy".to_string(),
+                relationship: "sister".to_string(),
+                context: "personal".to_string(),
+            },
+        ];
+
+        let result = warn_ambiguous(&people);
+        assert!(result.contains(&"Grace".to_string()));
+        assert!(result.contains(&"May".to_string()));
+        assert!(result.contains(&"Joy".to_string()));
     }
 
     #[test]
