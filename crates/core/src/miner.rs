@@ -898,6 +898,7 @@ mod tests {
     fn test_scan_project_respects_gitignore() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
         std::fs::write(root.join(".gitignore"), "ignored.py\ngenerated/\n").unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::create_dir_all(root.join("generated")).unwrap();
@@ -913,7 +914,7 @@ mod tests {
         let rel: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(root)
+                p.strip_prefix(&canonical_root)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -926,6 +927,7 @@ mod tests {
     fn test_scan_project_nested_gitignore_override() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
         std::fs::write(root.join(".gitignore"), "*.csv\n").unwrap();
         std::fs::create_dir_all(root.join("subrepo")).unwrap();
         std::fs::write(root.join("subrepo/.gitignore"), "!keep.csv\n").unwrap();
@@ -936,7 +938,7 @@ mod tests {
         let rel: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(root)
+                p.strip_prefix(&canonical_root)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -962,6 +964,7 @@ mod tests {
     fn test_scan_project_can_disable_gitignore() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
         std::fs::write(root.join(".gitignore"), "data/\n").unwrap();
         std::fs::create_dir_all(root.join("data")).unwrap();
         std::fs::write(root.join("data/stuff.csv"), "a,b,c\n".repeat(20)).unwrap();
@@ -970,7 +973,7 @@ mod tests {
         let rel: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(root)
+                p.strip_prefix(&canonical_root)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -983,6 +986,7 @@ mod tests {
     fn test_scan_project_can_include_specific_ignored_file() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
         std::fs::write(root.join(".gitignore"), "generated/\n").unwrap();
         std::fs::create_dir_all(root.join("generated")).unwrap();
         std::fs::write(root.join("generated/drop.py"), "print('drop')\n".repeat(20)).unwrap();
@@ -993,7 +997,7 @@ mod tests {
         let rel: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(root)
+                p.strip_prefix(&canonical_root)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -1006,6 +1010,7 @@ mod tests {
     fn test_scan_project_include_override_beats_skip_dirs() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".pytest_cache")).unwrap();
         std::fs::write(
             root.join(".pytest_cache/cache.py"),
@@ -1018,7 +1023,7 @@ mod tests {
         let rel: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(root)
+                p.strip_prefix(&canonical_root)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -1031,6 +1036,7 @@ mod tests {
     fn test_scan_project_can_include_exact_file_without_known_extension() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
         std::fs::write(root.join(".gitignore"), "README\n").unwrap();
         std::fs::write(root.join("README"), "hello\n".repeat(20)).unwrap();
 
@@ -1039,7 +1045,7 @@ mod tests {
         let rel: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(root)
+                p.strip_prefix(&canonical_root)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -1052,6 +1058,7 @@ mod tests {
     fn test_scan_project_skip_dirs_still_apply_without_override() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".pytest_cache")).unwrap();
         std::fs::write(
             root.join(".pytest_cache/cache.py"),
@@ -1064,7 +1071,7 @@ mod tests {
         let rel: Vec<String> = files
             .iter()
             .map(|p| {
-                p.strip_prefix(root)
+                p.strip_prefix(&canonical_root)
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/")
