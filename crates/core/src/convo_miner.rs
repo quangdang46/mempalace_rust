@@ -216,7 +216,7 @@ pub async fn mine_conversations(
             .zip(chunk_rooms.iter())
             .map(|(chunk, chunk_room)| {
                 (
-                    generate_drawer_id(&wing, &chunk_room, &source_file, chunk.chunk_index),
+                    generate_drawer_id(&wing, chunk_room, &source_file, chunk.chunk_index),
                     chunk.content.clone(),
                 )
             })

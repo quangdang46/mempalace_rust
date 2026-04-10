@@ -22,6 +22,14 @@ pub mod searcher;
 pub mod spellcheck;
 pub mod split_mega_files;
 
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK.get_or_init(|| Mutex::new(()))
+}
+
 pub use config::Config;
 pub use error::MempalaceError;
 

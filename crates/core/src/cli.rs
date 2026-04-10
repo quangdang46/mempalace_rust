@@ -1338,12 +1338,7 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        ENV_LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use crate::test_env_lock;
 
     #[test]
     fn test_mining_mode_parsing() {
@@ -1645,7 +1640,7 @@ mod tests {
 
     #[test]
     fn test_confirm_entities_uses_config_registry_path() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = test_env_lock().lock().unwrap();
         let temp_dir = tempfile::TempDir::new().unwrap();
         let xdg_root = temp_dir.path().to_str().unwrap();
         std::env::set_var("XDG_CONFIG_HOME", xdg_root);
