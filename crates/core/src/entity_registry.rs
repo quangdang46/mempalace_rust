@@ -1,3 +1,4 @@
+use crate::entity_detector::detect_from_content;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,6 +13,26 @@ pub struct EntityEntry {
     pub confidence: f64,
     #[serde(default)]
     pub canonical: Option<String>,
+    #[serde(default)]
+    pub seen_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiCacheEntry {
+    pub inferred_type: String,
+    pub confidence: f64,
+    #[serde(default)]
+    pub wiki_summary: Option<String>,
+    #[serde(default)]
+    pub wiki_title: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub word: Option<String>,
+    #[serde(default)]
+    pub confirmed: bool,
+    #[serde(default)]
+    pub confirmed_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +46,7 @@ pub struct RegistryData {
     #[serde(default)]
     pub ambiguous_flags: Vec<String>,
     #[serde(default)]
-    pub wiki_cache: HashMap<String, serde_json::Value>,
+    pub wiki_cache: HashMap<String, WikiCacheEntry>,
     /// Entities explicitly rejected by the user during init or review.
     /// These are permanently ignored in future entity detection.
     #[serde(default)]
@@ -58,6 +79,14 @@ pub struct LookupResult {
     pub source: String,
     pub name: String,
     pub needs_disambiguation: bool,
+    #[serde(default)]
+    pub context: Vec<String>,
+    #[serde(default)]
+    pub disambiguated_by: Option<String>,
+    #[serde(default)]
+    pub wiki_summary: Option<String>,
+    #[serde(default)]
+    pub wiki_title: Option<String>,
 }
 
 pub static COMMON_ENGLISH_WORDS: &[&str] = &[
@@ -114,6 +143,85 @@ pub static COMMON_ENGLISH_WORDS: &[&str] = &[
     "october",
     "november",
     "december",
+];
+
+const PERSON_CONTEXT_PATTERNS: &[&str] = &[
+    r"\b{name}\s+said\b",
+    r"\b{name}\s+told\b",
+    r"\b{name}\s+asked\b",
+    r"\b{name}\s+laughed\b",
+    r"\b{name}\s+smiled\b",
+    r"\b{name}\s+was\b",
+    r"\b{name}\s+is\b",
+    r"\b{name}\s+called\b",
+    r"\b{name}\s+texted\b",
+    r"\bwith\s+{name}\b",
+    r"\bsaw\s+{name}\b",
+    r"\bcalled\s+{name}\b",
+    r"\btook\s+{name}\b",
+    r"\bpicked\s+up\s+{name}\b",
+    r"\bdrop(?:ped)?\s+(?:off\s+)?{name}\b",
+    r"\b{name}(?:'s|s')\b",
+    r"\bhey\s+{name}\b",
+    r"\bthanks?\s+{name}\b",
+    r"^{name}[:\s]",
+    r"\bmy\s+(?:son|daughter|kid|child|brother|sister|friend|partner|colleague|coworker)\s+{name}\b",
+];
+
+const CONCEPT_CONTEXT_PATTERNS: &[&str] = &[
+    r"\bhave\s+you\s+{name}\b",
+    r"\bif\s+you\s+{name}\b",
+    r"\b{name}\s+since\b",
+    r"\b{name}\s+again\b",
+    r"\bnot\s+{name}\b",
+    r"\b{name}\s+more\b",
+    r"\bwould\s+{name}\b",
+    r"\bcould\s+{name}\b",
+    r"\bwill\s+{name}\b",
+    r"(?:the\s+)?{name}\s+(?:of|in|at|for|to)\b",
+];
+
+const NAME_INDICATOR_PHRASES: &[&str] = &[
+    "given name",
+    "personal name",
+    "first name",
+    "forename",
+    "masculine name",
+    "feminine name",
+    "boy's name",
+    "girl's name",
+    "male name",
+    "female name",
+    "irish name",
+    "welsh name",
+    "scottish name",
+    "gaelic name",
+    "hebrew name",
+    "arabic name",
+    "norse name",
+    "old english name",
+    "is a name",
+    "as a name",
+    "name meaning",
+    "name derived from",
+    "legendary irish",
+    "legendary welsh",
+    "legendary scottish",
+];
+
+const PLACE_INDICATOR_PHRASES: &[&str] = &[
+    "city in",
+    "town in",
+    "village in",
+    "municipality",
+    "capital of",
+    "district of",
+    "county",
+    "province",
+    "region of",
+    "island of",
+    "mountain in",
+    "river in",
 ];
 
 impl EntityRegistry {
@@ -198,8 +306,9 @@ impl EntityRegistry {
                     canonical: if canonical != name {
                         Some(canonical.to_string())
                     } else {
-                        None
+                        Some(name.to_string())
                     },
+                    seen_count: None,
                 },
             );
 
@@ -213,6 +322,7 @@ impl EntityRegistry {
                         relationship: relationship.to_string(),
                         confidence: 1.0,
                         canonical: Some(name.to_string()),
+                        seen_count: None,
                     },
                 );
             }
@@ -249,6 +359,10 @@ impl EntityRegistry {
                     source: info.source.clone(),
                     name: canonical.clone(),
                     needs_disambiguation: false,
+                    context: info.contexts.clone(),
+                    disambiguated_by: None,
+                    wiki_summary: None,
+                    wiki_title: None,
                 };
             }
         }
@@ -261,6 +375,29 @@ impl EntityRegistry {
                     source: "onboarding".to_string(),
                     name: proj.clone(),
                     needs_disambiguation: false,
+                    context: vec![],
+                    disambiguated_by: None,
+                    wiki_summary: None,
+                    wiki_title: None,
+                };
+            }
+        }
+
+        for (cached_word, cached_result) in &self.data.wiki_cache {
+            if word_lower == cached_word.to_lowercase() && cached_result.confirmed {
+                return LookupResult {
+                    entity_type: cached_result
+                        .confirmed_type
+                        .clone()
+                        .unwrap_or_else(|| cached_result.inferred_type.clone()),
+                    confidence: cached_result.confidence,
+                    source: "wiki".to_string(),
+                    name: word.to_string(),
+                    needs_disambiguation: false,
+                    context: vec![],
+                    disambiguated_by: None,
+                    wiki_summary: cached_result.wiki_summary.clone(),
+                    wiki_title: cached_result.wiki_title.clone(),
                 };
             }
         }
@@ -271,6 +408,10 @@ impl EntityRegistry {
             source: "none".to_string(),
             name: word.to_string(),
             needs_disambiguation: false,
+            context: vec![],
+            disambiguated_by: None,
+            wiki_summary: None,
+            wiki_title: None,
         }
     }
 
@@ -278,30 +419,20 @@ impl EntityRegistry {
         &self,
         word: &str,
         context: &str,
-        _person_info: &EntityEntry,
+        person_info: &EntityEntry,
     ) -> Option<LookupResult> {
-        let _word_lower = word.to_lowercase();
+        let word_lower = word.to_lowercase();
         let ctx_lower = context.to_lowercase();
-
-        let person_indicators = ["said", "told", "asked", "was", "is", "called"];
-        let concept_indicators = [
-            r"have you",
-            r"if you",
-            r"since",
-            r"again",
-            r"not ",
-            r"more",
-            r"would",
-            r"could",
-            r"will",
-        ];
 
         let mut person_score = 0;
         let mut concept_score = 0;
 
-        for indicator in &person_indicators {
-            let pattern = format!(r"(?i)\b{}\b", indicator);
-            if Regex::new(&pattern)
+        for pattern in PERSON_CONTEXT_PATTERNS {
+            let compiled = format!(
+                "(?i){}",
+                pattern.replace("{name}", &regex::escape(&word_lower))
+            );
+            if Regex::new(&compiled)
                 .map(|re| re.is_match(&ctx_lower))
                 .unwrap_or(false)
             {
@@ -309,9 +440,12 @@ impl EntityRegistry {
             }
         }
 
-        for indicator in &concept_indicators {
-            let pattern = format!(r"(?i){}", indicator);
-            if Regex::new(&pattern)
+        for pattern in CONCEPT_CONTEXT_PATTERNS {
+            let compiled = format!(
+                "(?i){}",
+                pattern.replace("{name}", &regex::escape(&word_lower))
+            );
+            if Regex::new(&compiled)
                 .map(|re| re.is_match(&ctx_lower))
                 .unwrap_or(false)
             {
@@ -323,9 +457,13 @@ impl EntityRegistry {
             Some(LookupResult {
                 entity_type: "person".to_string(),
                 confidence: (0.7 + person_score as f64 * 0.1).min(0.95),
-                source: "context_patterns".to_string(),
+                source: person_info.source.clone(),
                 name: word.to_string(),
                 needs_disambiguation: false,
+                context: person_info.contexts.clone(),
+                disambiguated_by: Some("context_patterns".to_string()),
+                wiki_summary: None,
+                wiki_title: None,
             })
         } else if concept_score > person_score {
             Some(LookupResult {
@@ -334,6 +472,10 @@ impl EntityRegistry {
                 source: "context_disambiguated".to_string(),
                 name: word.to_string(),
                 needs_disambiguation: false,
+                context: vec![],
+                disambiguated_by: Some("context_patterns".to_string()),
+                wiki_summary: None,
+                wiki_title: None,
             })
         } else {
             None
@@ -394,7 +536,7 @@ impl EntityRegistry {
                 {
                     continue;
                 }
-                if self.data.people.contains_key(&word) {
+                if self.lookup(&word, "").entity_type != "unknown" {
                     continue;
                 }
                 unknown.push(word);
@@ -419,12 +561,13 @@ impl EntityRegistry {
         };
 
         format!(
-            "Mode: {}\nPeople: {} ({})\nProjects: {}\nAmbiguous flags: {}",
+            "Mode: {}\nPeople: {} ({})\nProjects: {}\nAmbiguous flags: {}\nWiki cache: {} entries",
             self.data.mode,
             self.data.people.len(),
             people_str,
             self.data.projects.join(", "),
             self.data.ambiguous_flags.join(", "),
+            self.data.wiki_cache.len(),
         )
     }
 
@@ -469,6 +612,268 @@ impl EntityRegistry {
             self.reject_entity(name);
         }
     }
+
+    pub fn research(&mut self, word: &str, auto_confirm: bool) -> anyhow::Result<WikiCacheEntry> {
+        self.research_with(word, auto_confirm, wikipedia_lookup)
+    }
+
+    pub fn research_with<F>(
+        &mut self,
+        word: &str,
+        auto_confirm: bool,
+        lookup: F,
+    ) -> anyhow::Result<WikiCacheEntry>
+    where
+        F: Fn(&str) -> anyhow::Result<WikiCacheEntry>,
+    {
+        if let Some(existing) = self.data.wiki_cache.get(word) {
+            return Ok(existing.clone());
+        }
+
+        let mut result = lookup(word)?;
+        result.word = Some(word.to_string());
+        result.confirmed = auto_confirm;
+        self.data
+            .wiki_cache
+            .insert(word.to_string(), result.clone());
+        self.save()?;
+        Ok(result)
+    }
+
+    pub fn confirm_research(
+        &mut self,
+        word: &str,
+        entity_type: &str,
+        relationship: &str,
+        context: &str,
+    ) -> anyhow::Result<()> {
+        if let Some(entry) = self.data.wiki_cache.get_mut(word) {
+            entry.confirmed = true;
+            entry.confirmed_type = Some(entity_type.to_string());
+        }
+
+        if entity_type == "person" {
+            self.data.people.insert(
+                word.to_string(),
+                EntityEntry {
+                    source: "wiki".to_string(),
+                    contexts: vec![context.to_string()],
+                    aliases: vec![],
+                    relationship: relationship.to_string(),
+                    confidence: 0.90,
+                    canonical: Some(word.to_string()),
+                    seen_count: None,
+                },
+            );
+
+            let lower = word.to_lowercase();
+            if COMMON_ENGLISH_WORDS.contains(&lower.as_str())
+                && !self.data.ambiguous_flags.contains(&lower)
+            {
+                self.data.ambiguous_flags.push(lower);
+            }
+        }
+
+        self.save()
+    }
+
+    pub fn learn_from_text(
+        &mut self,
+        text: &str,
+        min_confidence: f32,
+    ) -> anyhow::Result<Vec<LearnedEntity>> {
+        let detection = detect_from_content(text);
+        let mut learned = Vec::new();
+
+        for person in detection.people {
+            if person.confidence < min_confidence {
+                continue;
+            }
+            if self.lookup(&person.name, "").entity_type != "unknown" {
+                continue;
+            }
+
+            let seen_count = text.matches(&person.name).count();
+            self.data.people.insert(
+                person.name.clone(),
+                EntityEntry {
+                    source: "learned".to_string(),
+                    contexts: vec![if self.data.mode == "combo" {
+                        "personal".to_string()
+                    } else {
+                        self.data.mode.clone()
+                    }],
+                    aliases: vec![],
+                    relationship: String::new(),
+                    confidence: person.confidence as f64,
+                    canonical: Some(person.name.clone()),
+                    seen_count: Some(seen_count),
+                },
+            );
+
+            let lower = person.name.to_lowercase();
+            if COMMON_ENGLISH_WORDS.contains(&lower.as_str())
+                && !self.data.ambiguous_flags.contains(&lower)
+            {
+                self.data.ambiguous_flags.push(lower);
+            }
+
+            learned.push(LearnedEntity {
+                name: person.name,
+                confidence: person.confidence,
+                seen_count,
+            });
+        }
+
+        if !learned.is_empty() {
+            self.save()?;
+        }
+
+        Ok(learned)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LearnedEntity {
+    pub name: String,
+    pub confidence: f32,
+    pub seen_count: usize,
+}
+
+fn wikipedia_lookup(word: &str) -> anyhow::Result<WikiCacheEntry> {
+    let encoded = urlencoding::encode(word);
+    let url = format!("https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}");
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .user_agent("MemPalace/1.0")
+        .build()?;
+
+    let response = match client.get(url).send() {
+        Ok(resp) => resp,
+        Err(_) => {
+            return Ok(WikiCacheEntry {
+                inferred_type: "unknown".to_string(),
+                confidence: 0.0,
+                wiki_summary: None,
+                wiki_title: None,
+                note: None,
+                word: None,
+                confirmed: false,
+                confirmed_type: None,
+            })
+        }
+    };
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(WikiCacheEntry {
+            inferred_type: "person".to_string(),
+            confidence: 0.70,
+            wiki_summary: None,
+            wiki_title: None,
+            note: Some("not found in Wikipedia — likely a proper noun or unusual name".to_string()),
+            word: None,
+            confirmed: false,
+            confirmed_type: None,
+        });
+    }
+
+    let data: serde_json::Value = response.error_for_status()?.json()?;
+    let page_type = data
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let extract = data
+        .get("extract")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    let title = data
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    if page_type == "disambiguation" {
+        let desc = data
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        return Ok(if desc.contains("name") || desc.contains("given name") {
+            WikiCacheEntry {
+                inferred_type: "person".to_string(),
+                confidence: 0.65,
+                wiki_summary: Some(extract.chars().take(200).collect()),
+                wiki_title: title,
+                note: Some("disambiguation page with name entries".to_string()),
+                word: None,
+                confirmed: false,
+                confirmed_type: None,
+            }
+        } else {
+            WikiCacheEntry {
+                inferred_type: "ambiguous".to_string(),
+                confidence: 0.4,
+                wiki_summary: Some(extract.chars().take(200).collect()),
+                wiki_title: title,
+                note: None,
+                word: None,
+                confirmed: false,
+                confirmed_type: None,
+            }
+        });
+    }
+
+    if NAME_INDICATOR_PHRASES
+        .iter()
+        .any(|phrase| extract.contains(phrase))
+    {
+        let lower_word = word.to_lowercase();
+        let confidence = if extract.contains(&format!("{lower_word} is a"))
+            || extract.contains(&format!("{lower_word} (name"))
+        {
+            0.90
+        } else {
+            0.80
+        };
+        return Ok(WikiCacheEntry {
+            inferred_type: "person".to_string(),
+            confidence,
+            wiki_summary: Some(extract.chars().take(200).collect()),
+            wiki_title: title,
+            note: None,
+            word: None,
+            confirmed: false,
+            confirmed_type: None,
+        });
+    }
+
+    if PLACE_INDICATOR_PHRASES
+        .iter()
+        .any(|phrase| extract.contains(phrase))
+    {
+        return Ok(WikiCacheEntry {
+            inferred_type: "place".to_string(),
+            confidence: 0.80,
+            wiki_summary: Some(extract.chars().take(200).collect()),
+            wiki_title: title,
+            note: None,
+            word: None,
+            confirmed: false,
+            confirmed_type: None,
+        });
+    }
+
+    Ok(WikiCacheEntry {
+        inferred_type: "concept".to_string(),
+        confidence: 0.60,
+        wiki_summary: Some(extract.chars().take(200).collect()),
+        wiki_title: title,
+        note: None,
+        word: None,
+        confirmed: false,
+        confirmed_type: None,
+    })
 }
 
 #[cfg(test)]
@@ -503,6 +908,7 @@ mod tests {
 
         let result = registry.lookup("ProjectX", "");
         assert_eq!(result.entity_type, "project");
+        assert!(result.context.is_empty());
     }
 
     #[test]
@@ -554,16 +960,129 @@ mod tests {
         registry
             .seed(
                 "personal",
-                vec![("May", "personal", "friend")],
+                vec![("Ever", "personal", "friend")],
                 vec![],
                 None,
             )
             .unwrap();
 
-        let result = registry.lookup("May", "Have you seen May today?");
+        let result = registry.lookup("Ever", "have you ever tried this");
         assert_eq!(result.entity_type, "concept");
+        assert_eq!(result.disambiguated_by.as_deref(), Some("context_patterns"));
 
-        let result = registry.lookup("May", "May said hello to me");
+        let result = registry.lookup("Ever", "Ever said hello to me");
         assert_eq!(result.entity_type, "person");
+        assert_eq!(result.source, "onboarding");
+    }
+
+    #[test]
+    fn test_summary_includes_wiki_cache_count() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+        registry.data.wiki_cache.insert(
+            "Saoirse".to_string(),
+            WikiCacheEntry {
+                inferred_type: "person".to_string(),
+                confidence: 0.8,
+                wiki_summary: Some("Saoirse is a name".to_string()),
+                wiki_title: Some("Saoirse".to_string()),
+                note: None,
+                word: Some("Saoirse".to_string()),
+                confirmed: false,
+                confirmed_type: None,
+            },
+        );
+
+        assert!(registry.summary().contains("Wiki cache: 1 entries"));
+    }
+
+    #[test]
+    fn test_research_caches_result() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+
+        let mock = |_: &str| {
+            Ok(WikiCacheEntry {
+                inferred_type: "person".to_string(),
+                confidence: 0.8,
+                wiki_summary: Some("Saoirse is an Irish given name.".to_string()),
+                wiki_title: Some("Saoirse".to_string()),
+                note: None,
+                word: None,
+                confirmed: false,
+                confirmed_type: None,
+            })
+        };
+
+        let first = registry.research_with("Saoirse", true, mock).unwrap();
+        assert_eq!(first.inferred_type, "person");
+
+        let cached = registry
+            .research_with("Saoirse", false, |_| anyhow::bail!("should not be called"))
+            .unwrap();
+        assert_eq!(cached.inferred_type, "person");
+        assert!(cached.confirmed);
+    }
+
+    #[test]
+    fn test_confirm_research_adds_to_people() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+
+        registry.data.wiki_cache.insert(
+            "Saoirse".to_string(),
+            WikiCacheEntry {
+                inferred_type: "person".to_string(),
+                confidence: 0.8,
+                wiki_summary: Some("Saoirse is a name".to_string()),
+                wiki_title: Some("Saoirse".to_string()),
+                note: None,
+                word: Some("Saoirse".to_string()),
+                confirmed: false,
+                confirmed_type: None,
+            },
+        );
+
+        registry
+            .confirm_research("Saoirse", "person", "friend", "personal")
+            .unwrap();
+        let person = registry.people().get("Saoirse").unwrap();
+        assert_eq!(person.source, "wiki");
+        assert_eq!(registry.lookup("Saoirse", "").source, "wiki");
+    }
+
+    #[test]
+    fn test_extract_unknown_candidates_skips_known_aliases_and_projects() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+        registry
+            .seed(
+                "personal",
+                vec![("Maxwell", "personal", "friend")],
+                vec!["MemPalace"],
+                Some(HashMap::from([("Max", "Maxwell")])),
+            )
+            .unwrap();
+
+        let unknowns = registry.extract_unknown_candidates("Max met Saoirse at MemPalace");
+        assert_eq!(unknowns, vec!["Saoirse".to_string()]);
+    }
+
+    #[test]
+    fn test_learn_from_text_adds_new_people() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+
+        let text = "Riley said we should ship it. Riley asked about the deploy plan. Riley smiled.";
+        let learned = registry.learn_from_text(text, 0.75).unwrap();
+
+        assert!(!learned.is_empty());
+        assert!(registry.people().contains_key("Riley"));
+        assert_eq!(registry.people().get("Riley").unwrap().source, "learned");
     }
 }
