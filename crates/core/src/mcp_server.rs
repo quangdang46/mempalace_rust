@@ -688,39 +688,35 @@ fn tool_check_duplicate(state: &AppState, args: JsonObject) -> Result<CallToolRe
     let input: Input = parse_args(args)?;
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
-    let duplicate = db
-        .query_sync(&input.content, None, None, 1)
+    let matches = db
+        .query_sync(&input.content, None, None, 5)
         .map_err(|e| internal_error_safe(&e))?
         .into_iter()
-        .next()
-        .and_then(|result| {
-            let similarity =
-                (1.0 - result.distances.first().copied().unwrap_or(1.0)).clamp(0.0, 1.0);
-            if similarity >= input.threshold.unwrap_or(0.9) {
-                result.ids.first().cloned()
-            } else {
-                None
+        .filter_map(|result| {
+            let similarity = ((1.0 - result.distances.first().copied().unwrap_or(1.0)) * 1000.0)
+                .round()
+                / 1000.0;
+            if similarity < input.threshold.unwrap_or(0.9) {
+                return None;
             }
-        });
-    let matches = if let Some(id) = duplicate {
-        let entries = state.db.get_all(None, None, 10_000);
-        entries
-            .into_iter()
-            .find(|r| r.ids.first().map(|value| value == &id).unwrap_or(false))
-            .map(|r| {
-                let meta = r.metadatas.first().cloned().unwrap_or_default();
-                vec![serde_json::json!({
-                    "id": id,
-                    "wing": meta.get("wing").and_then(|v| v.as_str()).unwrap_or("?"),
-                    "room": meta.get("room").and_then(|v| v.as_str()).unwrap_or("?"),
-                    "similarity": crate::searcher::SearchResult::from(r.clone()).similarity,
-                    "content": r.documents.first().map(|doc| if doc.len() > 200 { format!("{}...", &doc[..200]) } else { doc.clone() }).unwrap_or_default(),
-                })]
-            })
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
+
+            let id = result.ids.first().cloned().unwrap_or_default();
+            let meta = result.metadatas.first().cloned().unwrap_or_default();
+            let content = result.documents.first().cloned().unwrap_or_default();
+
+            Some(serde_json::json!({
+                "id": id,
+                "wing": meta.get("wing").and_then(|v| v.as_str()).unwrap_or("?"),
+                "room": meta.get("room").and_then(|v| v.as_str()).unwrap_or("?"),
+                "similarity": similarity,
+                "content": if content.chars().count() > 200 {
+                    format!("{}...", content.chars().take(200).collect::<String>())
+                } else {
+                    content
+                },
+            }))
+        })
+        .collect::<Vec<_>>();
     ok_json(serde_json::json!({ "is_duplicate": !matches.is_empty(), "matches": matches }))
 }
 
@@ -1222,6 +1218,99 @@ mod tests {
             json!({ "content": "nonexistent" }),
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_check_duplicate_matches_python_shape_and_threshold() {
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[ (
+                    "dup-auth",
+                    "The authentication module uses JWT tokens for session management. Tokens expire after 24 hours. Refresh tokens are stored in HttpOnly cookies.",
+                ) ],
+                &[&[("wing", "project"), ("room", "backend")]],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+
+        let result = dispatch(
+            &state,
+            "mempalace_check_duplicate",
+            json!({
+                "content": "The authentication module uses JWT tokens for session management. Tokens expire after 24 hours. Refresh tokens are stored in HttpOnly cookies.",
+                "threshold": 0.5
+            }),
+        )
+        .unwrap();
+
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed.get("is_duplicate").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        let matches = parsed.get("matches").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0].get("id").and_then(|v| v.as_str()),
+            Some("dup-auth")
+        );
+        assert_eq!(
+            matches[0].get("wing").and_then(|v| v.as_str()),
+            Some("project")
+        );
+        assert_eq!(
+            matches[0].get("room").and_then(|v| v.as_str()),
+            Some("backend")
+        );
+        assert!(matches[0].get("source_file").is_none());
+    }
+
+    #[test]
+    fn test_check_duplicate_returns_multiple_matches() {
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[
+                    ("dup-a", "JWT auth uses bearer tokens and refresh cookies"),
+                    (
+                        "dup-b",
+                        "JWT authentication uses bearer tokens with refresh cookies",
+                    ),
+                ],
+                &[
+                    &[("wing", "project"), ("room", "backend")],
+                    &[("wing", "project"), ("room", "backend")],
+                ],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+
+        let result = dispatch(
+            &state,
+            "mempalace_check_duplicate",
+            json!({ "content": "JWT auth uses bearer tokens and refresh cookies", "threshold": 0.0 }),
+        )
+        .unwrap();
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let matches = parsed.get("matches").and_then(|v| v.as_array()).unwrap();
+        assert!(matches.len() >= 2);
     }
 
     #[test]
