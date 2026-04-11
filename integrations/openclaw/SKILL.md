@@ -142,9 +142,9 @@ mpr compress
 #   "original": "...",
 #   "compressed": "...",
 #   "stats": {
-#     "original_tokens": 1234,
-#     "compressed_tokens": 42,
-#     "ratio": 29.4
+#     "original_tokens_est": 1234,
+#     "summary_tokens_est": 42,
+#     "size_ratio": 29.4
 #   }
 # }
 ```

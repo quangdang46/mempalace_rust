@@ -36,24 +36,24 @@ const PALACE_PROTOCOL: &str = r#"IMPORTANT — MemPalace Memory Protocol:
 
 This protocol ensures the AI KNOWS before it speaks. Storage is not memory — but storage + this protocol = memory."#;
 
-const AAAK_SPEC: &str = r#"AAAK is a compressed memory dialect that MemPalace uses for efficient storage.
-It is designed to be readable by both humans and LLMs without decoding.
+const AAAK_SPEC: &str = r#"AAAK Dialect -- Structured Symbolic Summary Format
+
+AAAK is a lossy summarization layer that extracts entities, topics, key sentences,
+emotions, and flags into a compact structure. It is not lossless compression and
+the original text cannot be reconstructed from AAAK output.
 
 FORMAT:
-  ENTITIES: 3-letter uppercase codes. ALC=Alice, JOR=Jordan, RIL=Riley, MAX=Max, BEN=Ben.
-  EMOTIONS: *action markers* before/during text. *warm*=joy, *fierce*=determined, *raw*=vulnerable, *bloom*=tenderness.
-  STRUCTURE: Pipe-separated fields. FAM: family | PROJ: projects | ⚠: warnings/reminders.
-  DATES: ISO format (2026-03-31). COUNTS: Nx = N mentions (e.g., 570x).
-  IMPORTANCE: ★ to ★★★★★ (1-5 scale).
-  HALLS: hall_facts, hall_events, hall_discoveries, hall_preferences, hall_advice.
-  WINGS: wing_user, wing_agent, wing_team, wing_code, wing_myproject, wing_hardware, wing_ue5, wing_ai_research.
-  ROOMS: Hyphenated slugs representing named ideas (e.g., chromadb-setup, gpu-pricing).
+  Header: FILE_OR_WING|ROOM|DATE|TITLE
+  Summary: 0:ENTITIES|topic_keywords|\"key_quote\"|EMOTIONS|FLAGS
+
+FLAGS:
+  ORIGIN, CORE, SENSITIVE, PIVOT, GENESIS, DECISION, TECHNICAL
 
 EXAMPLE:
-  FAM: ALC→♡JOR | 2D(kids): RIL(18,sports) MAX(11,chess+swimming) | BEN(contributor)
+  driftwood|auth-migration|2026-01-15|decision-log
+  0:KAI+MAY|clerk_auth_migration|\"Kai recommended Clerk over Auth0\"|convict|DECISION+TECHNICAL
 
-Read AAAK naturally — expand codes mentally, treat *markers* as emotional context.
-When WRITING AAAK: use entity codes, mark emotions, keep structure tight."#;
+Read AAAK as a compact summary that points back to the verbatim drawers."#;
 
 // ---------------------------------------------------------------------------
 // Error helpers
