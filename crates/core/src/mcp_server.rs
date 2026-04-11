@@ -350,7 +350,7 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "mempalace_search",
             "Search",
             "Semantic search. Returns verbatim drawer content with similarity scores.",
-            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "What to search for" }, "limit": { "type": "integer", "description": "Max results (default 5)" }, "wing": { "type": "string", "description": "Filter by wing (optional)" }, "room": { "type": "string", "description": "Filter by room (optional)" } }, "required": ["query"] }),
+            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "What to search for" }, "limit": { "type": "integer", "description": "Max results (default 5)" }, "wing": { "type": "string", "description": "Filter by wing (optional)" }, "room": { "type": "string", "description": "Filter by room (optional)" }, "context": { "type": "string", "description": "Optional caller context for transparency metadata" } }, "required": ["query"] }),
         ),
         tool(
             "mempalace_check_duplicate",
@@ -466,6 +466,23 @@ fn read_only_guard(state: &AppState) -> Result<(), ErrorData> {
 fn parse_args<T: for<'de> serde::Deserialize<'de>>(args: JsonObject) -> Result<T, ErrorData> {
     serde_json::from_value(serde_json::Value::Object(args))
         .map_err(|e| ErrorData::invalid_params(e.to_string(), None))
+}
+
+fn parse_args_with_integer_coercion<T: for<'de> serde::Deserialize<'de>>(
+    mut args: JsonObject,
+    integer_fields: &[&str],
+) -> Result<T, ErrorData> {
+    for field in integer_fields {
+        if let Some(value) = args.get_mut(*field) {
+            if let Some(number) = value.as_f64() {
+                if number.is_finite() && number.fract() == 0.0 && number >= 0.0 {
+                    *value = serde_json::Value::from(number as u64);
+                }
+            }
+        }
+    }
+
+    parse_args(args)
 }
 
 fn no_palace() -> serde_json::Value {
@@ -603,30 +620,60 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
         wing: Option<String>,
         room: Option<String>,
         limit: Option<usize>,
+        context: Option<String>,
     }
-    let input: Input = parse_args(args)?;
+    let input: Input = parse_args_with_integer_coercion(args, &["limit"])?;
+    let sanitized = crate::query_sanitizer::sanitize_query(&input.query);
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
     let query_results = db
         .query_sync(
-            &input.query,
+            &sanitized.clean_query,
             input.wing.as_deref(),
             input.room.as_deref(),
             input.limit.unwrap_or(5),
         )
         .map_err(|e| internal_error_safe(&e))?;
-    let response = crate::searcher::SearchResponse {
-        query: input.query,
+    let mut response = serde_json::to_value(crate::searcher::SearchResponse {
+        query: sanitized.clean_query.clone(),
         filters: crate::searcher::SearchFilters {
-            wing: input.wing,
-            room: input.room,
+            wing: input.wing.clone(),
+            room: input.room.clone(),
         },
         results: query_results
             .into_iter()
             .map(crate::searcher::SearchResult::from)
             .collect(),
-    };
-    ok_json(serde_json::to_value(response).map_err(|e| internal_error_safe(&e))?)
+    })
+    .map_err(|e| internal_error_safe(&e))?;
+
+    if let Some(object) = response.as_object_mut() {
+        if sanitized.was_sanitized {
+            object.insert("query_sanitized".to_string(), serde_json::Value::Bool(true));
+            object.insert(
+                "sanitizer".to_string(),
+                serde_json::json!({
+                    "method": sanitized.method,
+                    "original_length": sanitized.original_length,
+                    "clean_length": sanitized.clean_length,
+                    "clean_query": sanitized.clean_query,
+                }),
+            );
+        }
+
+        if input
+            .context
+            .as_deref()
+            .is_some_and(|context| !context.trim().is_empty())
+        {
+            object.insert(
+                "context_received".to_string(),
+                serde_json::Value::Bool(true),
+            );
+        }
+    }
+
+    ok_json(response)
 }
 
 fn tool_check_duplicate(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -900,7 +947,7 @@ fn tool_traverse(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
         start_room: String,
         max_hops: Option<usize>,
     }
-    let input: Input = parse_args(args)?;
+    let input: Input = parse_args_with_integer_coercion(args, &["max_hops"])?;
     let graph = build_graph_from_db(state);
     let results = graph.traverse(&input.start_room, input.max_hops.unwrap_or(2));
     ok_json(results)
@@ -947,7 +994,7 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         agent_name: String,
         last_n: Option<usize>,
     }
-    let input: Input = parse_args(args)?;
+    let input: Input = parse_args_with_integer_coercion(args, &["last_n"])?;
     let wing = format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_"));
     let entries = state.db.get_all(Some(&wing), Some("diary"), 10_000);
     let mut items: Vec<serde_json::Value> = entries
@@ -1469,6 +1516,12 @@ mod tests {
             .input_schema
             .get("properties")
             .unwrap()
+            .get("context")
+            .is_some());
+        assert!(search
+            .input_schema
+            .get("properties")
+            .unwrap()
             .get("wing")
             .is_some());
         assert!(search
@@ -1590,5 +1643,125 @@ mod tests {
             parsed.get("message").and_then(|v| v.as_str()),
             Some("No diary entries yet.")
         );
+    }
+
+    #[test]
+    fn test_search_response_adds_sanitizer_and_context_metadata() {
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[(
+                    "drawer_auth_plan",
+                    "The auth migration plan lives in backend docs",
+                )],
+                &[&[("wing", "project"), ("room", "backend")]],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+
+        let raw = format!(
+            "{}\nWhere is the auth migration plan?",
+            "system prompt ".repeat(40)
+        );
+        let result = dispatch(
+            &state,
+            "mempalace_search",
+            json!({
+                "query": raw,
+                "context": "Need to answer a user follow-up",
+            }),
+        )
+        .unwrap();
+
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(
+            parsed.get("query").and_then(|v| v.as_str()),
+            Some("Where is the auth migration plan?")
+        );
+        assert_eq!(
+            parsed.get("query_sanitized").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .get("sanitizer")
+                .and_then(|v| v.get("method"))
+                .and_then(|v| v.as_str()),
+            Some("question_extraction")
+        );
+        assert_eq!(
+            parsed.get("context_received").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_search_accepts_integer_like_float_limit() {
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[(
+                    "drawer_auth_plan",
+                    "The auth migration plan lives in backend docs",
+                )],
+                &[&[("wing", "project"), ("room", "backend")]],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+
+        let result = dispatch(
+            &state,
+            "mempalace_search",
+            json!({ "query": "auth migration", "limit": 5.0 }),
+        );
+        assert!(
+            result.is_ok(),
+            "search with float limit failed: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_diary_read_accepts_integer_like_float_last_n() {
+        let state = test_state();
+        let write_result = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({ "agent_name": "FloatReader", "entry": "hello" }),
+        );
+        assert!(
+            write_result.is_ok(),
+            "diary write failed: {:?}",
+            write_result
+        );
+
+        let result = dispatch(
+            &state,
+            "mempalace_diary_read",
+            json!({ "agent_name": "FloatReader", "last_n": 1.0 }),
+        );
+        assert!(result.is_ok(), "diary read failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_traverse_accepts_integer_like_float_max_hops() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_traverse",
+            json!({ "start_room": "unknown", "max_hops": 2.0 }),
+        );
+        assert!(result.is_ok(), "traverse failed: {:?}", result);
     }
 }
