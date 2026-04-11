@@ -913,17 +913,26 @@ fn build_graph_from_db(state: &AppState) -> crate::palace_graph::PalaceGraph {
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let hall = match meta.get("hall").and_then(|v| v.as_str()).unwrap_or("facts") {
-                "events" => HallType::Events,
-                "discoveries" => HallType::Discoveries,
-                "preferences" => HallType::Preferences,
-                "advice" => HallType::Advice,
-                _ => HallType::Facts,
+            let hall = match meta
+                .get("hall")
+                .and_then(|v| v.as_str())
+                .unwrap_or("hall_facts")
+            {
+                "hall_events" | "events" => HallType::Events,
+                "hall_discoveries" | "discoveries" => HallType::Discoveries,
+                "hall_preferences" | "preferences" => HallType::Preferences,
+                "hall_advice" | "advice" => HallType::Advice,
+                "hall_facts" | "facts" => HallType::Facts,
+                other => HallType::Raw(other.to_string()),
             };
             by_wing.entry(wing).or_default().push(Room {
                 name: room,
                 hall,
                 closet_id: entry.ids.first().cloned(),
+                date: meta
+                    .get("date")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
             });
         }
     }
@@ -949,8 +958,10 @@ fn tool_traverse(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
     }
     let input: Input = parse_args_with_integer_coercion(args, &["max_hops"])?;
     let graph = build_graph_from_db(state);
-    let results = graph.traverse(&input.start_room, input.max_hops.unwrap_or(2));
-    ok_json(results)
+    match graph.traverse(&input.start_room, input.max_hops.unwrap_or(2)) {
+        crate::palace_graph::TraverseOutcome::Results(results) => ok_json(results),
+        crate::palace_graph::TraverseOutcome::Error(error) => ok_json(error),
+    }
 }
 
 fn tool_find_tunnels(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -964,10 +975,7 @@ fn tool_find_tunnels(state: &AppState, args: JsonObject) -> Result<CallToolResul
     }
     let input: Input = parse_args(args)?;
     let graph = build_graph_from_db(state);
-    let tunnels = match (input.wing_a.as_deref(), input.wing_b.as_deref()) {
-        (Some(a), Some(b)) => graph.find_tunnels(a, b),
-        _ => vec![],
-    };
+    let tunnels = graph.find_tunnels(input.wing_a.as_deref(), input.wing_b.as_deref());
     ok_json(tunnels)
 }
 
@@ -978,10 +986,11 @@ fn tool_graph_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResul
     let graph = build_graph_from_db(state);
     let stats = graph.stats();
     ok_json(serde_json::json!({
-        "total_wings": stats.total_wings,
         "total_rooms": stats.total_rooms,
-        "total_halls": stats.total_halls,
-        "total_tunnels": stats.total_tunnels,
+        "tunnel_rooms": stats.tunnel_rooms,
+        "total_edges": stats.total_edges,
+        "rooms_per_wing": stats.rooms_per_wing,
+        "top_tunnels": stats.top_tunnels,
     }))
 }
 

@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PalaceGraph {
-    wings: Vec<Wing>,
-    room_index: HashMap<String, Vec<RoomRef>>,
+    nodes: HashMap<String, GraphNode>,
+    edges: Vec<GraphEdge>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +26,7 @@ pub struct Room {
     pub name: String,
     pub hall: HallType,
     pub closet_id: Option<String>,
+    pub date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
@@ -35,37 +36,72 @@ pub enum HallType {
     Discoveries,
     Preferences,
     Advice,
+    Raw(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TraversalResult {
-    pub wing: String,
     pub room: String,
-    pub hall: String,
-    pub distance: usize,
-    pub content: String,
+    pub wings: Vec<String>,
+    pub halls: Vec<String>,
+    pub count: usize,
+    pub hop: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connected_via: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TraverseError {
+    pub error: String,
+    pub suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Tunnel {
+    pub room: String,
+    pub wings: Vec<String>,
+    pub halls: Vec<String>,
+    pub count: usize,
+    pub recent: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopTunnel {
+    pub room: String,
+    pub wings: Vec<String>,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GraphStats {
+    pub total_rooms: usize,
+    pub tunnel_rooms: usize,
+    pub total_edges: usize,
+    pub rooms_per_wing: HashMap<String, usize>,
+    pub top_tunnels: Vec<TopTunnel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GraphNode {
+    pub wings: Vec<String>,
+    pub halls: Vec<String>,
+    pub count: usize,
+    pub dates: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GraphEdge {
     pub room: String,
     pub wing_a: String,
     pub wing_b: String,
+    pub hall: String,
+    pub count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphStats {
-    pub total_wings: usize,
-    pub total_rooms: usize,
-    pub total_halls: usize,
-    pub total_tunnels: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct RoomRef {
-    pub wing_name: String,
-    pub room: Room,
-    pub hall: HallType,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TraverseOutcome {
+    Results(Vec<TraversalResult>),
+    Error(TraverseError),
 }
 
 impl Default for PalaceGraph {
@@ -77,186 +113,396 @@ impl Default for PalaceGraph {
 impl PalaceGraph {
     pub fn new() -> Self {
         Self {
-            wings: Vec::new(),
-            room_index: HashMap::new(),
+            nodes: HashMap::new(),
+            edges: Vec::new(),
         }
     }
 
     pub fn add_wing(&mut self, wing: Wing) {
-        for room in &wing.rooms {
-            let ref_entry = RoomRef {
-                wing_name: wing.name.clone(),
-                room: room.clone(),
-                hall: room.hall.clone(),
-            };
-            self.room_index
+        for room in wing.rooms {
+            if room.name.is_empty() || room.name == "general" || wing.name.is_empty() {
+                continue;
+            }
+
+            let node = self
+                .nodes
                 .entry(room.name.clone())
-                .or_default()
-                .push(ref_entry);
+                .or_insert_with(|| GraphNode {
+                    wings: Vec::new(),
+                    halls: Vec::new(),
+                    count: 0,
+                    dates: Vec::new(),
+                });
+
+            if !node.wings.iter().any(|existing| existing == &wing.name) {
+                node.wings.push(wing.name.clone());
+                node.wings.sort();
+            }
+
+            let hall = hall_to_string(&room.hall);
+            if !hall.is_empty() && !node.halls.iter().any(|existing| existing == &hall) {
+                node.halls.push(hall);
+                node.halls.sort();
+            }
+
+            if let Some(date) = room.date.filter(|date| !date.is_empty()) {
+                node.dates.push(date);
+                node.dates.sort();
+                if node.dates.len() > 5 {
+                    let keep_from = node.dates.len() - 5;
+                    node.dates = node.dates.split_off(keep_from);
+                }
+            }
+
+            node.count += 1;
         }
-        self.wings.push(wing);
+
+        self.rebuild_edges();
     }
 
-    pub fn traverse(&self, start_room: &str, max_depth: usize) -> Vec<TraversalResult> {
-        let mut results = Vec::new();
-        let mut visited: HashSet<String> = HashSet::new();
-        let mut queue: VecDeque<(String, String, usize)> = VecDeque::new();
+    pub fn traverse(&self, start_room: &str, max_hops: usize) -> TraverseOutcome {
+        let Some(start) = self.nodes.get(start_room) else {
+            return TraverseOutcome::Error(TraverseError {
+                error: format!("Room '{}' not found", start_room),
+                suggestions: self.fuzzy_match(start_room, 5),
+            });
+        };
 
-        if let Some(start_refs) = self.room_index.get(start_room) {
-            for room_ref in start_refs {
-                queue.push_back((room_ref.wing_name.clone(), room_ref.room.name.clone(), 0));
-            }
-        }
+        let mut visited: HashSet<String> = HashSet::from([start_room.to_string()]);
+        let mut frontier: VecDeque<(String, usize)> = VecDeque::from([(start_room.to_string(), 0)]);
+        let mut results = vec![TraversalResult {
+            room: start_room.to_string(),
+            wings: start.wings.clone(),
+            halls: start.halls.clone(),
+            count: start.count,
+            hop: 0,
+            connected_via: None,
+        }];
 
-        while let Some((wing_name, room_name, dist)) = queue.pop_front() {
-            if dist > max_depth {
+        while let Some((current_room, depth)) = frontier.pop_front() {
+            if depth >= max_hops {
                 continue;
             }
 
-            let key = format!("{}:{}", wing_name, room_name);
-            if visited.contains(&key) {
+            let Some(current) = self.nodes.get(&current_room) else {
                 continue;
-            }
-            visited.insert(key);
+            };
+            let current_wings: HashSet<&String> = current.wings.iter().collect();
 
-            if let Some(refs) = self.room_index.get(&room_name) {
-                for room_ref in refs {
-                    let hall_str = hall_to_string(&room_ref.hall);
-                    results.push(TraversalResult {
-                        wing: room_ref.wing_name.clone(),
-                        room: room_ref.room.name.clone(),
-                        hall: hall_str,
-                        distance: dist,
-                        content: room_ref.room.closet_id.clone().unwrap_or_default(),
-                    });
+            for (room, data) in &self.nodes {
+                if visited.contains(room) {
+                    continue;
+                }
 
-                    if dist < max_depth {
-                        queue.push_back((
-                            room_ref.wing_name.clone(),
-                            room_ref.room.name.clone(),
-                            dist + 1,
-                        ));
-                    }
+                let shared_wings: BTreeSet<String> = data
+                    .wings
+                    .iter()
+                    .filter(|wing| current_wings.contains(*wing))
+                    .cloned()
+                    .collect();
+
+                if shared_wings.is_empty() {
+                    continue;
+                }
+
+                visited.insert(room.clone());
+                results.push(TraversalResult {
+                    room: room.clone(),
+                    wings: data.wings.clone(),
+                    halls: data.halls.clone(),
+                    count: data.count,
+                    hop: depth + 1,
+                    connected_via: Some(shared_wings.into_iter().collect()),
+                });
+
+                if depth + 1 < max_hops {
+                    frontier.push_back((room.clone(), depth + 1));
                 }
             }
         }
 
-        results
+        results.sort_by(|a, b| a.hop.cmp(&b.hop).then_with(|| b.count.cmp(&a.count)));
+        results.truncate(50);
+        TraverseOutcome::Results(results)
     }
 
-    pub fn find_tunnels(&self, wing_a: &str, wing_b: &str) -> Vec<Tunnel> {
-        let mut tunnels = Vec::new();
+    pub fn find_tunnels(&self, wing_a: Option<&str>, wing_b: Option<&str>) -> Vec<Tunnel> {
+        let mut tunnels: Vec<Tunnel> = self
+            .nodes
+            .iter()
+            .filter_map(|(room, data)| {
+                if data.wings.len() < 2 {
+                    return None;
+                }
 
-        for room_refs in self.room_index.values() {
-            if room_refs.len() >= 2 {
-                let wings_in_room: HashSet<_> =
-                    room_refs.iter().map(|r| r.wing_name.as_str()).collect();
+                if let Some(wing_a) = wing_a {
+                    if !data.wings.iter().any(|wing| wing == wing_a) {
+                        return None;
+                    }
+                }
 
-                if wings_in_room.contains(wing_a) && wings_in_room.contains(wing_b) {
-                    if let Some(first_ref) = room_refs.first() {
-                        tunnels.push(Tunnel {
-                            room: first_ref.room.name.clone(),
-                            wing_a: wing_a.to_string(),
-                            wing_b: wing_b.to_string(),
+                if let Some(wing_b) = wing_b {
+                    if !data.wings.iter().any(|wing| wing == wing_b) {
+                        return None;
+                    }
+                }
+
+                Some(Tunnel {
+                    room: room.clone(),
+                    wings: data.wings.clone(),
+                    halls: data.halls.clone(),
+                    count: data.count,
+                    recent: data.dates.last().cloned().unwrap_or_default(),
+                })
+            })
+            .collect();
+
+        tunnels.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.room.cmp(&b.room)));
+        tunnels.truncate(50);
+        tunnels
+    }
+
+    pub fn stats(&self) -> GraphStats {
+        let tunnel_rooms = self
+            .nodes
+            .values()
+            .filter(|node| node.wings.len() >= 2)
+            .count();
+
+        let mut wing_counts: HashMap<String, usize> = HashMap::new();
+        for node in self.nodes.values() {
+            for wing in &node.wings {
+                *wing_counts.entry(wing.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let mut top_tunnels: Vec<TopTunnel> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.wings.len() >= 2)
+            .map(|(room, node)| TopTunnel {
+                room: room.clone(),
+                wings: node.wings.clone(),
+                count: node.count,
+            })
+            .collect();
+        top_tunnels.sort_by(|a, b| {
+            b.wings
+                .len()
+                .cmp(&a.wings.len())
+                .then_with(|| b.count.cmp(&a.count))
+                .then_with(|| a.room.cmp(&b.room))
+        });
+        top_tunnels.truncate(10);
+
+        GraphStats {
+            total_rooms: self.nodes.len(),
+            tunnel_rooms,
+            total_edges: self.edges.len(),
+            rooms_per_wing: sort_map_by_count_desc(wing_counts),
+            top_tunnels,
+        }
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    fn rebuild_edges(&mut self) {
+        self.edges.clear();
+
+        for (room, data) in &self.nodes {
+            if data.wings.len() < 2 {
+                continue;
+            }
+
+            for (index, wing_a) in data.wings.iter().enumerate() {
+                for wing_b in data.wings.iter().skip(index + 1) {
+                    for hall in &data.halls {
+                        self.edges.push(GraphEdge {
+                            room: room.clone(),
+                            wing_a: wing_a.clone(),
+                            wing_b: wing_b.clone(),
+                            hall: hall.clone(),
+                            count: data.count,
                         });
                     }
                 }
             }
         }
-
-        tunnels
     }
 
-    pub fn stats(&self) -> GraphStats {
-        let total_rooms: usize = self.wings.iter().map(|w| w.rooms.len()).sum();
-        let total_halls: usize = self
-            .wings
-            .iter()
-            .flat_map(|w| w.rooms.iter().map(|r| &r.hall))
-            .collect::<HashSet<_>>()
-            .len();
+    fn fuzzy_match(&self, query: &str, n: usize) -> Vec<String> {
+        let query_lower = query.to_lowercase();
+        let parts: Vec<&str> = query_lower.split('-').collect();
+        let mut scored: Vec<(String, i32)> = Vec::new();
 
-        let mut tunnel_count = 0;
-        for room_refs in self.room_index.values() {
-            if room_refs.len() >= 2 {
-                tunnel_count += 1;
+        for room in self.nodes.keys() {
+            let room_lower = room.to_lowercase();
+            if room_lower.contains(&query_lower) {
+                scored.push((room.clone(), 2));
+            } else if parts.iter().any(|part| room_lower.contains(part)) {
+                scored.push((room.clone(), 1));
             }
         }
 
-        GraphStats {
-            total_wings: self.wings.len(),
-            total_rooms,
-            total_halls,
-            total_tunnels: tunnel_count,
-        }
+        scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        scored.into_iter().take(n).map(|(room, _)| room).collect()
     }
 }
 
 fn hall_to_string(hall: &HallType) -> String {
     match hall {
-        HallType::Facts => "facts".to_string(),
-        HallType::Events => "events".to_string(),
-        HallType::Discoveries => "discoveries".to_string(),
-        HallType::Preferences => "preferences".to_string(),
-        HallType::Advice => "advice".to_string(),
+        HallType::Facts => "hall_facts".to_string(),
+        HallType::Events => "hall_events".to_string(),
+        HallType::Discoveries => "hall_discoveries".to_string(),
+        HallType::Preferences => "hall_preferences".to_string(),
+        HallType::Advice => "hall_advice".to_string(),
+        HallType::Raw(value) => value.clone(),
     }
+}
+
+fn sort_map_by_count_desc(input: HashMap<String, usize>) -> HashMap<String, usize> {
+    let mut entries: Vec<(String, usize)> = input.into_iter().collect();
+    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    entries.into_iter().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_new_graph() {
-        let graph = PalaceGraph::new();
-        assert_eq!(graph.wings.len(), 0);
-        assert!(graph.room_index.is_empty());
+    fn sample_graph() -> PalaceGraph {
+        let mut graph = PalaceGraph::new();
+        graph.add_wing(Wing {
+            name: "wing_code".to_string(),
+            wing_type: WingType::Project,
+            rooms: vec![
+                Room {
+                    name: "auth-migration".to_string(),
+                    hall: HallType::Facts,
+                    closet_id: Some("drawer_1".to_string()),
+                    date: Some("2026-01-01".to_string()),
+                },
+                Room {
+                    name: "backend".to_string(),
+                    hall: HallType::Events,
+                    closet_id: Some("drawer_2".to_string()),
+                    date: Some("2026-01-02".to_string()),
+                },
+            ],
+        });
+        graph.add_wing(Wing {
+            name: "wing_myproject".to_string(),
+            wing_type: WingType::Topic,
+            rooms: vec![
+                Room {
+                    name: "auth-migration".to_string(),
+                    hall: HallType::Advice,
+                    closet_id: Some("drawer_3".to_string()),
+                    date: Some("2026-01-03".to_string()),
+                },
+                Room {
+                    name: "planning".to_string(),
+                    hall: HallType::Discoveries,
+                    closet_id: Some("drawer_4".to_string()),
+                    date: Some("2026-01-04".to_string()),
+                },
+            ],
+        });
+        graph
     }
 
     #[test]
-    fn test_traverse_empty() {
+    fn test_new_graph() {
+        let graph = PalaceGraph::new();
+        assert_eq!(graph.stats().total_rooms, 0);
+        assert_eq!(graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn test_traverse_missing_room_returns_error() {
         let graph = PalaceGraph::new();
         let results = graph.traverse("nonexistent", 3);
-        assert!(results.is_empty());
+        assert!(matches!(results, TraverseOutcome::Error(_)));
     }
 
     #[test]
     fn test_stats_empty() {
         let graph = PalaceGraph::new();
         let stats = graph.stats();
-        assert_eq!(stats.total_wings, 0);
         assert_eq!(stats.total_rooms, 0);
+        assert_eq!(stats.tunnel_rooms, 0);
+        assert_eq!(stats.total_edges, 0);
     }
 
     #[test]
-    fn test_add_wing_and_traverse() {
-        let mut graph = PalaceGraph::new();
-        let wing = Wing {
-            name: "test_wing".to_string(),
-            wing_type: WingType::Project,
-            rooms: vec![
-                Room {
-                    name: "room1".to_string(),
-                    hall: HallType::Facts,
-                    closet_id: Some("closet1".to_string()),
-                },
-                Room {
-                    name: "room2".to_string(),
-                    hall: HallType::Events,
-                    closet_id: Some("closet2".to_string()),
-                },
-            ],
+    fn test_builds_tunnels_and_edges_per_hall() {
+        let graph = sample_graph();
+        assert_eq!(graph.stats().tunnel_rooms, 1);
+        assert_eq!(graph.edge_count(), 2);
+    }
+
+    #[test]
+    fn test_traverse_matches_python_shape() {
+        let graph = sample_graph();
+        let results = match graph.traverse("auth-migration", 2) {
+            TraverseOutcome::Results(results) => results,
+            TraverseOutcome::Error(error) => {
+                assert!(
+                    error.error.is_empty(),
+                    "unexpected traversal error: {}",
+                    error.error
+                );
+                return;
+            }
         };
-        graph.add_wing(wing);
-
-        let results = graph.traverse("room1", 3);
-        assert!(!results.is_empty());
+        assert_eq!(results[0].room, "auth-migration");
+        assert_eq!(results[0].hop, 0);
+        assert!(results[0].connected_via.is_none());
+        assert!(results.iter().any(|item| {
+            item.room == "backend"
+                && item.hop == 1
+                && item.connected_via.as_ref() == Some(&vec!["wing_code".to_string()])
+        }));
     }
 
     #[test]
-    fn test_find_tunnels_none() {
-        let graph = PalaceGraph::new();
-        let tunnels = graph.find_tunnels("wing_a", "wing_b");
-        assert!(tunnels.is_empty());
+    fn test_find_tunnels_returns_python_shape() {
+        let graph = sample_graph();
+        let tunnels = graph.find_tunnels(Some("wing_code"), Some("wing_myproject"));
+        assert_eq!(tunnels.len(), 1);
+        assert_eq!(tunnels[0].room, "auth-migration");
+        assert_eq!(tunnels[0].recent, "2026-01-03");
+        assert_eq!(
+            tunnels[0].halls,
+            vec!["hall_advice".to_string(), "hall_facts".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_stats_top_tunnels_shape() {
+        let graph = sample_graph();
+        let stats = graph.stats();
+        assert_eq!(stats.total_rooms, 3);
+        assert_eq!(stats.tunnel_rooms, 1);
+        assert_eq!(stats.top_tunnels.len(), 1);
+        assert_eq!(stats.top_tunnels[0].room, "auth-migration");
+    }
+
+    #[test]
+    fn test_general_room_is_excluded() {
+        let mut graph = PalaceGraph::new();
+        graph.add_wing(Wing {
+            name: "wing_misc".to_string(),
+            wing_type: WingType::Topic,
+            rooms: vec![Room {
+                name: "general".to_string(),
+                hall: HallType::Facts,
+                closet_id: None,
+                date: None,
+            }],
+        });
+        assert_eq!(graph.stats().total_rooms, 0);
     }
 }
