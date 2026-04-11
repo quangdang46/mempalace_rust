@@ -1,4 +1,53 @@
 use serde_json::Value;
+use std::collections::HashSet;
+
+fn load_known_names() -> HashSet<String> {
+    let Ok(registry_path) = crate::Config::registry_file_path() else {
+        return HashSet::new();
+    };
+    let Ok(registry) = crate::entity_registry::EntityRegistry::load(&registry_path) else {
+        return HashSet::new();
+    };
+
+    let mut names = HashSet::new();
+    for (canonical, entry) in registry.people() {
+        names.insert(canonical.to_lowercase());
+        if let Some(canonical_name) = &entry.canonical {
+            names.insert(canonical_name.to_lowercase());
+        }
+        for alias in &entry.aliases {
+            names.insert(alias.to_lowercase());
+        }
+    }
+    names
+}
+
+fn spellcheck_transcript_preserving_known_names(content: &str) -> String {
+    let known_names = load_known_names();
+    content
+        .lines()
+        .map(|line| {
+            let stripped = line.trim_start();
+            if !stripped.starts_with('>') {
+                return line.to_string();
+            }
+
+            let prefix_len = line.len() - stripped.len() + 2;
+            if prefix_len > line.len() {
+                return line.to_string();
+            }
+
+            let message = &line[prefix_len..];
+            if message.trim().is_empty() {
+                return line.to_string();
+            }
+
+            let corrected = crate::spellcheck::correct_spelling(message, &known_names);
+            format!("{}> {}", &line[..prefix_len - 2], corrected)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 pub fn normalize(file_path: &std::path::Path, content: &str) -> anyhow::Result<String> {
     if content.trim().is_empty() {
@@ -624,7 +673,7 @@ fn messages_to_transcript(messages: &[(String, String)]) -> String {
         lines.push(String::new());
     }
 
-    lines.join("\n")
+    spellcheck_transcript_preserving_known_names(&lines.join("\n"))
 }
 
 pub fn detect_format(content: &str) -> Option<String> {
@@ -767,6 +816,33 @@ mod tests {
         let result = normalize(std::path::Path::new("test.jsonl"), content).unwrap();
         assert!(result.contains("> Hello Codex"));
         assert!(result.contains("Hello from Codex agent"));
+    }
+
+    #[test]
+    fn test_messages_to_transcript_routes_user_lines_through_spellcheck_path() {
+        let transcript = messages_to_transcript(&[
+            ("user".to_string(), "lsresdy knoe the answer".to_string()),
+            (
+                "assistant".to_string(),
+                "Assistant text should stay untouched.".to_string(),
+            ),
+        ]);
+
+        assert!(transcript.starts_with("> lsresdy knoe the answer"));
+        assert!(transcript.contains("Assistant text should stay untouched."));
+    }
+
+    #[test]
+    fn test_messages_to_transcript_preserves_assistant_lines() {
+        let transcript = messages_to_transcript(&[
+            (
+                "assistant".to_string(),
+                "MemPalace ChromaDB NDCG@10".to_string(),
+            ),
+            ("user".to_string(), "hello world".to_string()),
+        ]);
+
+        assert!(transcript.contains("MemPalace ChromaDB NDCG@10"));
     }
 
     #[test]
