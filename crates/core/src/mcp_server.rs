@@ -71,14 +71,20 @@ fn append_wal_entry(entry: &WalEntry) -> anyhow::Result<()> {
         .unwrap_or_else(wal_dir_path);
     fs::create_dir_all(&wal_dir)?;
 
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&wal_file)?;
-    let mut file = std::io::BufWriter::new(file);
-    serde_json::to_writer(&mut file, entry)?;
-    file.write_all(b"\n")?;
-    file.flush()?;
+    let existing = fs::read(&wal_file).unwrap_or_default();
+    let temp_path = wal_dir.join(format!("write_log.{}.tmp", entry.trace_id));
+    let mut temp = fs::File::create(&temp_path)?;
+    if !existing.is_empty() {
+        temp.write_all(&existing)?;
+        if !existing.ends_with(b"\n") {
+            temp.write_all(b"\n")?;
+        }
+    }
+    serde_json::to_writer(&mut temp, entry)?;
+    temp.write_all(b"\n")?;
+    temp.flush()?;
+    drop(temp);
+    fs::rename(temp_path, wal_file)?;
     Ok(())
 }
 
@@ -1111,10 +1117,7 @@ mod tests {
 
     fn read_wal_entries() -> Vec<WalEntry> {
         let wal_file = wal_file_path();
-        let content = std::fs::read_to_string(&wal_file).unwrap_or_default();
-        if content.is_empty() {
-            return vec![];
-        }
+        let content = std::fs::read_to_string(wal_file).expect("wal file should exist");
         content
             .lines()
             .filter(|line| !line.trim().is_empty())
@@ -1496,36 +1499,19 @@ mod tests {
     fn test_dispatch_writes_wal_entries() {
         let temp = tempfile::tempdir().expect("tempdir should be created");
         std::env::set_var("XDG_STATE_HOME", temp.path());
-
-        let wal_file = wal_file_path();
-        if wal_file.exists() {
-            std::fs::remove_file(&wal_file).ok();
-        }
-
         let state = test_state();
+
         let result = dispatch(&state, "mempalace_status", json!({}));
         assert!(result.is_ok());
 
         let entries = read_wal_entries();
-        assert!(
-            entries.len() >= 2,
-            "expected at least 2 entries, got {}",
-            entries.len()
-        );
-
-        let our_entries: Vec<_> = entries
-            .iter()
-            .filter(|e| e.tool == "mempalace_status")
-            .collect();
-        assert!(
-            our_entries.len() >= 2,
-            "expected at least 2 mempalace_status entries"
-        );
-
-        assert_eq!(our_entries[0].trace_id, our_entries[1].trace_id);
-        assert!(our_entries[0].result_summary.is_none());
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].tool, "mempalace_status");
+        assert_eq!(entries[1].tool, "mempalace_status");
+        assert_eq!(entries[0].trace_id, entries[1].trace_id);
+        assert!(entries[0].result_summary.is_none());
         assert_eq!(
-            our_entries[1]
+            entries[1]
                 .result_summary
                 .as_ref()
                 .and_then(|v| v.get("status"))
