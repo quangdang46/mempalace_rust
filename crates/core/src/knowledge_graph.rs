@@ -596,7 +596,23 @@ mod tests {
         kg.invalidate("Max", "does", "swimming", Some("2025-06-01"))
             .unwrap();
         let results = kg.query_entity("Max", None, "outgoing").unwrap();
-        assert!(results.is_empty());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].predicate, "does");
+        assert_eq!(results[0].object, "swimming");
+        assert!(!results[0].current);
+        assert_eq!(results[0].valid_to.as_deref(), Some("2025-06-01"));
+
+        let as_of_after = kg
+            .query_entity("Max", Some("2025-07-01"), "outgoing")
+            .unwrap();
+        assert!(as_of_after.is_empty());
+
+        let as_of_before = kg
+            .query_entity("Max", Some("2025-03-01"), "outgoing")
+            .unwrap();
+        assert_eq!(as_of_before.len(), 1);
+        assert_eq!(as_of_before[0].predicate, "does");
+        assert_eq!(as_of_before[0].object, "swimming");
     }
 
     #[test]
