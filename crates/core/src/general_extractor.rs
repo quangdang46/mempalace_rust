@@ -351,6 +351,9 @@ fn score_markers(text: &str, markers: &[&str]) -> (f32, Vec<String>) {
         }
     }
 
+    keywords.sort();
+    keywords.dedup();
+
     (score, keywords)
 }
 
@@ -425,6 +428,7 @@ pub fn extract_memories(text: &str, min_confidence: f32) -> Vec<Classification> 
             memory_type: final_type,
             confidence,
             text: segment.trim().to_string(),
+            chunk_index: memories.len(),
         });
     }
 
@@ -557,6 +561,36 @@ pub struct Classification {
     pub memory_type: MemoryType,
     pub confidence: f32,
     pub text: String,
+    pub chunk_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PythonMemory {
+    pub content: String,
+    pub memory_type: String,
+    pub chunk_index: usize,
+}
+
+impl MemoryType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryType::Decision => "decision",
+            MemoryType::Preference => "preference",
+            MemoryType::Milestone => "milestone",
+            MemoryType::Problem => "problem",
+            MemoryType::Emotional => "emotional",
+        }
+    }
+}
+
+impl Classification {
+    pub fn to_python_memory(&self) -> PythonMemory {
+        PythonMemory {
+            content: self.text.clone(),
+            memory_type: self.memory_type.as_str().to_string(),
+            chunk_index: self.chunk_index,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -633,5 +667,37 @@ mod tests {
         let text = "Hello world";
         let result = extract_memories(text, 0.9);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_index_increments_like_python() {
+        let text = "We decided to use React because it fits our team.\n\nI prefer functional components always.\n\nIt works! We finally shipped the v1.0 release.";
+        let result = extract_memories(text, 0.3);
+        if result.len() >= 2 {
+            let indices: Vec<usize> = result.iter().map(|m| m.chunk_index).collect();
+            assert_eq!(indices, (0..result.len()).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn test_python_memory_shape_matches_reference() {
+        let text = "We decided to go with PostgreSQL instead of MySQL because the performance was better for our use case.";
+        let result = extract_memories(text, 0.3);
+        assert!(!result.is_empty());
+        let python_shape = result[0].to_python_memory();
+        assert_eq!(python_shape.memory_type, "decision");
+        assert_eq!(python_shape.chunk_index, 0);
+        assert!(python_shape.content.contains("PostgreSQL"));
+    }
+
+    #[test]
+    fn test_score_markers_deduplicates_keywords_like_python() {
+        let (score, keywords) = score_markers(
+            "we decided to go with postgres because we decided to go with postgres",
+            DECISION_MARKERS,
+        );
+        assert!(score > 0.0);
+        let deduped: HashSet<String> = keywords.iter().cloned().collect();
+        assert_eq!(keywords.len(), deduped.len());
     }
 }
