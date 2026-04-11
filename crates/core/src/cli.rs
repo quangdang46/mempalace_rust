@@ -1027,11 +1027,21 @@ fn cmd_compress(
         }
     });
 
+    let mut people_map = std::collections::HashMap::new();
     if let Some(ref cp) = config_path {
         if cp.exists() {
             if let Ok(content) = std::fs::read_to_string(cp) {
                 if serde_json::from_str::<serde_json::Value>(&content).is_ok() {
                     println!("  Loaded entity config: {:?}", cp);
+                }
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(entities) = parsed.get("entities").and_then(|v| v.as_object()) {
+                        for (name, code) in entities {
+                            if let Some(code) = code.as_str() {
+                                people_map.insert(name.clone(), code.to_string());
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1096,9 +1106,9 @@ fn cmd_compress(
         let doc = &docs[i];
         let meta = &metas[i];
 
-        let compressed = dialect::compress(doc, &std::collections::HashMap::new());
+        let compressed = dialect::compress_with_metadata(doc, &people_map, Some(meta));
         let stats = dialect::compression_stats(doc, &compressed);
-        total_compressed += stats.compressed_tokens * 4;
+        total_compressed += stats.summary_chars;
 
         if dry_run {
             let wing_name = meta
@@ -1121,7 +1131,7 @@ fn cmd_compress(
             println!("  [{wing_name}/{room_name}] {source}");
             println!(
                 "    {}t -> {}t ({:.1}x)",
-                stats.original_tokens, stats.compressed_tokens, stats.ratio
+                stats.original_tokens_est, stats.summary_tokens_est, stats.size_ratio
             );
             if !compressed.is_empty() {
                 println!("    {compressed}");
@@ -1136,13 +1146,37 @@ fn cmd_compress(
 
     // Store compressed versions (unless dry-run)
     if !dry_run {
-        println!("  Stored {} compressed drawers.", compressed_entries.len());
+        let mut compressed_db = PalaceDb::open_collection(
+            &palace_path,
+            crate::palace_db::DEFAULT_COMPRESSED_COLLECTION_NAME,
+        )?;
+        let upserts = compressed_entries
+            .iter()
+            .map(|(id, compressed, meta, stats)| {
+                let mut comp_meta = meta.clone();
+                comp_meta.insert(
+                    "compression_ratio".to_string(),
+                    serde_json::json!(stats.size_ratio),
+                );
+                comp_meta.insert(
+                    "original_tokens".to_string(),
+                    serde_json::json!(stats.original_tokens_est),
+                );
+                (id.clone(), compressed.clone(), comp_meta)
+            })
+            .collect::<Vec<_>>();
+        compressed_db.upsert_documents(&upserts)?;
+        compressed_db.flush()?;
+        println!(
+            "  Stored {} compressed drawers in 'mempalace_compressed' collection.",
+            compressed_entries.len()
+        );
     }
 
     // Summary
     let ratio = total_original as f64 / total_compressed.max(1) as f64;
-    let orig_tokens = total_original / 4;
-    let comp_tokens = total_compressed / 4;
+    let orig_tokens = dialect::count_tokens(&"x".repeat(total_original));
+    let comp_tokens = dialect::count_tokens(&"x".repeat(total_compressed));
     println!(
         "  Total: {}t -> {}t ({:.1}x compression)",
         orig_tokens, comp_tokens, ratio
@@ -2039,5 +2073,50 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cmd_compress_stores_lossy_summaries_in_compressed_collection() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let palace = temp.path().join("palace");
+        let mut db = PalaceDb::open(&palace).unwrap();
+        db.add(
+            &[(
+                "doc-1",
+                "Alice decided to use GraphQL instead of REST for the backend API.",
+            )],
+            &[&[
+                ("wing", "project"),
+                ("room", "backend"),
+                ("source_file", "notes/decision.txt"),
+            ]],
+        )
+        .unwrap();
+        db.flush().unwrap();
+
+        let entities = temp.path().join("entities.json");
+        std::fs::write(&entities, r#"{"entities":{"Alice":"ALC"}}"#).unwrap();
+
+        cmd_compress(
+            None,
+            false,
+            entities.to_str(),
+            Some(palace.to_str().unwrap()),
+        )
+        .unwrap();
+
+        let compressed = PalaceDb::open_collection(
+            &palace,
+            crate::palace_db::DEFAULT_COMPRESSED_COLLECTION_NAME,
+        )
+        .unwrap();
+        let entries = compressed.get_all(None, None, 10);
+        assert_eq!(entries.len(), 1);
+        let result = &entries[0];
+        assert!(result.documents[0].starts_with("project|backend|?|decision"));
+        assert!(result.documents[0].contains("ALC") || result.documents[0].contains("0:"));
+        let meta = &result.metadatas[0];
+        assert!(meta.contains_key("compression_ratio"));
+        assert!(meta.contains_key("original_tokens"));
     }
 }

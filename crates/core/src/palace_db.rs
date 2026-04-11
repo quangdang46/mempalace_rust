@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
+pub const DEFAULT_COMPRESSED_COLLECTION_NAME: &str = "mempalace_compressed";
 
 pub struct PalaceDb {
     documents: HashMap<String, DocumentEntry>,
@@ -25,7 +26,14 @@ pub struct QueryResult {
 
 impl PalaceDb {
     pub fn open(palace_path: &std::path::Path) -> anyhow::Result<Self> {
-        let collection_name = DEFAULT_COLLECTION_NAME.to_string();
+        Self::open_collection(palace_path, DEFAULT_COLLECTION_NAME)
+    }
+
+    pub fn open_collection(
+        palace_path: &std::path::Path,
+        collection_name: &str,
+    ) -> anyhow::Result<Self> {
+        let collection_name = collection_name.to_string();
         let docs_path = palace_path.join(format!("{}.json", collection_name));
 
         let documents = if docs_path.exists() {
@@ -136,6 +144,23 @@ impl PalaceDb {
         }
 
         // Don't auto-save on every add - caller should call flush() when done batching
+        Ok(())
+    }
+
+    pub fn upsert_documents(
+        &mut self,
+        documents: &[(String, String, HashMap<String, serde_json::Value>)],
+    ) -> anyhow::Result<()> {
+        for (id, content, metadata) in documents {
+            self.documents.insert(
+                id.clone(),
+                DocumentEntry {
+                    content: content.clone(),
+                    metadata: metadata.clone(),
+                },
+            );
+        }
+
         Ok(())
     }
 
