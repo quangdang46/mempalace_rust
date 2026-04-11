@@ -8,6 +8,7 @@
 
 use regex::{Regex, RegexBuilder};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 // =============================================================================
@@ -693,7 +694,27 @@ pub struct ProjectEntity {
 pub struct DetectionResult {
     pub people: Vec<PersonEntity>,
     pub projects: Vec<ProjectEntity>,
+    pub uncertain: Vec<PersonEntity>,
 }
+
+const PROSE_EXTENSIONS: &[&str] = &["txt", "md", "rst", "csv"];
+const READABLE_EXTENSIONS: &[&str] = &[
+    "txt", "md", "py", "js", "ts", "json", "yaml", "yml", "csv", "rst", "toml", "sh", "rb", "go",
+    "rs",
+];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    ".mempalace",
+];
 
 #[derive(Debug, Clone)]
 struct ScoredEntity {
@@ -1067,6 +1088,122 @@ pub fn detect_from_content(text: &str) -> DetectionResult {
     DetectionResult {
         people: people_entities,
         projects: project_entities,
+        uncertain: Vec::new(),
+    }
+}
+
+pub fn scan_for_detection(project_dir: &Path, max_files: usize) -> Vec<PathBuf> {
+    let project_path = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let mut prose_files = Vec::new();
+    let mut all_files = Vec::new();
+
+    for entry in walkdir::WalkDir::new(project_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy();
+            !SKIP_DIRS.iter().any(|skip| name == *skip)
+        })
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(ext) = entry.path().extension().and_then(|ext| ext.to_str()) else {
+            continue;
+        };
+        let ext = ext.to_ascii_lowercase();
+        if PROSE_EXTENSIONS.contains(&ext.as_str()) {
+            prose_files.push(entry.path().to_path_buf());
+        } else if READABLE_EXTENSIONS.contains(&ext.as_str()) {
+            all_files.push(entry.path().to_path_buf());
+        }
+    }
+
+    let files = if prose_files.len() >= 3 {
+        prose_files
+    } else {
+        prose_files.into_iter().chain(all_files).collect()
+    };
+
+    files.into_iter().take(max_files).collect()
+}
+
+pub fn detect_entities(file_paths: &[PathBuf], max_files: usize) -> DetectionResult {
+    let mut all_text = Vec::new();
+    let mut all_lines = Vec::new();
+    let mut files_read = 0usize;
+
+    const MAX_BYTES_PER_FILE: usize = 5_000;
+
+    for path in file_paths {
+        if files_read >= max_files {
+            break;
+        }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let content = if content.len() > MAX_BYTES_PER_FILE {
+            content[..MAX_BYTES_PER_FILE].to_string()
+        } else {
+            content
+        };
+        all_lines.extend(content.lines().map(str::to_string));
+        all_text.push(content);
+        files_read += 1;
+    }
+
+    let combined_text = all_text.join("\n");
+    let line_refs: Vec<&str> = all_lines.iter().map(String::as_str).collect();
+    let candidates = extract_candidates(&combined_text);
+    if candidates.is_empty() {
+        return DetectionResult {
+            people: Vec::new(),
+            projects: Vec::new(),
+            uncertain: Vec::new(),
+        };
+    }
+
+    let mut people = Vec::new();
+    let mut projects = Vec::new();
+    let mut uncertain = Vec::new();
+
+    let mut sorted: Vec<(String, usize)> = candidates.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    for (name, frequency) in sorted {
+        let scores = score_entity(&name, &combined_text, &line_refs);
+        let entity = classify_entity(&name, frequency, &scores);
+        let signal_text = entity.signals.join("; ");
+        let person = PersonEntity {
+            name: entity.name,
+            confidence: entity.confidence,
+            context: signal_text,
+        };
+        match entity.entity_type {
+            EntityType::Person => people.push(person),
+            EntityType::Project => projects.push(ProjectEntity {
+                name: person.name,
+                confidence: person.confidence,
+                context: person.context,
+            }),
+            EntityType::Uncertain => uncertain.push(person),
+        }
+    }
+
+    people.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+    projects.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+    uncertain.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+
+    DetectionResult {
+        people: people.into_iter().take(15).collect(),
+        projects: projects.into_iter().take(10).collect(),
+        uncertain: uncertain.into_iter().take(8).collect(),
     }
 }
 

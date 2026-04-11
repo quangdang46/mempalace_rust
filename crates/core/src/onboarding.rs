@@ -10,7 +10,7 @@
 //! Seeds the entity_registry with confirmed data so MemPalace knows your world
 //! from minute one — before a single session is indexed.
 
-use crate::entity_detector::{detect_from_content, PersonEntity};
+use crate::entity_detector::{detect_entities, scan_for_detection, PersonEntity};
 use crate::entity_registry::{EntityRegistry, COMMON_ENGLISH_WORDS};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -363,30 +363,8 @@ pub fn auto_detect_from_directory(
     let known_names: std::collections::HashSet<String> =
         known_people.iter().map(|p| p.name.to_lowercase()).collect();
 
-    // Collect text from readable files
-    let mut all_text = String::new();
-    for entry in walkdir::WalkDir::new(directory)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if entry.file_type().is_file() {
-            if let Some(ext) = entry.path().extension() {
-                let ext_str = ext.to_string_lossy().to_lowercase();
-                if matches!(
-                    ext_str.as_str(),
-                    "txt" | "md" | "py" | "js" | "ts" | "rs" | "go"
-                ) {
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        all_text.push_str(&content);
-                        all_text.push('\n');
-                    }
-                }
-            }
-        }
-    }
-
-    let detection = detect_from_content(&all_text);
+    let files = scan_for_detection(directory, 10);
+    let detection = detect_entities(&files, 10);
     detection
         .people
         .into_iter()
@@ -502,9 +480,16 @@ pub fn run_onboarding(
             println!("\n  Found {} additional name candidates:\n", detected.len());
             for entity in detected {
                 println!(
-                    "    {:20} confidence={:.0}%",
+                    "    {:20} confidence={:.0}%  ({})",
                     entity.name,
-                    entity.confidence * 100.0
+                    entity.confidence * 100.0,
+                    entity
+                        .context
+                        .split(';')
+                        .next()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("no strong signals")
                 );
                 if ask("    Add as (p)erson or (s)kip?", None)
                     .trim()
@@ -553,7 +538,8 @@ pub fn run_onboarding(
         projects.clone(),
         Some(aliases),
     )?;
-    let _ = generate_aaak_bootstrap(&people, &projects, &wings, mode, config_dir)?;
+    let (aaak_path, facts_path) =
+        generate_aaak_bootstrap(&people, &projects, &wings, mode, config_dir)?;
     let _ = save_wing_config(config_dir, &wings)?;
 
     header("Setup Complete");
@@ -561,6 +547,8 @@ pub fn run_onboarding(
     println!("  {}", registry.summary());
     println!("\n  Wings: {}", wings.join(", "));
     println!("\n  Registry saved to: {}", registry.path().display());
+    println!("  AAAK entity registry: {}", aaak_path.display());
+    println!("  Critical facts bootstrap: {}", facts_path.display());
     println!("\n  Your AI will know your world from the first session.");
     println!();
 
@@ -865,8 +853,21 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let dir = temp_dir.path();
 
-        // Write test files
-        std::fs::write(dir.join("notes.txt"), "Alice and Bob worked on ProjectX.").unwrap();
+        std::fs::write(
+            dir.join("notes.txt"),
+            "Alice said hi. Alice said hi. Alice said hi. Alice laughed. Alice laughed. Alice laughed.",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("README.md"),
+            "Alice asked about the plan. Alice asked about the plan. Alice asked about the plan.",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("guide.rst"),
+            "Alice smiled today. Alice smiled today. Alice smiled today.",
+        )
+        .unwrap();
 
         let known_people = vec![PersonEntity {
             name: "Charlie".to_string(),
@@ -874,9 +875,27 @@ mod tests {
             context: "known".to_string(),
         }];
 
-        // Just verify it runs without error
-        let _detected = auto_detect_from_directory(dir, &known_people);
-        // Detection results depend on entity_detector confidence thresholds
+        let detected = auto_detect_from_directory(dir, &known_people);
+        assert!(detected.iter().any(|p| p.name == "Alice"));
+    }
+
+    #[test]
+    fn test_auto_detect_prefers_prose_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        std::fs::write(dir.join("a.txt"), "alpha").unwrap();
+        std::fs::write(dir.join("b.md"), "beta").unwrap();
+        std::fs::write(dir.join("c.rst"), "gamma").unwrap();
+        std::fs::write(dir.join("code.rs"), "fn main() {} ").unwrap();
+
+        let files = scan_for_detection(dir, 10);
+        assert_eq!(files.len(), 3);
+        assert!(files.iter().all(|p| {
+            matches!(
+                p.extension().and_then(|ext| ext.to_str()),
+                Some("txt") | Some("md") | Some("rst")
+            )
+        }));
     }
 
     #[test]
