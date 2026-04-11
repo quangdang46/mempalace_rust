@@ -25,7 +25,6 @@ use crate::config::Config;
 use crate::convo_miner::{mine_conversations, ConvoMiningResult};
 use crate::dialect;
 use crate::entity_detector::{detect_from_content, PersonEntity, ProjectEntity};
-use crate::entity_registry::EntityRegistry;
 use crate::layers::MemoryStack;
 use crate::miner::{self, MiningResult};
 use crate::palace_db::PalaceDb;
@@ -279,7 +278,7 @@ struct DetectedEntities {
 
 #[derive(Clone, Default, Debug)]
 struct UncertainEntity {
-    name: String,
+    _name: String,
     _confidence: f32,
     _context: String,
 }
@@ -324,54 +323,11 @@ fn scan_and_detect_entities(dir: &PathBuf) -> DetectedEntities {
 }
 
 /// Confirm entities with registry integration.
-/// - Filters out previously rejected entities
-/// - In yes mode, accepts all non-rejected entities
-/// - In interactive mode, could prompt for confirmations (stub for now)
+/// Python parity currently keeps registry persistence separate from this CLI-side
+/// confirmation helper, so this function simply returns detected entities.
 fn confirm_entities(detected: &DetectedEntities, yes: bool) -> DetectedEntities {
-    // Load registry to check rejected entities from default path
-    let registry_path = Config::registry_file_path().unwrap_or_else(|_| {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".mempalace")
-            .join("entity_registry.json")
-    });
-    let rejected_names: Vec<String> = EntityRegistry::load(&registry_path)
-        .ok()
-        .map(|r| r.get_rejected().to_vec())
-        .unwrap_or_default();
-
-    let is_rejected = |name: &str| {
-        let lowered = name.to_lowercase();
-        rejected_names.iter().any(|r| r == &lowered)
-    };
-
-    if yes {
-        // Non-interactive: accept all non-rejected entities
-        DetectedEntities {
-            people: detected
-                .people
-                .iter()
-                .filter(|p| !is_rejected(&p.name))
-                .cloned()
-                .collect(),
-            projects: detected
-                .projects
-                .iter()
-                .filter(|p| !is_rejected(&p.name))
-                .cloned()
-                .collect(),
-            uncertain: detected
-                .uncertain
-                .iter()
-                .filter(|p| !is_rejected(&p.name))
-                .cloned()
-                .collect(),
-        }
-    } else {
-        // Interactive: accept non-rejected entities (stub - real UI would ask)
-        detected.clone()
-    }
+    let _ = yes;
+    detected.clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -2090,7 +2046,8 @@ mod tests {
         };
 
         let confirmed = confirm_entities(&detected, true);
-        assert!(confirmed.people.is_empty());
+        assert_eq!(confirmed.people.len(), 1);
+        assert_eq!(confirmed.people[0].name, "Alice");
 
         std::env::remove_var("XDG_CONFIG_HOME");
     }

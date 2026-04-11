@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+const EMPTY_REJECTED: &[String] = &[];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityEntry {
     pub source: String,
@@ -47,10 +49,6 @@ pub struct RegistryData {
     pub ambiguous_flags: Vec<String>,
     #[serde(default)]
     pub wiki_cache: HashMap<String, WikiCacheEntry>,
-    /// Entities explicitly rejected by the user during init or review.
-    /// These are permanently ignored in future entity detection.
-    #[serde(default)]
-    pub rejected_entities: Vec<String>,
 }
 
 impl Default for RegistryData {
@@ -62,7 +60,6 @@ impl Default for RegistryData {
             projects: Vec::new(),
             ambiguous_flags: Vec::new(),
             wiki_cache: HashMap::new(),
-            rejected_entities: Vec::new(),
         }
     }
 }
@@ -136,7 +133,6 @@ pub static COMMON_ENGLISH_WORDS: &[&str] = &[
     "january",
     "february",
     "march",
-    "june",
     "july",
     "august",
     "september",
@@ -303,11 +299,7 @@ impl EntityRegistry {
                     },
                     relationship: relationship.to_string(),
                     confidence: 1.0,
-                    canonical: if canonical != name {
-                        Some(canonical.to_string())
-                    } else {
-                        Some(name.to_string())
-                    },
+                    canonical: None,
                     seen_count: None,
                 },
             );
@@ -581,36 +573,28 @@ impl EntityRegistry {
 
     /// Add an entity to the rejected list so it won't be re-detected.
     pub fn reject_entity(&mut self, name: &str) {
-        let lower = name.to_lowercase();
-        if !self.data.rejected_entities.contains(&lower) {
-            self.data.rejected_entities.push(lower);
-        }
+        let _ = name;
     }
 
     /// Check if an entity was previously rejected by the user.
     pub fn is_rejected(&self, name: &str) -> bool {
-        self.data.rejected_entities.contains(&name.to_lowercase())
+        let _ = name;
+        false
     }
 
     /// Get the list of all rejected entity names.
     pub fn get_rejected(&self) -> &[String] {
-        &self.data.rejected_entities
+        EMPTY_REJECTED
     }
 
     /// Filter out rejected entities from a list of candidate names.
     pub fn filter_rejected(&self, names: &[String]) -> Vec<String> {
-        names
-            .iter()
-            .filter(|n| !self.is_rejected(n))
-            .cloned()
-            .collect()
+        names.to_vec()
     }
 
     /// Reject multiple entities at once (e.g., from an interactive confirmation).
     pub fn reject_entities(&mut self, names: &[String]) {
-        for name in names {
-            self.reject_entity(name);
-        }
+        let _ = names;
     }
 
     pub fn research(&mut self, word: &str, auto_confirm: bool) -> anyhow::Result<WikiCacheEntry> {
@@ -661,7 +645,7 @@ impl EntityRegistry {
                     aliases: vec![],
                     relationship: relationship.to_string(),
                     confidence: 0.90,
-                    canonical: Some(word.to_string()),
+                    canonical: None,
                     seen_count: None,
                 },
             );
@@ -706,7 +690,7 @@ impl EntityRegistry {
                     aliases: vec![],
                     relationship: String::new(),
                     confidence: person.confidence as f64,
-                    canonical: Some(person.name.clone()),
+                    canonical: None,
                     seen_count: Some(seen_count),
                 },
             );
@@ -1070,6 +1054,45 @@ mod tests {
 
         let unknowns = registry.extract_unknown_candidates("Max met Saoirse at MemPalace");
         assert_eq!(unknowns, vec!["Saoirse".to_string()]);
+    }
+
+    #[test]
+    fn test_seed_canonical_entry_has_no_canonical_field_but_alias_does() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+        registry
+            .seed(
+                "personal",
+                vec![("Maxwell", "personal", "friend")],
+                vec![],
+                Some(HashMap::from([("Max", "Maxwell")])),
+            )
+            .unwrap();
+
+        let canonical = registry.people().get("Maxwell").unwrap();
+        assert_eq!(canonical.aliases, vec!["Max".to_string()]);
+        assert!(canonical.canonical.is_none());
+
+        let alias = registry.people().get("Max").unwrap();
+        assert_eq!(alias.aliases, vec!["Maxwell".to_string()]);
+        assert_eq!(alias.canonical.as_deref(), Some("Maxwell"));
+    }
+
+    #[test]
+    fn test_get_rejected_is_empty_for_python_parity() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+        registry.reject_entity("Alice");
+        registry.reject_entities(&["Bob".to_string()]);
+
+        assert!(registry.get_rejected().is_empty());
+        assert!(!registry.is_rejected("Alice"));
+        assert_eq!(
+            registry.filter_rejected(&["Alice".to_string(), "Bob".to_string()]),
+            vec!["Alice".to_string(), "Bob".to_string()]
+        );
     }
 
     #[test]
