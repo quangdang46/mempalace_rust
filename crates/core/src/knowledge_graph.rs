@@ -174,11 +174,14 @@ impl KnowledgeGraph {
         );
 
         if let Ok(conflict_id) = conflicting {
-            // Invalidate the conflicting triple with current timestamp
-            let now = chrono::Utc::now().to_rfc3339();
+            // Invalidate the conflicting triple at the start of the new fact when known,
+            // otherwise fall back to the current timestamp.
+            let conflict_end = valid_from
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
             self.conn.execute(
                 "UPDATE triples SET valid_to=?1 WHERE id=?2",
-                params![now, conflict_id],
+                params![conflict_end, conflict_id],
             )?;
             // Log conflict resolution - triple_id not yet assigned, use format
             tracing::info!(
@@ -272,7 +275,7 @@ impl KnowledgeGraph {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND valid_to IS NULL"
+                "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1"
             )?;
             let rows = stmt.query_map(params![eid], |row| {
                 self.row_to_entity_result(row, "outgoing", eid)
@@ -304,7 +307,7 @@ impl KnowledgeGraph {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1 AND valid_to IS NULL"
+                "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1"
             )?;
             let rows = stmt.query_map(params![eid], |row| {
                 self.row_to_entity_result_incoming(row, "incoming", eid)
@@ -632,6 +635,11 @@ mod tests {
             .query_entity("Alice", Some("2026-03-01"), "outgoing")
             .unwrap();
         assert!(after.is_empty());
+
+        let all = kg.query_entity("Alice", None, "outgoing").unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].object, "Max injury");
+        assert!(!all[0].current);
     }
 
     #[test]
@@ -731,14 +739,67 @@ mod tests {
         )
         .unwrap();
 
-        // Query should now find only NewCo
-        let results = kg.query_entity("Alice", None, "outgoing").unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].object, "NewCo");
-        assert!(results[0].current);
+        let jan_2022 = kg
+            .query_entity("Alice", Some("2022-01-01"), "outgoing")
+            .unwrap();
+        assert_eq!(jan_2022.len(), 1);
+        assert_eq!(jan_2022[0].object, "Acme");
+
+        let jan_2024 = kg
+            .query_entity("Alice", Some("2024-01-01"), "outgoing")
+            .unwrap();
+        assert_eq!(jan_2024.len(), 1);
+        assert_eq!(jan_2024[0].object, "NewCo");
+        assert!(jan_2024[0].current);
 
         // But timeline should show both
         let timeline = kg.timeline(Some("Alice")).unwrap();
         assert_eq!(timeline.len(), 2);
+
+        let all = kg.query_entity("Alice", None, "outgoing").unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all
+            .iter()
+            .any(|triple| triple.object == "Acme" && !triple.current));
+        assert!(all
+            .iter()
+            .any(|triple| triple.object == "NewCo" && triple.current));
+    }
+
+    #[test]
+    fn test_query_relationship_without_as_of_returns_expired_and_current() {
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+
+        kg.add_triple(
+            "Alice",
+            "works_at",
+            "Acme",
+            Some("2020-01-01"),
+            Some("2022-12-31"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        kg.add_triple(
+            "Bob",
+            "works_at",
+            "NewCo",
+            Some("2023-01-01"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let results = kg.query_relationship("works_at", None).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .any(|triple| triple.object == "Acme" && !triple.current));
+        assert!(results
+            .iter()
+            .any(|triple| triple.object == "NewCo" && triple.current));
     }
 }
