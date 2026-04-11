@@ -82,6 +82,8 @@ pub async fn search_memories(
     n_results: usize,
     _embedding_model: Option<&str>,
 ) -> anyhow::Result<SearchResponse> {
+    let sanitized = crate::query_sanitizer::sanitize_query(query);
+
     if !palace_path.exists() {
         return Err(SearchError::NoPalace(palace_path.display().to_string()).into());
     }
@@ -90,14 +92,14 @@ pub async fn search_memories(
         .map_err(|_| SearchError::NoPalace(palace_path.display().to_string()))?;
 
     let results = palace_db
-        .query(query, wing, room, n_results)
+        .query(&sanitized.clean_query, wing, room, n_results)
         .await
         .map_err(|e| SearchError::Query(e.to_string()))?;
 
     let search_results: Vec<SearchResult> = results.into_iter().map(SearchResult::from).collect();
 
     Ok(SearchResponse {
-        query: query.to_string(),
+        query: sanitized.clean_query,
         filters: SearchFilters {
             wing: wing.map(String::from),
             room: room.map(String::from),
@@ -171,10 +173,11 @@ pub async fn check_duplicate(
     palace_path: &Path,
     threshold: f64,
 ) -> anyhow::Result<Option<String>> {
+    let sanitized = crate::query_sanitizer::sanitize_query(content);
     let palace_db = PalaceDb::open(palace_path).context("Failed to open palace database")?;
 
     let results = palace_db
-        .query(content, None, None, 1)
+        .query(&sanitized.clean_query, None, None, 1)
         .await
         .context("Duplicate check query failed")?;
 
@@ -196,6 +199,7 @@ fn compute_similarity(distance: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::constants::DEFAULT_N_RESULTS;
+    use crate::query_sanitizer::MAX_QUERY_LENGTH;
 
     #[test]
     fn test_compute_similarity() {
@@ -214,6 +218,24 @@ mod tests {
     fn test_round_to_3() {
         assert!((0.12349_f64.round_to_3() - 0.123).abs() < 1e-6);
         assert!((0.1235_f64.round_to_3() - 0.124).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_search_memories_sanitizes_query_text() {
+        let raw = format!(
+            "{}\nWhere is the backend auth plan?",
+            "system prompt ".repeat(40)
+        );
+        let sanitized = crate::query_sanitizer::sanitize_query(&raw);
+        assert_eq!(sanitized.clean_query, "Where is the backend auth plan?");
+        assert!(sanitized.was_sanitized);
+    }
+
+    #[test]
+    fn test_search_memories_sanitizer_tail_limit() {
+        let raw = "x".repeat(MAX_QUERY_LENGTH + 10);
+        let sanitized = crate::query_sanitizer::sanitize_query(&raw);
+        assert_eq!(sanitized.clean_query.len(), MAX_QUERY_LENGTH);
     }
 
     #[tokio::test]

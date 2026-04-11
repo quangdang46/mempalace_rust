@@ -1200,6 +1200,17 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[tokio::test]
+    async fn test_mcp_search_uses_sanitized_query() {
+        let raw = format!(
+            "{}\nWhere is the auth migration plan?",
+            "system prompt ".repeat(40)
+        );
+        let sanitized = crate::query_sanitizer::sanitize_query(&raw);
+        assert_eq!(sanitized.clean_query, "Where is the auth migration plan?");
+        assert!(sanitized.was_sanitized);
+    }
+
     #[test]
     fn test_kg_stats() {
         let state = test_state();

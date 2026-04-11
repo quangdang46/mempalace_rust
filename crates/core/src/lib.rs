@@ -17,6 +17,7 @@ pub mod normalize;
 pub mod onboarding;
 pub mod palace_db;
 pub mod palace_graph;
+pub mod query_sanitizer;
 pub mod room_detector_local;
 pub mod searcher;
 pub mod spellcheck;
