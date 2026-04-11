@@ -510,6 +510,73 @@ auto_install_mcp() {
   log_info "MCP auto-install complete: $installed installed, $skipped unchanged"
 }
 
+hook_install_dir() {
+  case "$(detect_os)" in
+    linux)
+      echo "${XDG_DATA_HOME:-$HOME/.local/share}/mempalace/hooks"
+      ;;
+    macos)
+      echo "$HOME/Library/Application Support/mempalace/hooks"
+      ;;
+    windows)
+      echo "${LOCALAPPDATA:-${USERPROFILE}\\AppData\\Local}/mempalace/hooks"
+      ;;
+    *)
+      echo "$HOME/.mempalace/hooks"
+      ;;
+  esac
+}
+
+install_hook_wrappers() {
+  local bin_path="$1"
+  local os
+  os=$(detect_os)
+
+  if [[ "$os" == "windows" ]]; then
+    log_info "Skipping shell hook wrapper install on Windows"
+    return 0
+  fi
+
+  local hooks_dir
+  hooks_dir=$(hook_install_dir)
+  mkdir -p "$hooks_dir"
+
+  cat > "$hooks_dir/mempal_save_hook.sh" <<EOF
+#!/bin/bash
+set -euo pipefail
+HARNESS="${1:-${MEMPALACE_HOOK_HARNESS:-claude-code}}"
+case "$HARNESS" in
+  claude-code|codex) ;;
+  *)
+    echo "Unsupported harness: $HARNESS" >&2
+    exit 1
+    ;;
+esac
+exec "${bin_path}" hook run --hook stop --harness "$HARNESS"
+EOF
+
+  cat > "$hooks_dir/mempal_precompact_hook.sh" <<EOF
+#!/bin/bash
+set -euo pipefail
+HARNESS="${1:-${MEMPALACE_HOOK_HARNESS:-claude-code}}"
+case "$HARNESS" in
+  claude-code|codex) ;;
+  *)
+    echo "Unsupported harness: $HARNESS" >&2
+    exit 1
+    ;;
+esac
+exec "${bin_path}" hook run --hook precompact --harness "$HARNESS"
+EOF
+
+  chmod 755 "$hooks_dir/mempal_save_hook.sh" "$hooks_dir/mempal_precompact_hook.sh"
+
+  log_ok "Installed hook wrappers in $hooks_dir"
+  log_info "Claude Code Stop hook: $hooks_dir/mempal_save_hook.sh"
+  log_info "Claude Code PreCompact hook: $hooks_dir/mempal_precompact_hook.sh"
+  log_info "Codex uses the same scripts with a trailing 'codex' argument"
+}
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -662,6 +729,8 @@ main() {
   if [[ "$auto_mcp" == "true" ]]; then
     auto_install_mcp "${install_dir}/${bin}" || log_warn "MCP auto-install failed"
   fi
+
+  install_hook_wrappers "${install_dir}/${bin}" || log_warn "Hook wrapper install failed"
 }
 
 # curl|bash safety: buffer entire script before executing
