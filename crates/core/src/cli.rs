@@ -1606,8 +1606,99 @@ pub fn run() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        cmd_compress, cmd_mine, confirm_entities, count_human_messages, detect_mining_mode,
+        hook_precompact_response, hook_session_start_response, hook_stop_response,
+        run_instructions, scan_and_detect_entities, Cli, Commands, DetectedEntities, HookAction,
+        InstructionName, MiningMode, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL, STOP_BLOCK_REASON,
+    };
+    use crate::config::Config;
+    use crate::entity_detector::PersonEntity;
+    use crate::entity_registry::EntityRegistry;
+    use crate::palace_db::PalaceDb;
     use crate::test_env_lock;
+    use clap::Parser;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn expect_init(args: Cli) -> (PathBuf, bool) {
+        assert!(matches!(args.command, Commands::Init { .. }));
+        if let Commands::Init { dir, yes } = args.command {
+            (dir, yes)
+        } else {
+            (PathBuf::new(), false)
+        }
+    }
+
+    fn expect_mine(args: Cli) -> Commands {
+        assert!(matches!(args.command, Commands::Mine { .. }));
+        match args.command {
+            command @ Commands::Mine { .. } => command,
+            _ => Commands::Status,
+        }
+    }
+
+    fn expect_search(args: Cli) -> (String, Option<String>, Option<String>, usize) {
+        assert!(matches!(args.command, Commands::Search { .. }));
+        if let Commands::Search {
+            query,
+            wing,
+            room,
+            results,
+        } = args.command
+        {
+            (query, wing, room, results)
+        } else {
+            (String::new(), None, None, 0)
+        }
+    }
+
+    fn expect_wakeup(args: Cli) -> Option<String> {
+        assert!(matches!(args.command, Commands::WakeUp { .. }));
+        if let Commands::WakeUp { wing } = args.command {
+            wing
+        } else {
+            None
+        }
+    }
+
+    fn expect_compress(args: Cli) -> (Option<String>, bool, Option<String>) {
+        assert!(matches!(args.command, Commands::Compress { .. }));
+        if let Commands::Compress {
+            wing,
+            dry_run,
+            config,
+        } = args.command
+        {
+            (wing, dry_run, config)
+        } else {
+            (None, false, None)
+        }
+    }
+
+    fn expect_split(args: Cli) -> (PathBuf, Option<PathBuf>, bool, usize) {
+        assert!(matches!(args.command, Commands::Split { .. }));
+        if let Commands::Split {
+            dir,
+            output_dir,
+            dry_run,
+            min_sessions,
+        } = args.command
+        {
+            (dir, output_dir, dry_run, min_sessions)
+        } else {
+            (PathBuf::new(), None, false, 0)
+        }
+    }
+
+    fn expect_instructions(args: Cli) -> InstructionName {
+        assert!(matches!(args.command, Commands::Instructions { .. }));
+        if let Commands::Instructions { name } = args.command {
+            name
+        } else {
+            InstructionName::Help
+        }
+    }
 
     #[test]
     fn test_mining_mode_parsing() {
@@ -1629,13 +1720,9 @@ mod tests {
     #[test]
     fn test_cli_args_parse_init() {
         let args = Cli::try_parse_from(["mempalace", "init", "/tmp/test", "--yes"]).unwrap();
-        match args.command {
-            Commands::Init { dir, yes } => {
-                assert_eq!(dir, PathBuf::from("/tmp/test"));
-                assert!(yes);
-            }
-            _ => panic!("expected init command"),
-        }
+        let (dir, yes) = expect_init(args);
+        assert_eq!(dir, PathBuf::from("/tmp/test"));
+        assert!(yes);
     }
 
     #[test]
@@ -1651,7 +1738,7 @@ mod tests {
             "--dry-run",
         ])
         .unwrap();
-        match args.command {
+        match expect_mine(args) {
             Commands::Mine {
                 dir,
                 mode,
@@ -1670,7 +1757,7 @@ mod tests {
                 assert_eq!(limit, 0);
                 assert!(dry_run);
             }
-            _ => panic!("expected mine command"),
+            _ => unreachable!(),
         }
     }
 
@@ -1687,7 +1774,7 @@ mod tests {
             "c.txt",
         ])
         .unwrap();
-        match args.command {
+        match expect_mine(args) {
             Commands::Mine {
                 no_gitignore,
                 include_ignored,
@@ -1696,7 +1783,7 @@ mod tests {
                 assert!(no_gitignore);
                 assert_eq!(include_ignored, vec!["a.txt,b.txt", "c.txt"]);
             }
-            _ => panic!("expected mine command"),
+            _ => unreachable!(),
         }
     }
 
@@ -1714,31 +1801,18 @@ mod tests {
             "10",
         ])
         .unwrap();
-        match args.command {
-            Commands::Search {
-                query,
-                wing,
-                room,
-                results,
-            } => {
-                assert_eq!(query, "rust async");
-                assert_eq!(wing, Some("tech".to_string()));
-                assert_eq!(room, Some("backend".to_string()));
-                assert_eq!(results, 10);
-            }
-            _ => panic!("expected search command"),
-        }
+        let (query, wing, room, results) = expect_search(args);
+        assert_eq!(query, "rust async");
+        assert_eq!(wing, Some("tech".to_string()));
+        assert_eq!(room, Some("backend".to_string()));
+        assert_eq!(results, 10);
     }
 
     #[test]
     fn test_cli_args_parse_wakeup() {
         let args = Cli::try_parse_from(["mempalace", "wake-up", "--wing", "myapp"]).unwrap();
-        match args.command {
-            Commands::WakeUp { wing } => {
-                assert_eq!(wing, Some("myapp".to_string()));
-            }
-            _ => panic!("expected wake-up command"),
-        }
+        let wing = expect_wakeup(args);
+        assert_eq!(wing, Some("myapp".to_string()));
     }
 
     #[test]
@@ -1753,18 +1827,10 @@ mod tests {
             "entities.json",
         ])
         .unwrap();
-        match args.command {
-            Commands::Compress {
-                wing,
-                dry_run,
-                config,
-            } => {
-                assert_eq!(wing, Some("myapp".to_string()));
-                assert!(dry_run);
-                assert_eq!(config, Some("entities.json".to_string()));
-            }
-            _ => panic!("expected compress command"),
-        }
+        let (wing, dry_run, config) = expect_compress(args);
+        assert_eq!(wing, Some("myapp".to_string()));
+        assert!(dry_run);
+        assert_eq!(config, Some("entities.json".to_string()));
     }
 
     #[test]
@@ -1780,20 +1846,11 @@ mod tests {
             "3",
         ])
         .unwrap();
-        match args.command {
-            Commands::Split {
-                dir,
-                output_dir,
-                dry_run,
-                min_sessions,
-            } => {
-                assert_eq!(dir, PathBuf::from("/tmp/chats"));
-                assert_eq!(output_dir, Some(PathBuf::from("/tmp/split")));
-                assert!(dry_run);
-                assert_eq!(min_sessions, 3);
-            }
-            _ => panic!("expected split command"),
-        }
+        let (dir, output_dir, dry_run, min_sessions) = expect_split(args);
+        assert_eq!(dir, PathBuf::from("/tmp/chats"));
+        assert_eq!(output_dir, Some(PathBuf::from("/tmp/split")));
+        assert!(dry_run);
+        assert_eq!(min_sessions, 3);
     }
 
     #[test]
@@ -1827,7 +1884,7 @@ mod tests {
                 assert_eq!(hook, "session-start");
                 assert_eq!(harness, "claude-code");
             }
-            _ => panic!("expected hook command"),
+            _ => unreachable!(),
         }
     }
 
@@ -1843,12 +1900,8 @@ mod tests {
     #[test]
     fn test_cli_args_parse_instructions() {
         let args = Cli::try_parse_from(["mempalace", "instructions", "help"]).unwrap();
-        match args.command {
-            Commands::Instructions { name } => {
-                assert!(matches!(name, InstructionName::Help));
-            }
-            _ => panic!("expected instructions command"),
-        }
+        let name = expect_instructions(args);
+        assert!(matches!(name, InstructionName::Help));
     }
 
     #[test]
@@ -1864,38 +1917,45 @@ mod tests {
 
     #[test]
     fn test_run_instructions_known_name_succeeds() {
-        run_instructions("help").unwrap();
+        run_instructions("help").expect("known instructions name should succeed");
     }
 
     #[test]
     fn test_run_instructions_invalid_name_errors() {
-        let err = run_instructions("nonexistent").unwrap_err().to_string();
+        let err = run_instructions("nonexistent")
+            .expect_err("invalid instructions name should error")
+            .to_string();
         assert!(err.contains("Unknown instructions: nonexistent"));
         assert!(err.contains("Available:"));
     }
 
     #[test]
     fn test_run_hook_session_start_outputs_empty_json() {
-        let _guard = test_env_lock().lock().unwrap();
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
         std::env::set_var("HOME", temp_dir.path());
         let response =
-            hook_session_start_response(&json!({"session_id": "run-test"}), "claude-code").unwrap();
+            hook_session_start_response(&json!({"session_id": "run-test"}), "claude-code")
+                .expect("session-start hook should succeed");
         assert_eq!(response, json!({}));
         std::env::remove_var("HOME");
     }
 
     #[test]
     fn test_run_hook_stop_blocks_at_interval() {
-        let _guard = test_env_lock().lock().unwrap();
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
         std::env::set_var("HOME", temp_dir.path());
         let transcript = temp_dir.path().join("t.jsonl");
         let lines = (0..SAVE_INTERVAL)
             .map(|i| format!(r#"{{"message":{{"role":"user","content":"msg {i}"}}}}"#))
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(&transcript, lines).unwrap();
+        std::fs::write(&transcript, lines).expect("should write transcript");
         let response = hook_stop_response(
             &json!({
                 "session_id": "test",
@@ -1904,7 +1964,7 @@ mod tests {
             }),
             "claude-code",
         )
-        .unwrap();
+        .expect("stop hook should succeed");
         assert_eq!(response["decision"], "block");
         assert_eq!(response["reason"], STOP_BLOCK_REASON);
         std::env::remove_var("HOME");
@@ -1920,13 +1980,13 @@ mod tests {
             }),
             "claude-code",
         )
-        .unwrap();
+        .expect("stop hook should passthrough when active string is true");
         assert_eq!(response, json!({}));
     }
 
     #[test]
     fn test_count_human_messages_supports_codex_format() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
         let transcript = temp_dir.path().join("codex.jsonl");
         std::fs::write(
             &transcript,
@@ -1937,18 +1997,23 @@ mod tests {
                 "\n"
             ),
         )
-        .unwrap();
+        .expect("should write codex transcript");
 
-        assert_eq!(count_human_messages(transcript.to_str().unwrap()), 1);
+        assert_eq!(
+            count_human_messages(transcript.to_str().expect("path should be utf-8")),
+            1
+        );
     }
 
     #[test]
     fn test_run_hook_precompact_blocks() {
-        let _guard = test_env_lock().lock().unwrap();
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
         std::env::set_var("HOME", temp_dir.path());
-        let response =
-            hook_precompact_response(&json!({"session_id": "run-test"}), "claude-code").unwrap();
+        let response = hook_precompact_response(&json!({"session_id": "run-test"}), "claude-code")
+            .expect("precompact hook should succeed");
         assert_eq!(response["decision"], "block");
         assert_eq!(response["reason"], PRECOMPACT_BLOCK_REASON);
         std::env::remove_var("HOME");
@@ -1956,37 +2021,30 @@ mod tests {
 
     #[test]
     fn test_cli_args_parse_mcp() {
-        let args = Cli::try_parse_from(["mempalace", "mcp"]).unwrap();
+        let args = Cli::try_parse_from(["mempalace", "mcp"]).expect("mcp args should parse");
         assert!(matches!(args.command, Commands::Mcp));
     }
 
     #[test]
     fn test_cli_args_parse_compress_defaults() {
-        let args = Cli::try_parse_from(["mempalace", "compress"]).unwrap();
-        match args.command {
-            Commands::Compress {
-                wing,
-                dry_run,
-                config,
-            } => {
-                assert_eq!(wing, None);
-                assert!(!dry_run);
-                assert_eq!(config, None);
-            }
-            _ => panic!("expected compress command"),
-        }
+        let args =
+            Cli::try_parse_from(["mempalace", "compress"]).expect("compress defaults should parse");
+        let (wing, dry_run, config) = expect_compress(args);
+        assert_eq!(wing, None);
+        assert!(!dry_run);
+        assert_eq!(config, None);
     }
 
     #[test]
     fn test_cli_args_with_palace_override() {
-        let args =
-            Cli::try_parse_from(["mempalace", "--palace", "/custom/palace", "status"]).unwrap();
+        let args = Cli::try_parse_from(["mempalace", "--palace", "/custom/palace", "status"])
+            .expect("palace override should parse");
         assert_eq!(args.palace, Some("/custom/palace".to_string()));
     }
 
     #[test]
     fn test_scan_and_detect_entities_empty_dir() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = tempfile::TempDir::new().expect("tempdir should be created");
         let result = scan_and_detect_entities(&temp.path().to_path_buf());
         assert!(result.people.is_empty());
         assert!(result.projects.is_empty());
@@ -2001,19 +2059,25 @@ mod tests {
 
     #[test]
     fn test_confirm_entities_uses_config_registry_path() {
-        let _guard = test_env_lock().lock().unwrap();
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let xdg_root = temp_dir.path().to_str().unwrap();
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
+        let xdg_root = temp_dir
+            .path()
+            .to_str()
+            .expect("tempdir path should be utf-8");
         std::env::set_var("XDG_CONFIG_HOME", xdg_root);
 
-        let registry_path = Config::registry_file_path().unwrap();
+        let registry_path = Config::registry_file_path().expect("registry path should resolve");
         if let Some(parent) = registry_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
+            std::fs::create_dir_all(parent).expect("registry parent should be created");
         }
 
-        let mut registry = EntityRegistry::load(&registry_path).unwrap();
+        let mut registry =
+            EntityRegistry::load(&registry_path).expect("registry should load from config path");
         registry.reject_entity("alice");
-        registry.save().unwrap();
+        registry.save().expect("registry should save");
 
         let detected = DetectedEntities {
             people: vec![PersonEntity {
@@ -2033,9 +2097,11 @@ mod tests {
 
     #[test]
     fn test_detect_mining_mode_prefers_convos_for_chat_exports() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::write(temp.path().join("conversation.jsonl"), "{}\n{}").unwrap();
-        std::fs::write(temp.path().join("chatgpt-export.json"), "{}").unwrap();
+        let temp = tempfile::TempDir::new().expect("tempdir should be created");
+        std::fs::write(temp.path().join("conversation.jsonl"), "{}\n{}")
+            .expect("conversation export should be written");
+        std::fs::write(temp.path().join("chatgpt-export.json"), "{}")
+            .expect("chatgpt export should be written");
 
         assert!(matches!(
             detect_mining_mode(&temp.path().to_path_buf()),
@@ -2045,11 +2111,13 @@ mod tests {
 
     #[test]
     fn test_detect_mining_mode_prefers_projects_for_source_trees() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(temp.path().join("src")).unwrap();
-        std::fs::create_dir_all(temp.path().join("tests")).unwrap();
-        std::fs::write(temp.path().join("README.md"), "project docs").unwrap();
-        std::fs::write(temp.path().join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        let temp = tempfile::TempDir::new().expect("tempdir should be created");
+        std::fs::create_dir_all(temp.path().join("src")).expect("src dir should be created");
+        std::fs::create_dir_all(temp.path().join("tests")).expect("tests dir should be created");
+        std::fs::write(temp.path().join("README.md"), "project docs")
+            .expect("readme should be written");
+        std::fs::write(temp.path().join("src").join("main.rs"), "fn main() {}\n")
+            .expect("main.rs should be written");
 
         assert!(matches!(
             detect_mining_mode(&temp.path().to_path_buf()),
@@ -2077,9 +2145,9 @@ mod tests {
 
     #[test]
     fn test_cmd_compress_stores_lossy_summaries_in_compressed_collection() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = tempfile::TempDir::new().expect("tempdir should be created");
         let palace = temp.path().join("palace");
-        let mut db = PalaceDb::open(&palace).unwrap();
+        let mut db = PalaceDb::open(&palace).expect("palace db should open");
         db.add(
             &[(
                 "doc-1",
@@ -2091,25 +2159,26 @@ mod tests {
                 ("source_file", "notes/decision.txt"),
             ]],
         )
-        .unwrap();
-        db.flush().unwrap();
+        .expect("seed drawer should be added");
+        db.flush().expect("seed db should flush");
 
         let entities = temp.path().join("entities.json");
-        std::fs::write(&entities, r#"{"entities":{"Alice":"ALC"}}"#).unwrap();
+        std::fs::write(&entities, r#"{"entities":{"Alice":"ALC"}}"#)
+            .expect("entities config should be written");
 
         cmd_compress(
             None,
             false,
             entities.to_str(),
-            Some(palace.to_str().unwrap()),
+            Some(palace.to_str().expect("palace path should be utf-8")),
         )
-        .unwrap();
+        .expect("compress command should succeed");
 
         let compressed = PalaceDb::open_collection(
             &palace,
             crate::palace_db::DEFAULT_COMPRESSED_COLLECTION_NAME,
         )
-        .unwrap();
+        .expect("compressed db should open");
         let entries = compressed.get_all(None, None, 10);
         assert_eq!(entries.len(), 1);
         let result = &entries[0];
