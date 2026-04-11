@@ -2187,5 +2187,14 @@ mod tests {
         let meta = &result.metadatas[0];
         assert!(meta.contains_key("compression_ratio"));
         assert!(meta.contains_key("original_tokens"));
+
+        let query_hits = compressed
+            .query_sync("GraphQL backend", Some("project"), Some("backend"), 5)
+            .expect("compressed collection should be queryable");
+        assert_eq!(query_hits.len(), 1);
+        assert!(
+            query_hits[0].documents[0].contains("graphql")
+                || query_hits[0].documents[0].contains("GraphQL")
+        );
     }
 }
