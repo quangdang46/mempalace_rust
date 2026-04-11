@@ -4,6 +4,9 @@
 //! Read-only mode restricts mutations (diary_write, config_write, people_write).
 
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -14,7 +17,7 @@ use rmcp::model::{
 use rmcp::service::MaybeSendFuture;
 use rmcp::transport::stdio;
 use rmcp::{handler::server::ServerHandler, ErrorData, RoleServer, ServiceExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
 use tokio::runtime::Runtime;
@@ -25,6 +28,97 @@ fn short_hash(input: &str, len: usize) -> String {
     let digest = Sha256::digest(input.as_bytes());
     let hex = hex::encode(digest);
     hex[..len.min(hex.len())].to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WalEntry {
+    timestamp: String,
+    tool: String,
+    args: serde_json::Value,
+    result_summary: Option<serde_json::Value>,
+    trace_id: String,
+}
+
+fn wal_dir_path() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("mempalace").join("wal");
+        }
+    }
+
+    if let Some(proj) = directories::ProjectDirs::from("com", "mempalace", "mempalace") {
+        if let Some(state_dir) = proj.state_dir() {
+            return state_dir.join("wal");
+        }
+    }
+
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".mempalace")
+        .join("wal")
+}
+
+fn wal_file_path() -> PathBuf {
+    wal_dir_path().join("write_log.jsonl")
+}
+
+fn append_wal_entry(entry: &WalEntry) -> anyhow::Result<()> {
+    let wal_file = wal_file_path();
+    let wal_dir = wal_file
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(wal_dir_path);
+    fs::create_dir_all(&wal_dir)?;
+
+    let existing = fs::read(&wal_file).unwrap_or_default();
+    let temp_path = wal_dir.join(format!("write_log.{}.tmp", entry.trace_id));
+    let mut temp = fs::File::create(&temp_path)?;
+    if !existing.is_empty() {
+        temp.write_all(&existing)?;
+        if !existing.ends_with(b"\n") {
+            temp.write_all(b"\n")?;
+        }
+    }
+    serde_json::to_writer(&mut temp, entry)?;
+    temp.write_all(b"\n")?;
+    temp.flush()?;
+    drop(temp);
+    fs::rename(temp_path, wal_file)?;
+    Ok(())
+}
+
+fn summarize_tool_result(result: &Result<CallToolResult, ErrorData>) -> serde_json::Value {
+    match result {
+        Ok(value) => serde_json::json!({
+            "status": "ok",
+            "content_items": value.content.len(),
+            "is_error": value.is_error,
+        }),
+        Err(err) => serde_json::json!({
+            "status": "error",
+            "message": err.message,
+        }),
+    }
+}
+
+fn log_tool_invocation(
+    tool: &str,
+    args: &JsonObject,
+    result_summary: Option<serde_json::Value>,
+    trace_id: &str,
+) {
+    let entry = WalEntry {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        tool: tool.to_string(),
+        args: serde_json::Value::Object(args.clone()),
+        result_summary,
+        trace_id: trace_id.to_string(),
+    };
+
+    if let Err(err) = append_wal_entry(&entry) {
+        warn!("Failed to append MCP WAL entry: {}", err);
+    }
 }
 
 const PALACE_PROTOCOL: &str = r#"IMPORTANT — MemPalace Memory Protocol:
@@ -96,6 +190,34 @@ impl AppState {
 
 type DynResult =
     Pin<Box<dyn std::future::Future<Output = Result<CallToolResult, ErrorData>> + Send + 'static>>;
+
+async fn invoke_with_wal<F>(
+    tool_name: String,
+    args: JsonObject,
+    dispatch: F,
+) -> Result<CallToolResult, ErrorData>
+where
+    F: FnOnce(String, JsonObject) -> DynResult,
+{
+    let trace_id = short_hash(
+        &format!(
+            "{}:{}:{}",
+            tool_name,
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+            serde_json::Value::Object(args.clone())
+        ),
+        16,
+    );
+    log_tool_invocation(&tool_name, &args, None, &trace_id);
+    let result = dispatch(tool_name.clone(), args.clone()).await;
+    log_tool_invocation(
+        &tool_name,
+        &args,
+        Some(summarize_tool_result(&result)),
+        &trace_id,
+    );
+    result
+}
 
 fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResult {
     move |name, args| {
@@ -298,9 +420,10 @@ impl ServerHandler for MempalaceServer {
     {
         let dispatch = make_dispatch(self.state.clone());
         async move {
-            dispatch(
+            invoke_with_wal(
                 request.name.to_string(),
                 request.arguments.unwrap_or_default(),
+                dispatch,
             )
             .await
         }
@@ -940,6 +1063,16 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    fn read_wal_entries() -> Vec<WalEntry> {
+        let wal_file = wal_file_path();
+        let content = std::fs::read_to_string(wal_file).expect("wal file should exist");
+        content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<WalEntry>(line).expect("wal line should parse"))
+            .collect()
+    }
+
     fn test_state() -> AppState {
         let temp_dir = tempfile::tempdir().unwrap();
         let config = crate::Config {
@@ -969,11 +1102,11 @@ mod tests {
         let args = args.as_object().cloned().unwrap_or_default();
         // Use try_current to detect if we're in a runtime
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(f(name.to_string(), args)),
+            Ok(handle) => handle.block_on(invoke_with_wal(name.to_string(), args, f)),
             Err(_) => {
                 // No runtime: create one just for this call
                 let rt = Runtime::new().unwrap();
-                rt.block_on(f(name.to_string(), args))
+                rt.block_on(invoke_with_wal(name.to_string(), args, f))
             }
         }
     }
@@ -1189,6 +1322,48 @@ mod tests {
         let state = test_state();
         let result = dispatch(&state, "nonexistent_tool", json!({}));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_wal_file_path_prefers_xdg_state_home() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        std::env::set_var("XDG_STATE_HOME", temp.path());
+        let path = wal_file_path();
+        assert_eq!(
+            path,
+            temp.path()
+                .join("mempalace")
+                .join("wal")
+                .join("write_log.jsonl")
+        );
+        std::env::remove_var("XDG_STATE_HOME");
+    }
+
+    #[test]
+    fn test_dispatch_writes_wal_entries() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        std::env::set_var("XDG_STATE_HOME", temp.path());
+        let state = test_state();
+
+        let result = dispatch(&state, "mempalace_status", json!({}));
+        assert!(result.is_ok());
+
+        let entries = read_wal_entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].tool, "mempalace_status");
+        assert_eq!(entries[1].tool, "mempalace_status");
+        assert_eq!(entries[0].trace_id, entries[1].trace_id);
+        assert!(entries[0].result_summary.is_none());
+        assert_eq!(
+            entries[1]
+                .result_summary
+                .as_ref()
+                .and_then(|v| v.get("status"))
+                .and_then(|v| v.as_str()),
+            Some("ok")
+        );
+
+        std::env::remove_var("XDG_STATE_HOME");
     }
 
     #[test]
