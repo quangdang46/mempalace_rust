@@ -11,8 +11,6 @@ const MIN_CHUNK_SIZE: usize = 30;
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 const SKIP_DIRS: &[&str] = &[
     ".git",
-    ".hg",
-    ".svn",
     "node_modules",
     "__pycache__",
     ".pytest_cache",
@@ -20,9 +18,21 @@ const SKIP_DIRS: &[&str] = &[
     ".ruff_cache",
     ".venv",
     "venv",
+    "env",
     "target",
     "dist",
     "build",
+    ".next",
+    "coverage",
+    ".mempalace",
+    ".cache",
+    ".tox",
+    ".nox",
+    ".idea",
+    ".vscode",
+    ".ipynb_checkpoints",
+    ".eggs",
+    "htmlcov",
 ];
 
 const TOPIC_KEYWORDS: &[(&str, &[&str])] = &[
@@ -100,6 +110,8 @@ pub struct ConvoMiningResult {
     pub files_processed: usize,
     pub conversations_mined: usize,
     pub chunks_created: usize,
+    pub files_skipped: usize,
+    pub room_counts: Vec<(String, usize)>,
     pub errors: Vec<String>,
 }
 
@@ -138,9 +150,26 @@ pub async fn mine_conversations(
     let mut files_processed = 0;
     let mut conversations_mined = 0;
     let mut chunks_created = 0;
+    let mut files_skipped = 0;
+    let mut room_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut errors = Vec::new();
 
-    for filepath in files {
+    println!();
+    println!("{}", "=".repeat(55));
+    println!("  MemPalace Mine — Conversations");
+    println!("{}", "=".repeat(55));
+    println!("  Wing:    {}", wing);
+    println!("  Source:  {}", convo_path.display());
+    println!("  Files:   {}", files.len());
+    println!("  Palace:  {}", palace_path.display());
+    if dry_run {
+        println!("  DRY RUN — nothing will be filed");
+    }
+    println!("{}", "-".repeat(55));
+    println!();
+
+    for (index, filepath) in files.iter().enumerate() {
         let source_file = filepath.to_string_lossy().to_string();
         if !dry_run
             && db
@@ -148,10 +177,11 @@ pub async fn mine_conversations(
                 .map(|db| db.file_already_mined(&source_file, false))
                 .unwrap_or(false)
         {
+            files_skipped += 1;
             continue;
         }
 
-        let raw = match std::fs::read_to_string(&filepath) {
+        let raw = match std::fs::read_to_string(filepath) {
             Ok(content) => content,
             Err(error) => {
                 errors.push(format!("Error reading {:?}: {}", filepath, error));
@@ -159,7 +189,7 @@ pub async fn mine_conversations(
             }
         };
 
-        let normalized = match normalize(&filepath, &raw) {
+        let normalized = match normalize(filepath, &raw) {
             Ok(content) => content,
             Err(error) => {
                 errors.push(format!("Error normalizing {:?}: {}", filepath, error));
@@ -188,13 +218,58 @@ pub async fn mine_conversations(
         };
 
         if dry_run {
+            if extract_mode == "general" {
+                let mut counts: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for chunk in &chunks {
+                    let key = chunk
+                        .memory_type
+                        .clone()
+                        .unwrap_or_else(|| "general".to_string());
+                    *counts.entry(key.clone()).or_insert(0) += 1;
+                    *room_counts.entry(key).or_insert(0) += 1;
+                }
+                let mut sorted_counts: Vec<(String, usize)> = counts.into_iter().collect();
+                sorted_counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+                let types_str = sorted_counts
+                    .into_iter()
+                    .map(|(kind, count)| format!("{}:{}", kind, count))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "    [DRY RUN] {} → {} memories ({})",
+                    filepath
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default(),
+                    chunks.len(),
+                    types_str
+                );
+            } else if let Some(room_name) = room.as_ref() {
+                *room_counts.entry(room_name.clone()).or_insert(0) += 1;
+                println!(
+                    "    [DRY RUN] {} → room:{} ({} drawers)",
+                    filepath
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default(),
+                    room_name,
+                    chunks.len()
+                );
+            }
             files_processed += 1;
             conversations_mined += 1;
             chunks_created += chunks.len();
             continue;
         }
 
-        let source_mtime = std::fs::metadata(&filepath)
+        if extract_mode != "general" {
+            if let Some(room_name) = room.as_ref() {
+                *room_counts.entry(room_name.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let source_mtime = std::fs::metadata(filepath)
             .ok()
             .and_then(|meta| meta.modified().ok())
             .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
@@ -253,19 +328,64 @@ pub async fn mine_conversations(
         db.as_mut()
             .unwrap()
             .add(&ids_and_docs_ref, &metadata_refs)?;
+        for chunk_room in &chunk_rooms {
+            if extract_mode == "general" {
+                *room_counts.entry(chunk_room.clone()).or_insert(0) += 1;
+            }
+        }
         files_processed += 1;
         conversations_mined += 1;
         chunks_created += chunks.len();
+        println!(
+            "  ✓ [{:4}/{}] {:50} +{}",
+            index + 1,
+            files.len(),
+            filepath
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| {
+                    if name.len() > 50 {
+                        name[..50].to_string()
+                    } else {
+                        format!("{:<50}", name)
+                    }
+                })
+                .unwrap_or_default(),
+            chunks.len()
+        );
     }
 
     if let Some(db) = db.as_mut() {
         db.flush()?;
     }
 
+    let mut room_counts_vec: Vec<(String, usize)> = room_counts.into_iter().collect();
+    room_counts_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    println!();
+    println!("{}", "=".repeat(55));
+    println!("  Done.");
+    println!("  Files processed: {}", files_processed);
+    println!("  Files skipped (already filed): {}", files_skipped);
+    println!("  Drawers filed: {}", chunks_created);
+    if !room_counts_vec.is_empty() {
+        println!();
+        println!("  By room:");
+        for (room, count) in &room_counts_vec {
+            println!("    {:20} {} files", room, count);
+        }
+    }
+    println!();
+    println!("  Next: mempalace search \"what you're looking for\"");
+    println!("{}", "=".repeat(55));
+    println!();
+
     Ok(ConvoMiningResult {
         files_processed,
         conversations_mined,
         chunks_created,
+        files_skipped,
+        room_counts: room_counts_vec,
         errors,
     })
 }
@@ -344,7 +464,6 @@ fn scan_convos(convo_dir: &Path) -> Vec<PathBuf> {
         }
         files.push(path.to_path_buf());
     }
-    files.sort();
     files
 }
 
@@ -550,6 +669,25 @@ mod tests {
         assert!(names.contains(&"notes.md".to_string()));
         assert!(!names.contains(&"chat.meta.json".to_string()));
         assert!(!names.contains(&"config.txt".to_string()));
+    }
+
+    #[test]
+    fn test_scan_convos_skips_python_parity_dirs() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join(".mempalace")).unwrap();
+        std::fs::create_dir_all(temp.path().join("coverage")).unwrap();
+        std::fs::create_dir_all(temp.path().join(".idea")).unwrap();
+        std::fs::write(temp.path().join(".mempalace/chat.txt"), "hello").unwrap();
+        std::fs::write(temp.path().join("coverage/chat.txt"), "hello").unwrap();
+        std::fs::write(temp.path().join(".idea/chat.txt"), "hello").unwrap();
+        std::fs::write(temp.path().join("root.txt"), "hello").unwrap();
+
+        let files = scan_convos(temp.path());
+        let names: Vec<String> = files
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["root.txt".to_string()]);
     }
 
     #[tokio::test]

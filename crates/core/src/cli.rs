@@ -1467,8 +1467,15 @@ fn print_convo_result(result: &ConvoMiningResult) {
     println!();
     println!("  Convo mining complete!");
     println!("    Files processed: {}", result.files_processed);
+    println!("    Files skipped: {}", result.files_skipped);
     println!("    Conversations mined: {}", result.conversations_mined);
     println!("    Chunks created: {}", result.chunks_created);
+    if !result.room_counts.is_empty() {
+        println!("    By room:");
+        for (room, count) in &result.room_counts {
+            println!("      {}: {}", room, count);
+        }
+    }
     if !result.errors.is_empty() {
         println!("    Errors ({}):", result.errors.len());
         for e in &result.errors {
