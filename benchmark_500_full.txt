@@ -1,0 +1,71 @@
+Loading dataset from "/home/quangdang/.cache/mempalace/longmemeval_s_cleaned.json" ...
+Loaded 500 benchmark entries
+Metrics at K: [5, 10]
+Granularity: Session
+Running benchmark ...
+
+
+Total questions: 500
+Skipped (empty corpus): 0
+
+  recall_any@5: 0.9660
+  recall_all@5: 0.8500
+  ndcg@5: 0.8877
+  recall_all@10: 0.9320
+  recall_any@10: 0.9820
+  ndcg@10: 0.8888
+
+Avg query time: 6061.16ms
+
+Total time: 3030.84s
+Questions/sec: 0.2
+
+--- Per-type breakdown ---
+
+[qtype: knowledge-update]
+  recall_all@10: 1.0000
+  recall_any@10: 1.0000
+  ndcg@5: 0.9455
+  ndcg@10: 0.9440
+  recall_all@5: 0.9615
+  recall_any@5: 1.0000
+
+[qtype: single-session-assistant]
+  recall_all@10: 0.9643
+  ndcg@10: 0.9533
+  ndcg@5: 0.9533
+  recall_any@5: 0.9643
+  recall_all@5: 0.9643
+  recall_any@10: 0.9643
+
+[qtype: single-session-user]
+  ndcg@5: 0.8281
+  recall_any@10: 0.9714
+  recall_all@10: 0.9714
+  recall_all@5: 0.9143
+  recall_any@5: 0.9143
+  ndcg@10: 0.8472
+
+[qtype: temporal-reasoning]
+  recall_any@10: 0.9699
+  recall_all@10: 0.9098
+  ndcg@10: 0.8386
+  recall_any@5: 0.9474
+  recall_all@5: 0.7669
+  ndcg@5: 0.8386
+
+[qtype: single-session-preference]
+  recall_all@5: 0.9667
+  recall_any@10: 0.9667
+  ndcg@5: 0.8328
+  recall_all@10: 0.9667
+  ndcg@10: 0.8328
+  recall_any@5: 0.9667
+
+[qtype: multi-session]
+  recall_all@5: 0.7594
+  recall_any@5: 0.9925
+  recall_any@10: 1.0000
+  recall_all@10: 0.8722
+  ndcg@10: 0.9139
+  ndcg@5: 0.9191

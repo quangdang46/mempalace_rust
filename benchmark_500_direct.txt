@@ -1,0 +1,6 @@
+Loading dataset from "/home/quangdang/.cache/mempalace/longmemeval_s_cleaned.json" ...
+Loaded 500 benchmark entries
+Metrics at K: [5, 10]
+Granularity: Session
+Running benchmark ...
+

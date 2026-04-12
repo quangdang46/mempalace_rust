@@ -354,7 +354,8 @@ impl EmbeddingDb {
             // Normalize ONNX embeddings before storing (ONNX model returns unnormalized)
             let normalized = normalize_embedding(&embeddings[i]);
             self.storage.add(&normalized, None)?;
-            self.hnsw.insert(start_idx + i, &normalized, &self.storage, None)?;
+            self.hnsw
+                .insert(start_idx + i, &normalized, &self.storage, None)?;
         }
         Ok(())
     }
@@ -362,9 +363,9 @@ impl EmbeddingDb {
     pub fn query(&self, query_text: &str, n_results: usize) -> anyhow::Result<Vec<(f32, usize)>> {
         let query_embedding = self.embed(query_text)?;
         let normalized_query = normalize_embedding(&query_embedding);
-            let results = self
-                .hnsw
-                .search(&normalized_query, n_results, 1024, &self.storage, None)?;
+        let results = self
+            .hnsw
+            .search(&normalized_query, n_results, 1024, &self.storage, None)?;
         Ok(results.into_iter().map(|(id, dist)| (dist, id)).collect())
     }
 
