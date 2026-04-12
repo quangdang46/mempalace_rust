@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::onnx_embed::OnnxModel;
 
 pub const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
 pub const DEFAULT_COMPRESSED_COLLECTION_NAME: &str = "mempalace_compressed";
@@ -22,6 +25,14 @@ pub struct QueryResult {
     pub documents: Vec<String>,
     pub distances: Vec<f64>,
     pub metadatas: Vec<HashMap<String, serde_json::Value>>,
+}
+
+pub struct EmbeddingDb {
+    embedder: Arc<OnnxModel>,
+    hnsw: embedvec::HnswIndex,
+    #[allow(dead_code)]
+    documents: Vec<(String, String)>,
+    storage: embedvec::VectorStorage,
 }
 
 impl PalaceDb {
@@ -303,6 +314,72 @@ impl PalaceDb {
 
         query_results
     }
+}
+
+impl EmbeddingDb {
+    pub fn new(dimension: usize) -> anyhow::Result<Self> {
+        let embedder = OnnxModel::load()?;
+        Self::with_embedder(Arc::new(embedder), dimension)
+    }
+
+    pub fn with_embedder(embedder: Arc<OnnxModel>, dimension: usize) -> anyhow::Result<Self> {
+        let hnsw = embedvec::HnswIndex::new(16, 200, embedvec::Distance::Cosine);
+        let storage = embedvec::VectorStorage::new(dimension, embedvec::Quantization::None);
+        Ok(Self {
+            embedder,
+            hnsw,
+            documents: Vec::new(),
+            storage,
+        })
+    }
+
+    pub fn add(&mut self, id: &str, text: &str) -> anyhow::Result<usize> {
+        let embedding = self.embed(text)?;
+        let idx = self.documents.len();
+        self.documents.push((id.to_string(), text.to_string()));
+        self.storage.add(&embedding, None)?;
+        self.hnsw.insert(idx, &embedding, &self.storage, None)?;
+        Ok(idx)
+    }
+
+    pub fn add_batch(&mut self, items: &[(String, String)]) -> anyhow::Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
+        let embeddings = self.embedder.encode_batch(&texts, true)?;
+        let start_idx = self.documents.len();
+        for (i, (id, text)) in items.iter().enumerate() {
+            self.documents.push((id.clone(), text.clone()));
+            // Normalize ONNX embeddings before storing (ONNX model returns unnormalized)
+            let normalized = normalize_embedding(&embeddings[i]);
+            self.storage.add(&normalized, None)?;
+            self.hnsw.insert(start_idx + i, &normalized, &self.storage, None)?;
+        }
+        Ok(())
+    }
+
+    pub fn query(&self, query_text: &str, n_results: usize) -> anyhow::Result<Vec<(f32, usize)>> {
+        let query_embedding = self.embed(query_text)?;
+        let normalized_query = normalize_embedding(&query_embedding);
+            let results = self
+                .hnsw
+                .search(&normalized_query, n_results, 1024, &self.storage, None)?;
+        Ok(results.into_iter().map(|(id, dist)| (dist, id)).collect())
+    }
+
+    pub fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        let embedding = self.embedder.encode(text)?;
+        Ok(embedding)
+    }
+}
+
+fn normalize_embedding(embedding: &[f32]) -> Vec<f32> {
+    let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm == 0.0 {
+        return embedding.to_vec();
+    }
+    embedding.iter().map(|x| x / norm).collect()
 }
 
 fn naive_similarity(query: &str, content: &str) -> f64 {

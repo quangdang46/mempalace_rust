@@ -14,6 +14,7 @@ pub mod layers;
 pub mod mcp_server;
 pub mod miner;
 pub mod normalize;
+pub mod onnx_embed;
 pub mod onboarding;
 pub mod palace_db;
 pub mod palace_graph;

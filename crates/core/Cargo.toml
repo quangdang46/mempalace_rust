@@ -31,6 +31,8 @@ charset = { workspace = true }
 reqwest = { workspace = true }
 urlencoding = { workspace = true }
 rmcp = { version = "1.3", features = ["transport-io"] }
+embedvec = "0.5"
+edgebert = "0.4"
 
 [dev-dependencies]
 tempfile = { workspace = true }
