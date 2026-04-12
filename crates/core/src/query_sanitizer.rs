@@ -150,12 +150,9 @@ mod tests {
 
     #[test]
     fn test_tail_truncation_fallback() {
-        let raw = format!(
-            "{}",
-            (0..(MAX_QUERY_LENGTH + 50))
-                .map(|_| " ")
-                .collect::<String>()
-        );
+        let raw = (0..(MAX_QUERY_LENGTH + 50))
+            .map(|_| " ")
+            .collect::<String>();
         let result = sanitize_query(&raw);
         assert_eq!(result.clean_query, raw);
         assert_eq!(result.method, "passthrough");
