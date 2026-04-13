@@ -1115,16 +1115,6 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    fn read_wal_entries() -> Vec<WalEntry> {
-        let wal_file = wal_file_path();
-        let content = std::fs::read_to_string(wal_file).expect("wal file should exist");
-        content
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str::<WalEntry>(line).expect("wal line should parse"))
-            .collect()
-    }
-
     fn test_state() -> AppState {
         let temp_dir = tempfile::tempdir().unwrap();
         let config = crate::Config {
