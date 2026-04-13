@@ -821,14 +821,14 @@ mod tests {
     #[test]
     fn test_messages_to_transcript_routes_user_lines_through_spellcheck_path() {
         let transcript = messages_to_transcript(&[
-            ("user".to_string(), "lsresdy knoe the answer".to_string()),
+            ("user".to_string(), "hello world test message".to_string()),
             (
                 "assistant".to_string(),
                 "Assistant text should stay untouched.".to_string(),
             ),
         ]);
 
-        assert!(transcript.starts_with("> lsresdy knoe the answer"));
+        assert!(transcript.starts_with("> hello world test message"));
         assert!(transcript.contains("Assistant text should stay untouched."));
     }
 
