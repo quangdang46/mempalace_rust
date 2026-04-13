@@ -1501,6 +1501,11 @@ mod tests {
         std::env::set_var("XDG_STATE_HOME", temp.path());
         let state = test_state();
 
+        let wal_path = wal_file_path();
+        if wal_path.exists() {
+            std::fs::remove_file(&wal_path).ok();
+        }
+
         let result = dispatch(&state, "mempalace_status", json!({}));
         assert!(result.is_ok());
 
