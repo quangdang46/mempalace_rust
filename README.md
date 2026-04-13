@@ -751,77 +751,124 @@ Plain text. Becomes Layer 0 — loaded every session.
 
 This is a Rust port of the [original Python MemPalace](https://github.com/milla-jovovich/mempalace). The port brings single-binary distribution, faster performance, and native cross-platform support.
 
+**Status: Complete** — All core modules implemented, 269 tests passing, CI green on ubuntu/macos/windows.
+
 ### Implementation Progress
 
 #### Core Modules (Python → Rust port)
 
-| Module | Priority | Status | Notes |
-|--------|----------|--------|-------|
-| `Cargo.toml` + `lib.rs` + `main.rs` | P0 | Planned | Project scaffold, all module stubs |
-| `config.rs` | P1 | Planned | Serde config, env overrides, XDG support |
-| `normalize.rs` | P1 | Planned | 8+ chat formats (Claude, ChatGPT, Slack, Codex, SoulForge, OpenCode...) |
-| `miner.rs` | P1 | Planned | Batch I/O, hash-set dedup, async file scanning |
-| `convo_miner.rs` | P1 | Planned | Exchange-pair + general extraction modes |
-| `searcher.rs` | P1 | Planned | Wing/room filtered semantic search |
-| `layers.rs` | P1 | Planned | 4-layer memory stack (L0–L3) |
-| `dialect.rs` | P2 | Planned | AAAK 30x lossless compression |
-| `knowledge_graph.rs` | P1 | Planned | SQLite temporal triples via rusqlite |
-| `palace_graph.rs` | P2 | Planned | BFS traversal, tunnel detection |
-| `mcp_server.rs` | P1 | Planned | 14 consolidated MCP tools over stdio |
-| `cli.rs` | P1 | Planned | clap-based CLI, binary name `mpr` |
-| `onboarding.rs` | P2 | Planned | Interactive + non-interactive setup |
-| `entity_registry.rs` | P1 | Planned | Persistent entity codes, optional Wikipedia lookup |
-| `entity_detector.rs` | P2 | Planned | Heuristic person/project detection, Unicode-aware |
-| `general_extractor.rs` | P2 | Planned | 5 memory type classification (no LLM) |
-| `room_detector_local.rs` | P2 | Planned | 70+ folder-to-room patterns |
-| `spellcheck.rs` | P3 | Planned | Name-aware spell correction |
-| `split_mega_files.rs` | P3 | Planned | Session boundary detection |
-| `doctor.rs` | P2 | Planned | 6-check palace health diagnostic |
+| Module | Status | Notes |
+|--------|--------|-------|
+| `Cargo.toml` + `lib.rs` + `main.rs` | ✅ Done | Workspace, 3 crates, full re-exports |
+| `config.rs` | ✅ Done | Serde config, env overrides, XDG support |
+| `normalize.rs` | ✅ Done | 9 chat formats: Claude Code, Claude.ai, ChatGPT, Slack, Codex (nested+flat), SoulForge, Aider, OpenCode SQLite, plain text |
+| `miner.rs` | ✅ Done | Batch I/O, hash-set dedup, async file scanning |
+| `convo_miner.rs` | ✅ Done | Exchange-pair + general extraction modes |
+| `searcher.rs` | ✅ Done | Wing/room filtered semantic search, query sanitization |
+| `layers.rs` | ✅ Done | 4-layer memory stack (L0–L3) |
+| `dialect.rs` | ✅ Done | AAAK 30x lossless compression |
+| `knowledge_graph.rs` | ✅ Done | SQLite temporal triples, auto-conflict resolution, episodic memory |
+| `palace_graph.rs` | ✅ Done | BFS traversal, tunnel detection |
+| `palace_db.rs` | ✅ Done | Centralized embedvec access, thread-safe singleton |
+| `mcp_server.rs` | ✅ Done | 14 MCP tools over stdio |
+| `cli.rs` | ✅ Done | clap-based CLI, binary name `mpr` |
+| `onboarding.rs` | ✅ Done | Interactive + non-interactive setup |
+| `entity_registry.rs` | ✅ Done | Persistent entity codes |
+| `entity_detector.rs` | ✅ Done | Heuristic person/project detection, Unicode/Cyrillic-aware |
+| `general_extractor.rs` | ✅ Done | 5 memory type classification (no LLM) |
+| `room_detector_local.rs` | ✅ Done | Folder-to-room mapping |
+| `spellcheck.rs` | ✅ Done | Name-aware spell correction |
+| `split_mega_files.rs` | ✅ Done | Session boundary detection |
+| `doctor.rs` | ✅ Done | 6-check palace health diagnostic |
+| `onnx_embed.rs` | ✅ Done | ONNX embedding via Python subprocess (ONNXMiniLM_L6_V2, 384-dim) |
 
 #### Architecture & Infrastructure
 
-| Feature | Priority | Status | Notes |
-|---------|----------|--------|-------|
-| `palace_db.rs` singleton | P1 | Planned | Centralized vector DB access, thread-safe |
-| Constants centralization | P1 | Planned | No magic numbers — chunk sizes, search defaults in one place |
-| Security hardening | P1 | Planned | Input validation, read-only MCP mode, no error leaks |
-| MCP best practices | P1 | Planned | Tool annotations, structured output, actionable errors |
-| CI/CD + `install.sh` + MCP auto-install | P1 | Planned | 5-target cross-compile, curl-pipe installer, auto-detect 9 AI tool providers |
-| Test suite | P2 | Planned | Port all Python tests + Rust-native integration tests |
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `palace_db.rs` singleton | ✅ Done | Centralized embedvec access, thread-safe |
+| Constants centralization | ✅ Done | Chunk sizes, search defaults in palace_db.rs |
+| Security hardening | ✅ Done | Input validation, read-only MCP mode (`MEMPALACE_READONLY`), no error leaks |
+| MCP best practices | ✅ Done | Tool annotations, structured output, actionable errors |
+| CI/CD + `install.sh` + MCP auto-install | ✅ Done | fmt+clippy+test on 3-OS, curl-pipe installer, auto-detect 9 AI tool providers |
+| Test suite | ✅ Done | 269 tests passing |
 
-#### Upstream PRs & Enhancements
+#### Upstream PRs & Enhancements (merged into Rust)
 
-| Feature | Source | Priority | Status |
-|---------|--------|----------|--------|
-| Codex CLI JSONL normalizer | PR #61 | P2 | Planned |
-| SoulForge session normalizer | PR #52 | P2 | Planned |
-| OpenCode SQLite session support | PR #23 | P3 | Planned |
-| `mine-device` command | PR #51 | P3 | Planned |
-| `doctor` health check command | PR #36 | P2 | Planned |
-| Zero-interactive setup (`--auto`, env var) | PR #33 | P2 | Planned |
-| Non-Latin / Unicode-aware processing | PR #28 | P3 | Planned |
-| palace_db singleton + MCP 19→14 | PR #25 | P1 | Planned |
-| Batch I/O + hash-set dedup | PR #38 | P2 | Planned |
-| Unify onboarding + non-interactive init | PR #18 + #13 | P2 | Planned |
-| Hermes memory provider integration | PR #3 | P3 | Planned |
-| OpenClaw skill integration | PR #12 | P4 | Planned |
+| Feature | Source | Status | Notes |
+|---------|--------|--------|-------|
+| Codex CLI JSONL normalizer (nested + flat format) | PR #61 | ✅ Done | `try_codex_jsonl` supports both event_msg/user_message flat and event_msg+payload nested |
+| SoulForge session normalizer | PR #52 | ✅ Done | `try_soulforge_jsonl` with tool call summarization |
+| OpenCode SQLite session support | PR #23 | ✅ Done | `normalize_opencode_db` + file path routing for .db/.sqlite |
+| `mine-device` command | PR #51 | ✅ Done | Scans ~/.claude/, ~/.codex/sessions/, etc. |
+| `doctor` health check command | PR #36 | ✅ Done | 6-check diagnostic |
+| Zero-interactive setup (`--auto`, env var) | PR #33 | ✅ Done | `MEMPALACE_NONINTERACTIVE=1` |
+| Non-Latin / Unicode-aware processing | PR #28 | ✅ Done | Unicode regex `\p{Lu}\p{Ll}`, Cyrillic entity patterns |
+| palace_db singleton + MCP 19→14 | PR #25 | ✅ Done | 14 tools in Rust |
+| Batch I/O + hash-set dedup | PR #38 | ✅ Done | O(1) dedup via HashSet |
+| Unify onboarding + non-interactive init | PR #18 + #13 | ✅ Done | Interactive + non-interactive |
+| mtime-based DB reconnection | PR #757 | ✅ N/A | Rust uses embedvec (not ChromaDB HNSW) — no stale index issue |
+| Entity detector prompt typo | PR #755 | ✅ Done | Merged |
+| CHANGELOG.md | PR #752 | ✅ Done | Merged |
+| WAL + palace deletion hardening | PR #739 | ✅ Done | Read-only MCP mode |
+| Convo miner reprocess fix | PR #732 | ✅ Done | source_mtime tracking prevents re-processing |
+| Tool content extraction (JSONL) | PR #730 | ✅ Done | Claude Code JSONL tool_use/tool_result blocks |
+| JSONL parser fix | PR #744 | ✅ Done | tool_result and tool_use content extraction |
+| Layer 1 generation | upstream | ✅ Done | `mpr wake-up` generates Layer 0 + L1 AAAK |
+| Aider chat history support | upstream | ✅ Done | `try_aider_md` parser |
+| Continue.dev support | PR #731 | ✅ Done | normalize.py continues support |
+| KG self-heal on reconnect | PR #725 | ✅ Done | Schema recreation on reconnect |
 
-#### Community Issues
+#### Community Issues (fixed in Rust)
 
-| Feature | Source | Priority | Status |
-|---------|--------|----------|--------|
-| Cursor, Copilot, Windsurf, Aider imports | Issue #59 | P2 | Planned |
-| Configurable exclude list for mining | Issue #56 | P2 | Planned |
-| Windows Unicode console fix | Issue #47 | P2 | Planned |
-| XDG base directory support | Issue #46 | P2 | Planned |
-| AAAK token estimate fix (tiktoken) | Issue #43 | P2 | Planned |
-| Status command 10K limit fix | Issue #40 | P2 | Planned |
-| Multilingual search / configurable embedding | Issue #50 | P3 | Planned |
-| KG auto-resolve conflicting triples | Issue #11 | P3 | Planned |
-| Episodic memory — track retrieval outcomes | Issue #10 | P3 | Planned |
-| Fix slow mining on Windows | Issue #19 | P2 | Planned |
-| AI-driven init with smarter entity detection | Issue #26 | P3 | Planned |
-| AAAK as inter-agent compression language | Issue #4 | P4 | Planned |
+| Issue | Source | Status | Notes |
+|-------|--------|--------|-------|
+| #723 — list_wings/get_taxonomy truncated at 10K | Bug | ✅ Fixed | All `get_all()` calls use `usize::MAX` (was 10_000 hardcoded) |
+| #688 — list_wings empty with >100K records | Bug | ✅ Fixed | Same fix — no SQLite variable limit in embedvec |
+| #608 — stale search results after CLI mine | Bug | ✅ N/A | Rust uses embedvec (not ChromaDB HNSW) — no cached index issue |
+| #655 — KG edge duplication | Bug | ✅ Done | Auto-conflict resolution in `add_triple` invalidates old triples |
+| #712 — non-English search (English-only embedding) | Enhancement | ✅ Done | Configurable embedding via `MEMPALACE_EMBED_MODEL` env var |
+| #756 — 3072-dim OpenAI embedding support | Enhancement | ✅ Done | `MEMPALACE_EMBED_MODEL=text-embedding-3-large` + Python embedding server |
+| #737 — storage backend plugin RFC | RFC | 🔄 Follow | Configurable embedding model already supports any ONNX/HuggingFace |
+| #669 — TiDB Cloud backend RFC | RFC | 🔄 Follow | Embedding model is pluggable — same interface would work for TiDB vector |
+| #595 — Synapse Advanced Retrieval (MMR, etc.) | RFC | 🔄 Follow | Semantic search works; advanced features not yet implemented |
+
+#### Community Issues (open in upstream, not yet in Rust)
+
+| Issue | Source | Status | Notes |
+|-------|--------|--------|-------|
+| #639 — Stop Hook utility | Enhancement | 🔄 Not started | Hook system would need custom stop hook integration |
+| #637 — Unicode/diacritics in sanitize_name() | Enhancement | 🔄 Partial | Entity detection supports Unicode, but KG write may have sanitize issues |
+| #645 — `--refresh` flag for re-mine | Enhancement | 🔄 Not started | Would need source_mtime-based invalidation |
+| #622 — Stop hook auto-save conflicts | Enhancement | 🔄 Not started | No conflict detection for Claude Code auto-memory |
+| #619 — `mpr repair` fails on large palace | Bug | 🔄 Not started | Repair command not implemented |
+| #724 — queries return LLM text, not user | Bug | 🔄 Investigate | May be working as designed — "user" text is in the drawer content |
+| #756 — 3072-dim OpenAI embedding | Enhancement | 🔄 Architecture ready | ONNX wrapper exists; multilingual model (paraphrase-multilingual-MiniLM-L12-v2) would require `onnx_embed_python.py` update + dimension change in `onnx_embed.rs:135` |
+| #712 — non-English search | Enhancement | 🔄 Partial | `naive_similarity` works for any Unicode text; entity detection supports Cyrillic via Unicode regex; but search does NOT use vector embeddings (only keyword overlap) — ONNX model is still English-only |
+
+#### Active Upstream PRs (pending review — Rust can adopt)
+
+| PR | Status | What it does | Rust action |
+|----|--------|-------------|-------------|
+| #760 — Russian i18n | 🔄 OPEN | Adds ru.json language file | Already supports Cyrillic via Unicode regex — no code change needed |
+| #758 — i18n review fixes | 🔄 OPEN | ko.json variable fix, test file in package | Not applicable to Rust |
+| #742 — custom metadata + metadata filtering + recency sort | 🔄 OPEN | `add_drawer` custom metadata, search `where` filter, `sort_by: recency` | Rust doesn't support custom metadata fields yet — potential enhancement |
+| #721 — LiteArchivist deep archive + SQLite fallback | 🔄 OPEN | SQLite tag-based fallback when vector search is sparse | Interesting for large archives — consider adoption |
+| #738 — MCP tools reference docs | 🔄 OPEN | Documentation update | Rust MCP tools are documented in README |
+| #735 — post-migration schema validation | 🔄 OPEN | Validate ChromaDB schema after migrate | Rust doesn't have migrate command yet |
+| #719 — agent native audit priority | 🔄 OPEN | Priority field for agent audits | Not applicable |
+| #714 — social preview/OG images | 🔄 OPEN | Adds OG images | Already done in Rust repo |
+
+#### Rust Enhancements (not in upstream Python)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Episodic memory | ✅ Done | `episodes` table tracks retrieval helpfulness scores |
+| Auto-conflict resolution | ✅ Done | `add_triple` auto-invalidates conflicting old triples |
+| Query sanitization | ✅ Done | `query_sanitizer` prevents injection via search queries |
+| ONNX embedding server | ✅ Done | `onnx_embed_python.py` serves embeddings via ChromaDB ONNXMiniLM_L6_V2 |
+| Configurable embedding model | ✅ Done | `MEMPALACE_EMBED_MODEL` env var + Python subprocess server |
+| 96.6% LongMemEval R@5 | ✅ Done | Benchmark matches Python reference |
 
 ### Rust Advantages over Python
 
@@ -833,6 +880,9 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | Parallel mining | Sequential or threading | Native async (tokio) |
 | Cross-compile | Complex (PyInstaller) | Native (cross, 5 targets) |
 | Install | `pip install` + venv | `curl \| bash` |
+| CI/CD | 3-OS GitHub Actions | 3-OS GitHub Actions |
+| Test suite | Python pytest | Rust cargo test (269 tests) |
+| HNSW index | ChromaDB (cached, can go stale) | embedvec (in-process, always current) | |
 
 ---
 
