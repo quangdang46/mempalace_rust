@@ -61,6 +61,11 @@ pub fn normalize(file_path: &std::path::Path, content: &str) -> anyhow::Result<S
     }
 
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("db") || ext.eq_ignore_ascii_case("sqlite") {
+        if let Some(normalized) = normalize_opencode_db(file_path) {
+            return Ok(normalized);
+        }
+    }
     if ext.eq_ignore_ascii_case("json")
         || ext.eq_ignore_ascii_case("jsonl")
         || content.trim().starts_with('{')
@@ -123,7 +128,7 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
         }
 
         match msg_type {
-            "human" => messages.push(("user".to_string(), text)),
+            s if s == "human" || s == "user" => messages.push(("user".to_string(), text)),
             "assistant" => messages.push(("assistant".to_string(), text)),
             _ => continue,
         }
@@ -315,29 +320,52 @@ fn try_codex_jsonl(content: &str) -> Option<String> {
             continue;
         };
         let entry = entry.as_object()?;
-        let msg_type = entry.get("type")?.as_str()?;
 
-        // Only extract event_msg entries, skip response_item
-        if msg_type != "event_msg/user_message" && msg_type != "event_msg/agent_message" {
+        // Try flat format first: {"type": "event_msg/user_message", "text": "..."}
+        let msg_type = entry.get("type").and_then(|v| v.as_str());
+
+        let (text, role) = if let Some(t) = msg_type {
+            if t == "event_msg/user_message" || t == "event_msg/agent_message" {
+                let text = entry
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if text.is_empty() {
+                    continue;
+                }
+                let role = if t == "event_msg/user_message" {
+                    "user"
+                } else {
+                    "assistant"
+                };
+                (text.to_string(), role)
+            } else if t == "event_msg" {
+                // Try nested format: {"type": "event_msg", "payload": {"type": "user_message", "message": "..."}}
+                let payload = entry.get("payload")?.as_object()?;
+                let nested_type = payload.get("type")?.as_str()?;
+                if nested_type != "user_message" && nested_type != "agent_message" {
+                    continue;
+                }
+                let msg_content = payload.get("message")?;
+                let text = extract_content_to_string(msg_content);
+                if text.is_empty() {
+                    continue;
+                }
+                let role = if nested_type == "user_message" {
+                    "user"
+                } else {
+                    "assistant"
+                };
+                (text, role)
+            } else {
+                continue;
+            }
+        } else {
             continue;
-        }
+        };
 
-        let text = entry
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-
-        if text.is_empty() {
-            continue;
-        }
-
-        match msg_type {
-            "event_msg/user_message" => messages.push(("user".to_string(), text)),
-            "event_msg/agent_message" => messages.push(("assistant".to_string(), text)),
-            _ => continue,
-        }
+        messages.push((role.to_string(), text));
     }
 
     if messages.len() >= 2 {

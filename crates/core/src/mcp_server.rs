@@ -510,7 +510,7 @@ fn tool_status(state: &AppState, _args: JsonObject) -> Result<CallToolResult, Er
     if collection_missing(state) {
         return ok_json(no_palace());
     }
-    let entries = state.db.get_all(None, None, 10_000);
+    let entries = state.db.get_all(None, None, usize::MAX);
     let mut wings: HashMap<String, usize> = HashMap::new();
     let mut rooms: HashMap<String, usize> = HashMap::new();
     for entry in &entries {
@@ -541,7 +541,7 @@ fn tool_list_wings(state: &AppState, _args: JsonObject) -> Result<CallToolResult
     if collection_missing(state) {
         return ok_json(no_palace());
     }
-    let entries = state.db.get_all(None, None, 10_000);
+    let entries = state.db.get_all(None, None, usize::MAX);
     let mut wings: HashMap<String, usize> = HashMap::new();
     for entry in &entries {
         if let Some(meta) = entry.metadatas.first() {
@@ -565,7 +565,7 @@ fn tool_list_rooms(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         wing: Option<String>,
     }
     let input: Input = parse_args(args)?;
-    let entries = state.db.get_all(input.wing.as_deref(), None, 10_000);
+    let entries = state.db.get_all(input.wing.as_deref(), None, usize::MAX);
     let mut room_counts: HashMap<String, usize> = HashMap::new();
     for entry in &entries {
         if let Some(meta) = entry.metadatas.first() {
@@ -583,7 +583,7 @@ fn tool_get_taxonomy(state: &AppState, _args: JsonObject) -> Result<CallToolResu
     if collection_missing(state) {
         return ok_json(no_palace());
     }
-    let entries = state.db.get_all(None, None, 10_000);
+    let entries = state.db.get_all(None, None, usize::MAX);
     let mut taxonomy: HashMap<String, HashMap<String, usize>> = HashMap::new();
     for entry in &entries {
         if let Some(meta) = entry.metadatas.first() {
@@ -897,7 +897,7 @@ fn tool_kg_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, 
 fn build_graph_from_db(state: &AppState) -> crate::palace_graph::PalaceGraph {
     use crate::palace_graph::{HallType, PalaceGraph, Room, Wing, WingType};
     let mut by_wing: HashMap<String, Vec<Room>> = HashMap::new();
-    for entry in state.db.get_all(None, None, 10_000) {
+    for entry in state.db.get_all(None, None, usize::MAX) {
         if let Some(meta) = entry.metadatas.first() {
             let wing = meta
                 .get("wing")
@@ -1001,7 +1001,7 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     }
     let input: Input = parse_args_with_integer_coercion(args, &["last_n"])?;
     let wing = format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_"));
-    let entries = state.db.get_all(Some(&wing), Some("diary"), 10_000);
+    let entries = state.db.get_all(Some(&wing), Some("diary"), usize::MAX);
     let mut items: Vec<serde_json::Value> = entries
         .iter()
         .map(|e| {
