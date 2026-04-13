@@ -1511,7 +1511,11 @@ mod tests {
         assert!(result.is_ok());
 
         let entries = read_wal_entries();
-        assert!(entries.len() >= 2, "expected at least 2 entries, got {}", entries.len());
+        assert!(
+            entries.len() >= 2,
+            "expected at least 2 entries, got {}",
+            entries.len()
+        );
         assert_eq!(entries[0].tool, "mempalace_status");
         assert_eq!(entries[1].tool, "mempalace_status");
         assert_eq!(entries[0].trace_id, entries[1].trace_id);
@@ -1670,14 +1674,17 @@ mod tests {
     fn test_protocol_and_aaak_spec_match_python_reference() {
         let reference_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../references/mempalace/mempalace/mcp_server.py");
-        
+
         if !reference_path.exists() {
-            eprintln!("Python reference not available on this platform: {}", reference_path.display());
+            eprintln!(
+                "Python reference not available on this platform: {}",
+                reference_path.display()
+            );
             return;
         }
-        
-        let python_source = std::fs::read_to_string(&reference_path)
-            .expect("python reference should be readable");
+
+        let python_source =
+            std::fs::read_to_string(&reference_path).expect("python reference should be readable");
 
         assert!(python_source.contains(&format!(
             "PALACE_PROTOCOL = \"\"\"{}\"\"\"",
