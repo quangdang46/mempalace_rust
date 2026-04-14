@@ -732,12 +732,7 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     }
     let input: Input = parse_args(args)?;
     let hash = short_hash(
-        &format!(
-            "{}{}{}",
-            input.wing,
-            input.room,
-            &input.content.chars().take(100).collect::<String>()
-        ),
+        &format!("{}{}{}", input.wing, input.room, input.content),
         24,
     );
     let drawer_id = format!("drawer_{}_{}_{}", input.wing, input.room, hash);
@@ -1051,7 +1046,7 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
         "diary_{}_{}_{}",
         wing,
         now.format("%Y%m%d_%H%M%S"),
-        &short_hash(&input.entry.chars().take(50).collect::<String>(), 12)
+        &short_hash(&input.entry, 12)
     );
     let mut db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
@@ -1572,6 +1567,88 @@ mod tests {
             delete_result.is_ok(),
             "delete_drawer failed: {:?}",
             delete_result
+        );
+    }
+
+    #[test]
+    fn test_add_drawer_hash_uses_full_content() {
+        let state = test_state();
+        let prefix = "x".repeat(100);
+        let first_content = format!("{prefix}A");
+        let second_content = format!("{prefix}B");
+
+        let first = dispatch(
+            &state,
+            "mempalace_add_drawer",
+            json!({ "wing": "project", "room": "backend", "content": first_content }),
+        )
+        .expect("first add_drawer should succeed");
+        let second = dispatch(
+            &state,
+            "mempalace_add_drawer",
+            json!({ "wing": "project", "room": "backend", "content": second_content }),
+        )
+        .expect("second add_drawer should succeed");
+
+        let first_text = serde_json::to_value(&first.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let second_text = serde_json::to_value(&second.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let first_json: Value = serde_json::from_str(&first_text).unwrap();
+        let second_json: Value = serde_json::from_str(&second_text).unwrap();
+
+        assert_ne!(
+            first_json.get("drawer_id").and_then(|v| v.as_str()),
+            second_json.get("drawer_id").and_then(|v| v.as_str())
+        );
+    }
+
+    #[test]
+    fn test_diary_write_hash_uses_full_entry() {
+        let state = test_state();
+        let prefix = "y".repeat(50);
+        let first_entry = format!("{prefix}A");
+        let second_entry = format!("{prefix}B");
+
+        let first = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({ "agent_name": "TestAgent", "entry": first_entry, "topic": "architecture" }),
+        )
+        .expect("first diary write should succeed");
+        let second = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({ "agent_name": "TestAgent", "entry": second_entry, "topic": "architecture" }),
+        )
+        .expect("second diary write should succeed");
+
+        let first_text = serde_json::to_value(&first.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let second_text = serde_json::to_value(&second.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let first_json: Value = serde_json::from_str(&first_text).unwrap();
+        let second_json: Value = serde_json::from_str(&second_text).unwrap();
+
+        assert_ne!(
+            first_json.get("entry_id").and_then(|v| v.as_str()),
+            second_json.get("entry_id").and_then(|v| v.as_str())
         );
     }
 

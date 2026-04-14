@@ -640,6 +640,10 @@ fn hook_state_dir() -> PathBuf {
         .join("hook_state")
 }
 
+fn precompact_state_file(session_id: &str) -> PathBuf {
+    hook_state_dir().join(format!("{session_id}_precompact_blocked_at"))
+}
+
 fn sanitize_session_id(session_id: &str) -> String {
     let sanitized: String = session_id
         .chars()
@@ -757,7 +761,10 @@ fn maybe_auto_ingest(async_mode: bool) {
     }
 }
 
-fn parse_harness_input(data: &serde_json::Value, harness: &str) -> Result<(String, bool, String)> {
+fn parse_harness_input(
+    data: &serde_json::Value,
+    harness: &str,
+) -> Result<(String, bool, String, String)> {
     if !matches!(harness, "claude-code" | "codex") {
         anyhow::bail!("Unknown harness: {harness}");
     }
@@ -779,6 +786,10 @@ fn parse_harness_input(data: &serde_json::Value, harness: &str) -> Result<(Strin
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string(),
+        data.get("trigger")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto")
+            .to_ascii_lowercase(),
     ))
 }
 
@@ -791,14 +802,14 @@ fn hook_session_start_response(
     data: &serde_json::Value,
     harness: &str,
 ) -> Result<serde_json::Value> {
-    let (session_id, _, _) = parse_harness_input(data, harness)?;
+    let (session_id, _, _, _) = parse_harness_input(data, harness)?;
     log_hook(&format!("SESSION START for session {session_id}"));
     fs::create_dir_all(hook_state_dir())?;
     Ok(json!({}))
 }
 
 fn hook_stop_response(data: &serde_json::Value, harness: &str) -> Result<serde_json::Value> {
-    let (session_id, stop_hook_active, transcript_path) = parse_harness_input(data, harness)?;
+    let (session_id, stop_hook_active, transcript_path, _) = parse_harness_input(data, harness)?;
     if stop_hook_active {
         return Ok(json!({}));
     }
@@ -827,8 +838,39 @@ fn hook_stop_response(data: &serde_json::Value, harness: &str) -> Result<serde_j
 }
 
 fn hook_precompact_response(data: &serde_json::Value, harness: &str) -> Result<serde_json::Value> {
-    let (session_id, _, _) = parse_harness_input(data, harness)?;
-    log_hook(&format!("PRE-COMPACT triggered for session {session_id}"));
+    let (session_id, _, transcript_path, trigger) = parse_harness_input(data, harness)?;
+    log_hook(&format!(
+        "PRE-COMPACT triggered for session {session_id} (trigger={trigger})"
+    ));
+
+    if trigger == "manual" {
+        log_hook("PRE-COMPACT manual trigger -- allowing compaction");
+        let _ = fs::remove_file(precompact_state_file(&session_id));
+        return Ok(json!({}));
+    }
+
+    let exchange_count = if transcript_path.is_empty() {
+        0
+    } else {
+        count_human_messages(&transcript_path)
+    };
+    let state_file = precompact_state_file(&session_id);
+    let _ = fs::create_dir_all(hook_state_dir());
+    let last_blocked_at = fs::read_to_string(&state_file)
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok());
+
+    if let Some(last_blocked_at) = last_blocked_at {
+        if exchange_count <= last_blocked_at {
+            log_hook(&format!(
+                "PRE-COMPACT already blocked at exchange {last_blocked_at} (now {exchange_count}) -- allowing compaction to prevent deadlock"
+            ));
+            let _ = fs::remove_file(&state_file);
+            return Ok(json!({}));
+        }
+    }
+
+    let _ = fs::write(&state_file, exchange_count.to_string());
     maybe_auto_ingest(false);
     Ok(json!({"decision":"block","reason":PRECOMPACT_BLOCK_REASON}))
 }
@@ -1572,8 +1614,9 @@ mod tests {
     use super::{
         cmd_compress, cmd_mine, confirm_entities, count_human_messages, detect_mining_mode,
         hook_precompact_response, hook_session_start_response, hook_stop_response,
-        run_instructions, scan_and_detect_entities, Cli, Commands, DetectedEntities, HookAction,
-        InstructionName, MiningMode, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL, STOP_BLOCK_REASON,
+        parse_harness_input, run_instructions, scan_and_detect_entities, Cli, Commands,
+        DetectedEntities, HookAction, InstructionName, MiningMode, PRECOMPACT_BLOCK_REASON,
+        SAVE_INTERVAL, STOP_BLOCK_REASON,
     };
     use crate::config::Config;
     use crate::entity_detector::PersonEntity;
@@ -1948,6 +1991,25 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_harness_input_reads_trigger() {
+        let (session_id, stop_hook_active, transcript_path, trigger) = parse_harness_input(
+            &json!({
+                "session_id": "run-test",
+                "stop_hook_active": false,
+                "transcript_path": "/tmp/session.jsonl",
+                "trigger": "manual"
+            }),
+            "claude-code",
+        )
+        .expect("parse_harness_input should succeed");
+
+        assert_eq!(session_id, "run-test");
+        assert!(!stop_hook_active);
+        assert_eq!(transcript_path, "/tmp/session.jsonl");
+        assert_eq!(trigger, "manual");
+    }
+
+    #[test]
     fn test_count_human_messages_supports_codex_format() {
         let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
         let transcript = temp_dir.path().join("codex.jsonl");
@@ -1975,10 +2037,124 @@ mod tests {
             .expect("test env lock should be available");
         let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
         std::env::set_var("HOME", temp_dir.path());
-        let response = hook_precompact_response(&json!({"session_id": "run-test"}), "claude-code")
-            .expect("precompact hook should succeed");
+        let transcript = temp_dir.path().join("precompact.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                r#"{"message":{"role":"user","content":"first"}}"#,
+                "\n",
+                r#"{"message":{"role":"assistant","content":"ok"}}"#,
+                "\n"
+            ),
+        )
+        .expect("should write transcript");
+        let response = hook_precompact_response(
+            &json!({
+                "session_id": "run-test",
+                "transcript_path": transcript.display().to_string(),
+                "trigger": "auto"
+            }),
+            "claude-code",
+        )
+        .expect("precompact hook should succeed");
         assert_eq!(response["decision"], "block");
         assert_eq!(response["reason"], PRECOMPACT_BLOCK_REASON);
+        std::env::remove_var("HOME");
+    }
+
+    #[test]
+    fn test_run_hook_precompact_manual_trigger_passes_through() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
+        std::env::set_var("HOME", temp_dir.path());
+        let response = hook_precompact_response(
+            &json!({"session_id": "run-test", "trigger": "manual"}),
+            "claude-code",
+        )
+        .expect("manual precompact should succeed");
+        assert_eq!(response, json!({}));
+        std::env::remove_var("HOME");
+    }
+
+    #[test]
+    fn test_run_hook_precompact_deadlock_guard_allows_refire() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
+        std::env::set_var("HOME", temp_dir.path());
+        let transcript = temp_dir.path().join("precompact.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                r#"{"message":{"role":"user","content":"first"}}"#,
+                "\n",
+                r#"{"message":{"role":"assistant","content":"ok"}}"#,
+                "\n"
+            ),
+        )
+        .expect("should write transcript");
+        let payload = json!({
+            "session_id": "run-test",
+            "transcript_path": transcript.display().to_string(),
+            "trigger": "auto"
+        });
+
+        let first = hook_precompact_response(&payload, "claude-code")
+            .expect("first precompact should succeed");
+        assert_eq!(first["decision"], "block");
+
+        let second = hook_precompact_response(&payload, "claude-code")
+            .expect("second precompact should succeed");
+        assert_eq!(second, json!({}));
+        std::env::remove_var("HOME");
+    }
+
+    #[test]
+    fn test_run_hook_precompact_new_human_message_rearms_block() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
+        std::env::set_var("HOME", temp_dir.path());
+        let transcript = temp_dir.path().join("precompact.jsonl");
+        std::fs::write(
+            &transcript,
+            r#"{"message":{"role":"user","content":"first"}}"#,
+        )
+        .expect("should write initial transcript");
+        let payload = json!({
+            "session_id": "run-test",
+            "transcript_path": transcript.display().to_string(),
+            "trigger": "auto"
+        });
+
+        let first = hook_precompact_response(&payload, "claude-code")
+            .expect("first precompact should succeed");
+        assert_eq!(first["decision"], "block");
+
+        let second = hook_precompact_response(&payload, "claude-code")
+            .expect("second precompact should succeed");
+        assert_eq!(second, json!({}));
+
+        std::fs::write(
+            &transcript,
+            concat!(
+                r#"{"message":{"role":"user","content":"first"}}"#,
+                "\n",
+                r#"{"message":{"role":"assistant","content":"ok"}}"#,
+                "\n",
+                r#"{"message":{"role":"user","content":"second"}}"#,
+                "\n"
+            ),
+        )
+        .expect("should write updated transcript");
+
+        let third = hook_precompact_response(&payload, "claude-code")
+            .expect("third precompact should succeed");
+        assert_eq!(third["decision"], "block");
         std::env::remove_var("HOME");
     }
 
