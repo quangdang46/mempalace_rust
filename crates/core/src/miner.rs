@@ -14,6 +14,11 @@ static READABLE_EXTENSIONS: &[&str] = &[
     ".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml", ".html", ".css",
     ".java", ".go", ".rs", ".rb", ".sh", ".csv", ".sql", ".toml", ".c", ".cc", ".cpp", ".cxx",
     ".h", ".hh", ".hpp", ".hxx", ".inl", ".ixx",
+    ".php", ".blade", ".twig", ".vue", ".svelte", ".astro",
+    ".dart", ".swift", ".kt", ".kts", ".scala", ".erb",
+    ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".conf", ".ini", ".cfg", ".properties",
+    ".xml", ".rss", ".atom", ".jsonl", ".ndjson",
+    ".lock",
 ];
 
 static SKIP_DIRS: &[&str] = &[
@@ -40,6 +45,17 @@ static SKIP_DIRS: &[&str] = &[
     ".eggs",
     "htmlcov",
     "target",
+    ".obsidian",
+    ".vault",
+    ".vite",
+    ".parcel-cache",
+    ".turbo",
+    ".nuxt",
+    "vendor",
+    "vendored",
+    "node_modules",
+    "bower_components",
+    ".sass-cache",
 ];
 
 static SKIP_FILES: &[&str] = &[

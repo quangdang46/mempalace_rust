@@ -1,6 +1,8 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 
 const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
@@ -138,6 +140,63 @@ fn default_embedding_model() -> String {
     "naive".to_string()
 }
 
+#[cfg(unix)]
+fn secure_open_options(create_new: bool) -> OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = OpenOptions::new();
+    options.write(true).mode(0o600);
+    if create_new {
+        options.create_new(true);
+    } else {
+        options.create(true).truncate(true);
+    }
+    options
+}
+
+#[cfg(not(unix))]
+fn secure_open_options(create_new: bool) -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if create_new {
+        options.create_new(true);
+    } else {
+        options.create(true).truncate(true);
+    }
+    options
+}
+
+fn write_atomic_file(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let temp_path = path.with_extension(format!(
+        "{}.tmp",
+        path.extension().and_then(|s| s.to_str()).unwrap_or("new")
+    ));
+
+    {
+        let mut file = secure_open_options(false).open(&temp_path)?;
+        file.write_all(content.as_bytes())?;
+        file.flush()?;
+    }
+
+    std::fs::rename(&temp_path, path)?;
+    Ok(())
+}
+
+fn write_create_new_file(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut file = secure_open_options(true).open(path)?;
+    file.write_all(content.as_bytes())?;
+    file.flush()?;
+    Ok(())
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -208,11 +267,8 @@ impl Config {
 
     pub fn save(&self) -> anyhow::Result<()> {
         let config_path = Self::config_file_path()?;
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(config_path, content)?;
+        write_atomic_file(&config_path, &content)?;
         Ok(())
     }
 
@@ -223,7 +279,7 @@ impl Config {
         if !config_path.exists() {
             let default_config = Config::default();
             let content = serde_json::to_string_pretty(&default_config)?;
-            std::fs::write(&config_path, content)?;
+            write_create_new_file(&config_path, &content)?;
         }
         Ok(config_path)
     }
@@ -241,10 +297,9 @@ impl Config {
 
     pub fn save_people_map(&self, people_map: &HashMap<String, String>) -> anyhow::Result<PathBuf> {
         let config_dir = Self::config_dir()?;
-        std::fs::create_dir_all(&config_dir)?;
         let people_map_path = config_dir.join("people_map.json");
         let content = serde_json::to_string_pretty(people_map)?;
-        std::fs::write(&people_map_path, content)?;
+        write_atomic_file(&people_map_path, &content)?;
         Ok(people_map_path)
     }
 
@@ -499,5 +554,67 @@ mod tests {
         // If ~/.mempalace is the config dir and no migration needed, returns None
         // This is expected in test environments
         assert!(result.is_none() || result.is_some());
+    }
+
+    #[test]
+    fn test_init_creates_config_file() {
+        let _guard = test_env_lock().lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg_root = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_root);
+
+        let config = Config::default();
+        let config_path = config.init().unwrap();
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let parsed: Config = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            config_path,
+            Config::config_dir().unwrap().join("config.json")
+        );
+        assert_eq!(parsed.collection_name, DEFAULT_COLLECTION_NAME);
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn test_save_people_map_persists_json() {
+        let _guard = test_env_lock().lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg_root = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_root);
+
+        let config = Config::default();
+        let people_map = HashMap::from([
+            ("alice".to_string(), "ALC".to_string()),
+            ("bob".to_string(), "BOB".to_string()),
+        ]);
+        let path = config.save_people_map(&people_map).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: HashMap<String, String> = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(parsed, people_map);
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_people_map_uses_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = test_env_lock().lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg_root = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_root);
+
+        let config = Config::default();
+        let people_map = HashMap::from([("alice".to_string(), "ALC".to_string())]);
+        let path = config.save_people_map(&people_map).unwrap();
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+        assert_eq!(mode, 0o600);
+
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }
