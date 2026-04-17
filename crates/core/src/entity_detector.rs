@@ -1007,7 +1007,7 @@ fn detect_entities_two_pass(
 
     // Sort by frequency descending
     let mut sorted: Vec<(String, usize)> = candidates.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     for (name, frequency) in sorted {
         let mut scores = score_entity(&name, text, &lines);
@@ -1024,7 +1024,7 @@ fn detect_entities_two_pass(
     // Sort by confidence descending
     people.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
     projects.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
-    uncertain.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+    uncertain.sort_by_key(|b| std::cmp::Reverse(b.frequency));
 
     (people, projects, uncertain)
 }
@@ -1174,7 +1174,7 @@ pub fn detect_entities(file_paths: &[PathBuf], max_files: usize) -> DetectionRes
     let mut uncertain = Vec::new();
 
     let mut sorted: Vec<(String, usize)> = candidates.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     for (name, frequency) in sorted {
         let scores = score_entity(&name, &combined_text, &line_refs);
