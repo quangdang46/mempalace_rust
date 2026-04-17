@@ -23,7 +23,7 @@ No API key required for the core local workflow. After installation, the main st
 ### From Source
 
 ```bash
-git clone https://github.com/MemPalace/mempalace.git
+git clone https://github.com/quangdang46/mempalace_rust.git
 cd mempalace
 pip install -e ".[dev]"
 ```

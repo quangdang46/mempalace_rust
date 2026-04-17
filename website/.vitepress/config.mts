@@ -88,7 +88,7 @@ export default withMermaid(
       },
 
       socialLinks: [
-        { icon: 'github', link: 'https://github.com/MemPalace/mempalace' },
+        { icon: 'github', link: 'https://github.com/quangdang46/mempalace_rust' },
         { icon: 'discord', link: 'https://discord.com/invite/ycTQQCu6kn' },
       ],
 
@@ -102,7 +102,7 @@ export default withMermaid(
       },
 
       editLink: {
-        pattern: `https://github.com/MemPalace/mempalace/edit/${editBranch}/website/:path`,
+        pattern: `https://github.com/quangdang46/mempalace_rust/edit/${editBranch}/website/:path`,
         text: 'Edit this page on GitHub',
       },
     },
