@@ -17,7 +17,7 @@ AAAK is a separate compression layer, **not the storage default**. The 96.6% ben
 
 - **Not lossless compression.** The original text cannot be reconstructed.
 - **Not efficient at small scale.** Short text already tokenizes efficiently — AAAK overhead costs more than it saves.
-- **Not the default storage format.** MemPalace stores raw verbatim text in ChromaDB.
+- **Not the default storage format.** MemPalace stores raw verbatim text in embedvec.
 
 ## Format
 
@@ -78,16 +78,16 @@ was excited about the schema-first approach.
 
 ```bash
 # Preview compression
-mempalace compress --wing myapp --dry-run
+mpr compress --wing myapp --dry-run
 
 # Compress and store
-mempalace compress --wing myapp
+mpr compress --wing myapp
 ```
 
 ### With entity config
 
 ```bash
-mempalace compress --wing myapp --config entities.json
+mpr compress --wing myapp --config entities.json
 ```
 
 Entity config format:
@@ -98,21 +98,22 @@ Entity config format:
 }
 ```
 
-### Python API
+### Rust API
 
-```python
-from mempalace.dialect import Dialect
+```rust
+use mempalace::dialect::Dialect;
 
-# Basic compression
-dialect = Dialect()
-compressed = dialect.compress("We decided to use GraphQL...")
+// Basic compression
+let dialect = Dialect::new();
+let compressed = dialect.compress("We decided to use GraphQL...");
 
-# With entity mappings
-dialect = Dialect(entities={"Alice": "ALC", "Kai": "KAI"})
-compressed = dialect.compress(text, metadata={"wing": "myapp", "room": "arch"})
-
-# From config file
-dialect = Dialect.from_config("entities.json")
+// With entity mappings
+let entities: HashMap<String, String> = vec![
+    ("Alice".to_string(), "ALC".to_string()),
+    ("Kai".to_string(), "KAI".to_string()),
+].into_iter().collect();
+let dialect = Dialect::with_entities(entities)?;
+let compressed = dialect.compress_with_metadata(text, metadata)?;
 ```
 
 ## When to Use AAAK

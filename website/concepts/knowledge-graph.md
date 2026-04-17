@@ -14,37 +14,37 @@ Facts have time windows. When something stops being true, you invalidate it — 
 
 ## Usage
 
-### Python API
+### Rust API
 
-```python
-from mempalace.knowledge_graph import KnowledgeGraph
+```rust
+use mempalace::knowledge_graph::KnowledgeGraph;
 
-kg = KnowledgeGraph()
+let kg = KnowledgeGraph::open("~/.mempalace/knowledge.db")?;
 
-# Add facts
-kg.add_triple("Kai", "works_on", "Orion", valid_from="2025-06-01")
-kg.add_triple("Maya", "assigned_to", "auth-migration", valid_from="2026-01-15")
-kg.add_triple("Maya", "completed", "auth-migration", valid_from="2026-02-01")
+// Add facts
+kg.add_triple("Kai", "works_on", "Orion", valid_from="2025-06-01")?;
+kg.add_triple("Maya", "assigned_to", "auth-migration", valid_from="2026-01-15")?;
+kg.add_triple("Maya", "completed", "auth-migration", valid_from="2026-02-01")?;
 
-# Query: everything about Kai
-kg.query_entity("Kai")
-# → [Kai → works_on → Orion (current), Kai → recommended → Clerk (2026-01)]
+// Query: everything about Kai
+let facts = kg.query_entity("Kai", as_of=None, direction="both")?;
+// → [Kai → works_on → Orion (current), Kai → recommended → Clerk (2026-01)]
 
-# Query: what was true in January?
-kg.query_entity("Maya", as_of="2026-01-20")
-# → [Maya → assigned_to → auth-migration (active)]
+// Query: what was true in January?
+let facts = kg.query_entity("Maya", as_of=Some("2026-01-20"), direction="both")?;
+// → [Maya → assigned_to → auth-migration (active)]
 
-# Timeline
-kg.timeline("Orion")
-# → chronological story of the project
+// Timeline
+let timeline = kg.timeline(Some("Orion"))?;
+// → chronological story of the project
 ```
 
 ### Invalidating Facts
 
 When something stops being true:
 
-```python
-kg.invalidate("Kai", "works_on", "Orion", ended="2026-03-01")
+```rust
+kg.invalidate("Kai", "works_on", "Orion", ended="2026-03-01")?;
 ```
 
 Now queries for Kai's current work won't return Orion. Historical queries still will.
@@ -55,11 +55,11 @@ Through the MCP server, the knowledge graph is available as tools:
 
 | Tool | Description |
 |------|-------------|
-| `mempalace_kg_query` | Query entity relationships with time filtering |
-| `mempalace_kg_add` | Add facts |
-| `mempalace_kg_invalidate` | Mark facts as ended |
-| `mempalace_kg_timeline` | Chronological entity story |
-| `mempalace_kg_stats` | Graph overview |
+| `mpr_kg_query` | Query entity relationships with time filtering |
+| `mpr_kg_add` | Add facts |
+| `mpr_kg_invalidate` | Mark facts as ended |
+| `mpr_kg_timeline` | Chronological entity story |
+| `mpr_kg_stats` | Graph overview |
 
 ## Storage
 

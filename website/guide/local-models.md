@@ -7,7 +7,7 @@ MemPalace works with any local LLM — Llama, Mistral, or any offline model. Sin
 Load your world into the model's context:
 
 ```bash
-mempalace wake-up > context.txt
+mpr wake-up > context.txt
 # Paste context.txt into your local model's system prompt
 ```
 
@@ -17,7 +17,7 @@ This gives your local model a bounded wake-up context, typically around **~600-9
 
 For project-specific context:
 ```bash
-mempalace wake-up --wing driftwood > context.txt
+mpr wake-up --wing driftwood > context.txt
 ```
 
 ## CLI Search
@@ -25,30 +25,33 @@ mempalace wake-up --wing driftwood > context.txt
 Query on demand, feed results into your prompt:
 
 ```bash
-mempalace search "auth decisions" > results.txt
+mpr search "auth decisions" > results.txt
 # Include results.txt in your prompt
 ```
 
-## Python API
+## Rust API
 
 For programmatic integration with your local model pipeline:
 
-```python
-from mempalace.searcher import search_memories
+```rust
+use mempalace::searcher::search_memories;
 
-results = search_memories(
+let results = search_memories(
     "auth decisions",
     palace_path="~/.mempalace/palace",
-)
+    wing=None,
+    room=None,
+    n_results=5,
+)?;
 
-# Format results for your model's context
-context = "\n".join(
-    f"[{r['wing']}/{r['room']}] {r['text']}"
-    for r in results["results"]
-)
+let context = results.results
+    .iter()
+    .map(|r| format!("[{}/{}] {}", r.wing, r.room, r.text))
+    .collect::<Vec<_>>()
+    .join("\n");
 
-# Inject into your local model's prompt
-prompt = f"Context from memory:\n{context}\n\nUser: What did we decide about auth?"
+// Inject into your local model's prompt
+let prompt = format!("Context from memory:\n{}\n\nUser: What did we decide about auth?");
 ```
 
 ## AAAK for Compression
@@ -56,7 +59,7 @@ prompt = f"Context from memory:\n{context}\n\nUser: What did we decide about aut
 Use [AAAK dialect](/concepts/aaak-dialect) to compress wake-up context further:
 
 ```bash
-mempalace compress --wing myapp --dry-run
+mpr compress --wing myapp --dry-run
 ```
 
 AAAK is readable by any LLM that reads text — Claude, GPT, Gemini, Llama, Mistral — without a decoder.
@@ -64,7 +67,21 @@ AAAK is readable by any LLM that reads text — Claude, GPT, Gemini, Llama, Mist
 ## Full Offline Stack
 
 The core memory stack can run offline:
-- **ChromaDB** on your machine — vector storage and search
+- **embedvec** (SQLite-based vector store) on your machine — vector storage and search
 - **Local model** on your machine — reasoning and responses
 - **AAAK** for compression — optional, no cloud dependency
-- **Optional reranking or external model integrations** may introduce cloud calls, depending on how you configure the system
+- **ONNX embeddings** — runs entirely local, no API calls
+
+## Embedding Model Configuration
+
+MemPalace uses ONNX embeddings by default (`ONNXMiniLM_L6_V2`, 384 dimensions). You can configure different embedding models via environment:
+
+```bash
+# Use OpenAI embeddings (requires API key)
+export MEMPALACE_EMBED_MODEL=text-embedding-3-small
+
+# Use multilingual model for non-English content
+export MEMPALACE_EMBED_MODEL=paraphrase-multilingual-MiniLM-L12-v2
+```
+
+See [Configuration](/guide/configuration) for details.

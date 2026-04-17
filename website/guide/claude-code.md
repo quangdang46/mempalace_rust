@@ -16,7 +16,7 @@ Restart Claude Code, then type `/skills` to verify "mempalace" appears.
 With the plugin installed, Claude Code automatically:
 - Starts the MemPalace MCP server on launch
 - Has access to all 19 tools
-- Learns the AAAK dialect and memory protocol from the `mempalace_status` response
+- Learns the AAAK dialect and memory protocol from the `mpr_status` response
 - Searches the palace before answering questions about past work
 
 No manual configuration needed. Just ask:
@@ -28,7 +28,7 @@ No manual configuration needed. Just ask:
 If you prefer manual setup over the marketplace plugin:
 
 ```bash
-claude mcp add mempalace -- python -m mempalace.mcp_server
+claude mcp add mempalace -- mpr mcp
 ```
 
 Both approaches give identical functionality. The plugin approach handles server lifecycle automatically.

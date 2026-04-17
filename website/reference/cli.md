@@ -2,15 +2,15 @@
 
 All commands accept `--palace <path>` to override the default palace location.
 
-## `mempalace init`
+## `mpr init`
 
 Scan a project directory for people, projects, and rooms, and set up the palace.
 
 ```bash
-mempalace init <dir>                 # <dir> is required
-mempalace init <dir> --yes           # non-interactive mode
-mempalace init ~/projects/myapp      # example
-mempalace init .                     # initialize from the current directory
+mpr init <dir>                 # <dir> is required
+mpr init <dir> --yes           # non-interactive mode
+mpr init ~/projects/myapp      # example
+mpr init .                     # initialize from the current directory
 ```
 
 | Option  | Description                                                                  |
@@ -25,18 +25,18 @@ What it does:
 3. Saves detected entities to `<dir>/entities.json`
 4. Ensures the global `~/.mempalace/` config directory exists
 
-Running `mempalace init` with no argument will exit with
+Running `mpr init` with no argument will exit with
 `error: the following arguments are required: dir`.
 
-## `mempalace mine`
+## `mpr mine`
 
 Mine files into the palace.
 
 ```bash
-mempalace mine <dir>
-mempalace mine <dir> --mode convos
-mempalace mine <dir> --mode convos --extract general
-mempalace mine <dir> --wing myapp
+mpr mine <dir>
+mpr mine <dir> --mode convos
+mpr mine <dir> --mode convos --extract general
+mpr mine <dir> --wing myapp
 ```
 
 | Option | Default | Description |
@@ -51,15 +51,15 @@ mempalace mine <dir> --wing myapp
 | `--no-gitignore` | — | Don't respect .gitignore |
 | `--include-ignored` | — | Always scan these paths even if ignored |
 
-## `mempalace search`
+## `mpr search`
 
 Find anything by semantic search.
 
 ```bash
-mempalace search "query"
-mempalace search "query" --wing myapp
-mempalace search "query" --wing myapp --room auth
-mempalace search "query" --results 10
+mpr search "query"
+mpr search "query" --wing myapp
+mpr search "query" --wing myapp --room auth
+mpr search "query" --results 10
 ```
 
 | Option | Default | Description |
@@ -69,15 +69,15 @@ mempalace search "query" --results 10
 | `--room` | all | Filter by room |
 | `--results` | `5` | Number of results |
 
-## `mempalace split`
+## `mpr split`
 
 Split concatenated transcript mega-files into per-session files.
 
 ```bash
-mempalace split <dir>
-mempalace split <dir> --dry-run
-mempalace split <dir> --min-sessions 3
-mempalace split <dir> --output-dir ~/split-output/
+mpr split <dir>
+mpr split <dir> --dry-run
+mpr split <dir> --min-sessions 3
+mpr split <dir> --output-dir ~/split-output/
 ```
 
 | Option | Default | Description |
@@ -87,27 +87,27 @@ mempalace split <dir> --output-dir ~/split-output/
 | `--dry-run` | — | Preview without writing |
 | `--min-sessions` | `2` | Only split files with N+ sessions |
 
-## `mempalace wake-up`
+## `mpr wake-up`
 
 Show L0 + L1 wake-up context (~170–900 tokens).
 
 ```bash
-mempalace wake-up
-mempalace wake-up --wing driftwood
+mpr wake-up
+mpr wake-up --wing driftwood
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--wing` | Project-specific wake-up |
 
-## `mempalace compress`
+## `mpr compress`
 
 Compress drawers using AAAK Dialect.
 
 ```bash
-mempalace compress --wing myapp
-mempalace compress --wing myapp --dry-run
-mempalace compress --config entities.json
+mpr compress --wing myapp
+mpr compress --wing myapp --dry-run
+mpr compress --config entities.json
 ```
 
 | Option | Description |
@@ -116,41 +116,41 @@ mempalace compress --config entities.json
 | `--dry-run` | Preview without storing |
 | `--config` | Entity config JSON file |
 
-## `mempalace status`
+## `mpr status`
 
 Show what's been filed — drawer count, wing/room breakdown.
 
 ```bash
-mempalace status
+mpr status
 ```
 
-## `mempalace repair`
+## `mpr repair`
 
 Rebuild palace vector index from stored data. Fixes segfaults after database corruption.
 
 ```bash
-mempalace repair
+mpr repair
 ```
 
 Creates a backup at `<palace_path>.backup` before rebuilding.
 
-## `mempalace mcp`
+## `mpr mcp`
 
 Helper command that outputs setup syntax (like `claude mcp add...`) to connect MemPalace to your AI client, automatically handling paths.
 
 ```bash
-mempalace mcp
-mempalace mcp --palace ~/.custom-palace
+mpr mcp
+mpr mcp --palace ~/.custom-palace
 ```
 
-## `mempalace hook`
+## `mpr hook`
 
 Run hook logic for Claude Code / Codex integration.
 
 ```bash
-mempalace hook run --hook stop --harness claude-code
-mempalace hook run --hook precompact --harness claude-code
-mempalace hook run --hook session-start --harness codex
+mpr hook run --hook stop --harness claude-code
+mpr hook run --hook precompact --harness claude-code
+mpr hook run --hook session-start --harness codex
 ```
 
 | Option | Values | Description |
@@ -158,14 +158,14 @@ mempalace hook run --hook session-start --harness codex
 | `--hook` | `session-start`, `stop`, `precompact` | Hook name |
 | `--harness` | `claude-code`, `codex` | Harness type |
 
-## `mempalace instructions`
+## `mpr instructions`
 
 Output skill instructions to stdout.
 
 ```bash
-mempalace instructions init
-mempalace instructions search
-mempalace instructions mine
-mempalace instructions help
-mempalace instructions status
+mpr instructions init
+mpr instructions search
+mpr instructions mine
+mpr instructions help
+mpr instructions status
 ```

@@ -21,7 +21,7 @@ graph LR
         RB["Room B"]
         CA["Closet"]
         DA["Drawer (verbatim)"]
-        
+
         RA -- "hall" --> RB
         RA --> CA --> DA
     end
@@ -32,7 +32,7 @@ graph LR
         RC["Room C"]
         CA2["Closet"]
         DA2["Drawer (verbatim)"]
-        
+
         RA2 -- "hall" --> RC
         RA2 --> CA2 --> DA2
     end
@@ -58,7 +58,7 @@ Every project, person, or topic gets its own wing in the palace. Wings are the t
 
 Specific topics within a wing. Examples: `auth-migration`, `graphql-switch`, `ci-pipeline`.
 
-Rooms are named ideas. They're auto-detected from your folder structure during `mempalace init`, and you can create additional rooms manually.
+Rooms are named ideas. They're auto-detected from your folder structure during `mpr init`, and you can create additional rooms manually.
 
 ### Halls
 
@@ -101,11 +101,11 @@ This is standard metadata filtering in the underlying vector store, not a novel 
 The palace supports graph traversal across wings:
 
 ```text
-MCP tool: mempalace_traverse
+MCP tool: mpr_traverse
   arguments: { "start_room": "auth-migration" }
   → discovers rooms in wing_kai, wing_driftwood, wing_priya
 
-MCP tool: mempalace_find_tunnels
+MCP tool: mpr_find_tunnels
   arguments: { "wing_a": "wing_code", "wing_b": "wing_team" }
   → auth-migration, deploy-process, ci-pipeline
 ```

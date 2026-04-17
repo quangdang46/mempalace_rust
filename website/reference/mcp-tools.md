@@ -4,7 +4,7 @@ Detailed parameter schemas for all 29 MCP tools.
 
 ## Palace — Read Tools
 
-### `mempalace_status`
+### `mpr_status`
 
 Palace overview: total drawers, wing and room counts, AAAK spec, and memory protocol.
 
@@ -14,7 +14,7 @@ Palace overview: total drawers, wing and room counts, AAAK spec, and memory prot
 
 ---
 
-### `mempalace_list_wings`
+### `mpr_list_wings`
 
 List all wings with drawer counts.
 
@@ -24,7 +24,7 @@ List all wings with drawer counts.
 
 ---
 
-### `mempalace_list_rooms`
+### `mpr_list_rooms`
 
 List rooms within a wing (or all rooms if no wing given).
 
@@ -36,7 +36,7 @@ List rooms within a wing (or all rooms if no wing given).
 
 ---
 
-### `mempalace_get_taxonomy`
+### `mpr_get_taxonomy`
 
 Full wing → room → drawer count tree.
 
@@ -46,7 +46,7 @@ Full wing → room → drawer count tree.
 
 ---
 
-### `mempalace_search`
+### `mpr_search`
 
 Semantic search. Returns verbatim drawer content with similarity scores.
 
@@ -61,7 +61,7 @@ Semantic search. Returns verbatim drawer content with similarity scores.
 
 ---
 
-### `mempalace_check_duplicate`
+### `mpr_check_duplicate`
 
 Check if content already exists in the palace before filing.
 
@@ -74,7 +74,7 @@ Check if content already exists in the palace before filing.
 
 ---
 
-### `mempalace_get_aaak_spec`
+### `mpr_get_aaak_spec`
 
 Returns the AAAK dialect specification.
 
@@ -86,9 +86,9 @@ Returns the AAAK dialect specification.
 
 ## Palace — Write Tools
 
-### `mempalace_add_drawer`
+### `mpr_add_drawer`
 
-File verbatim content into the palace. Identical content (same deterministic drawer ID) is silently skipped. For similarity-based duplicate detection before filing, use `mempalace_check_duplicate`.
+File verbatim content into the palace. Identical content (same deterministic drawer ID) is silently skipped. For similarity-based duplicate detection before filing, use `mpr_check_duplicate`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -102,7 +102,7 @@ File verbatim content into the palace. Identical content (same deterministic dra
 
 ---
 
-### `mempalace_delete_drawer`
+### `mpr_delete_drawer`
 
 Delete a drawer by ID. Irreversible.
 
@@ -114,7 +114,7 @@ Delete a drawer by ID. Irreversible.
 
 ---
 
-### `mempalace_get_drawer`
+### `mpr_get_drawer`
 
 Fetch a single drawer by ID — returns full content and metadata.
 
@@ -126,7 +126,7 @@ Fetch a single drawer by ID — returns full content and metadata.
 
 ---
 
-### `mempalace_list_drawers`
+### `mpr_list_drawers`
 
 List drawers with pagination. Optional wing/room filter. Returns IDs, wings, rooms, and content previews.
 
@@ -141,7 +141,7 @@ List drawers with pagination. Optional wing/room filter. Returns IDs, wings, roo
 
 ---
 
-### `mempalace_update_drawer`
+### `mpr_update_drawer`
 
 Update an existing drawer's content and/or metadata (wing, room). Fetches the existing drawer first; returns an error if not found.
 
@@ -158,7 +158,7 @@ Update an existing drawer's content and/or metadata (wing, room). Fetches the ex
 
 ## Knowledge Graph Tools
 
-### `mempalace_kg_query`
+### `mpr_kg_query`
 
 Query entity relationships with time filtering.
 
@@ -172,7 +172,7 @@ Query entity relationships with time filtering.
 
 ---
 
-### `mempalace_kg_add`
+### `mpr_kg_add`
 
 Add a fact to the knowledge graph.
 
@@ -188,7 +188,7 @@ Add a fact to the knowledge graph.
 
 ---
 
-### `mempalace_kg_invalidate`
+### `mpr_kg_invalidate`
 
 Mark a fact as no longer true.
 
@@ -203,7 +203,7 @@ Mark a fact as no longer true.
 
 ---
 
-### `mempalace_kg_timeline`
+### `mpr_kg_timeline`
 
 Chronological timeline of facts.
 
@@ -215,7 +215,7 @@ Chronological timeline of facts.
 
 ---
 
-### `mempalace_kg_stats`
+### `mpr_kg_stats`
 
 Knowledge graph overview.
 
@@ -227,7 +227,7 @@ Knowledge graph overview.
 
 ## Navigation Tools
 
-### `mempalace_traverse`
+### `mpr_traverse`
 
 Walk the palace graph from a room. Find connected ideas across wings.
 
@@ -240,7 +240,7 @@ Walk the palace graph from a room. Find connected ideas across wings.
 
 ---
 
-### `mempalace_find_tunnels`
+### `mpr_find_tunnels`
 
 Find rooms that bridge two wings.
 
@@ -253,7 +253,7 @@ Find rooms that bridge two wings.
 
 ---
 
-### `mempalace_graph_stats`
+### `mpr_graph_stats`
 
 Palace graph overview: nodes, tunnels, edges, connectivity.
 
@@ -263,7 +263,7 @@ Palace graph overview: nodes, tunnels, edges, connectivity.
 
 ---
 
-### `mempalace_create_tunnel`
+### `mpr_create_tunnel`
 
 Create a cross-wing tunnel linking two palace locations. Use when content in one project relates to another — e.g., an API design in `project_api` connects to a database schema in `project_database`.
 
@@ -281,7 +281,7 @@ Create a cross-wing tunnel linking two palace locations. Use when content in one
 
 ---
 
-### `mempalace_list_tunnels`
+### `mpr_list_tunnels`
 
 List all explicit cross-wing tunnels. Optionally filter by wing.
 
@@ -293,7 +293,7 @@ List all explicit cross-wing tunnels. Optionally filter by wing.
 
 ---
 
-### `mempalace_delete_tunnel`
+### `mpr_delete_tunnel`
 
 Delete an explicit tunnel by its ID.
 
@@ -305,7 +305,7 @@ Delete an explicit tunnel by its ID.
 
 ---
 
-### `mempalace_follow_tunnels`
+### `mpr_follow_tunnels`
 
 Follow tunnels from a room to see what it connects to in other wings. Returns connected rooms with drawer previews.
 
@@ -320,7 +320,7 @@ Follow tunnels from a room to see what it connects to in other wings. Returns co
 
 ## Agent Diary Tools
 
-### `mempalace_diary_write`
+### `mpr_diary_write`
 
 Write to your personal agent diary.
 
@@ -334,7 +334,7 @@ Write to your personal agent diary.
 
 ---
 
-### `mempalace_diary_read`
+### `mpr_diary_read`
 
 Read recent diary entries.
 
@@ -349,7 +349,7 @@ Read recent diary entries.
 
 ## System Tools
 
-### `mempalace_hook_settings`
+### `mpr_hook_settings`
 
 Get or set auto-save hook behaviour. `silent_save=true` saves directly without MCP-level clutter; `silent_save=false` uses the legacy blocking path. `desktop_toast=true` surfaces a desktop notification when a save completes. Call with no arguments to view the current settings.
 
@@ -362,7 +362,7 @@ Get or set auto-save hook behaviour. `silent_save=true` saves directly without M
 
 ---
 
-### `mempalace_memories_filed_away`
+### `mpr_memories_filed_away`
 
 Check whether a recent palace checkpoint was saved. Returns message count and timestamp of the last save.
 
@@ -372,7 +372,7 @@ Check whether a recent palace checkpoint was saved. Returns message count and ti
 
 ---
 
-### `mempalace_reconnect`
+### `mpr_reconnect`
 
 Force a reconnect to the palace database. Use this after external scripts or CLI commands modified the palace directly, which can leave the in-memory HNSW index stale.
 

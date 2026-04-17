@@ -2,31 +2,32 @@
 
 ## Installation
 
-Install MemPalace from PyPI:
+### One-Line Install (Recommended)
 
 ```bash
-pip install mempalace
+curl -fsSL "https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh?$(date +%s)" | bash
 ```
 
-::: danger Security Warning
-The domain `mempalace.tech` is a **brand-squatting site** not affiliated with this project. It is known to run ad-redirects and potential malware. The official MemPalace distribution is only available via this [GitHub repository](https://github.com/MemPalace/mempalace) and [PyPI](https://pypi.org/project/mempalace/). Never install binaries or scripts from unofficial domains.
-:::
-
-### Requirements
-
-- Python 3.9+
-- `chromadb>=0.5.0` (installed automatically)
-- `pyyaml>=6.0` (installed automatically)
-
-No API key required for the core local workflow. After installation, the main storage and retrieval path runs locally.
+This script automatically:
+- Builds the `mpr` binary
+- Detects your installed AI tools (Claude Code, Codex, Cursor, Windsurf, VS Code, Gemini, OpenCode, Amp, Droid)
+- Configures MCP for each detected tool
 
 ### From Source
 
 ```bash
 git clone https://github.com/quangdang46/mempalace_rust.git
-cd mempalace
-pip install -e ".[dev]"
+cd mempalace_rust
+cargo build --release
+cargo install --path .
 ```
+
+### Requirements
+
+- **Rust 1.75+** (edition 2021)
+- **ONNX runtime** for embeddings (auto-installed by `install.sh`)
+
+No API key required. Everything runs locally.
 
 ## Quick Start
 
@@ -34,17 +35,11 @@ Three steps: **init**, **mine**, **search**.
 
 ### 1. Initialize Your Palace
 
-`mempalace init` requires a project directory to scan. Pass a path,
-or `.` to use the current directory.
-
 ```bash
-mempalace init ~/projects/myapp
-# or, from inside the project:
-mempalace init .
+mpr init ~/projects/myapp
 ```
 
 This scans your project directory and:
-
 - Detects people and projects from file content
 - Creates rooms from your folder structure
 - Ensures the `~/.mempalace/` config directory exists
@@ -53,24 +48,26 @@ This scans your project directory and:
 
 ```bash
 # Mine project files (code, docs, notes)
-mempalace mine ~/projects/myapp
+mpr mine ~/projects/myapp
 
 # Mine conversation exports (Claude, ChatGPT, Slack)
-mempalace mine ~/chats/ --mode convos
+mpr mine ~/chats/ --mode convos
 
 # Mine with auto-classification into memory types
-mempalace mine ~/chats/ --mode convos --extract general
+mpr mine ~/chats/ --mode convos --extract general
 ```
 
-Two mining modes plus one extraction strategy:
+Three mining modes:
 - **projects** — code and docs, auto-detected rooms
 - **convos** — conversation exports, chunked by exchange pair
-- **general extraction** — an `--extract general` option for conversation mining that classifies content into decisions, preferences, milestones, problems, and emotional context
+- **general extraction** — `--extract general` option for conversation mining that classifies content into decisions, preferences, milestones, problems, and emotional context
+
+Supports **8+ chat formats** — Claude Code JSONL, Claude.ai JSON, ChatGPT JSON, Slack JSON, Codex CLI JSONL, SoulForge JSONL, OpenCode SQLite, plain text.
 
 ### 3. Search
 
 ```bash
-mempalace search "why did we switch to GraphQL"
+mpr search "why did we switch to GraphQL"
 ```
 
 That gives you a working local memory index.
@@ -83,7 +80,7 @@ Ask your AI anything:
 
 > *"What did we decide about auth last month?"*
 
-It calls `mempalace_search` automatically, gets verbatim results, and answers you. You never type `mempalace search` again.
+It calls `mpr_search` automatically, gets verbatim results, and answers you. You never type `mpr search` again.
 
 ## Next Steps
 

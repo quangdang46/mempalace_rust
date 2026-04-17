@@ -31,7 +31,7 @@ Project: A journaling app that helps people process emotions.
 Auto-generated from the highest-importance drawers in the palace. Groups by room, picks the top moments, and keeps the output bounded.
 
 The generation process:
-1. Reads all drawers from ChromaDB
+1. Reads all drawers from embedvec
 2. Scores each by importance/emotional weight
 3. Takes the top 15 moments
 4. Groups by room for readability
@@ -52,19 +52,21 @@ The generation process:
 
 Loaded when a specific topic or wing comes up in conversation. Retrieves drawers filtered by wing and/or room — typically ~200–500 tokens.
 
-```python
-stack = MemoryStack()
-stack.recall(wing="driftwood", room="auth")
-# → returns recent drawers about auth in the driftwood project
+```rust
+use mempalace::layers::MemoryStack;
+
+let stack = MemoryStack::new("~/.mempalace/palace".to_string())?;
+let recall = stack.recall(wing="driftwood", room="auth")?;
+// → returns recent drawers about auth in the driftwood project
 ```
 
 ## Layer 3: Deep Search
 
 Full semantic search against the entire palace. This is what fires when you or the AI explicitly asks a question.
 
-```python
-stack.search("why did we switch to GraphQL")
-# → returns top-5 matching drawers with similarity scores
+```rust
+let results = stack.search("why did we switch to GraphQL", wing="myapp", room="architecture", n_results=5)?;
+// → returns top-5 matching drawers with similarity scores
 ```
 
 ## Wake-Up Budget
@@ -77,27 +79,27 @@ The point of the stack is bounded startup context, not a fixed universal token c
 
 ```bash
 # Wake-up context (L0 + L1)
-mempalace wake-up
+mpr wake-up
 
 # Project-specific wake-up
-mempalace wake-up --wing driftwood
+mpr wake-up --wing driftwood
 ```
 
-### Python API
+### Rust API
 
-```python
-from mempalace.layers import MemoryStack
+```rust
+use mempalace::layers::MemoryStack;
 
-stack = MemoryStack()
+let stack = MemoryStack::new("~/.mempalace/palace".to_string())?;
 
-# L0 + L1: wake-up (~600-900 tokens in typical use)
-print(stack.wake_up())
+// L0 + L1: wake-up (~600-900 tokens in typical use)
+println!("{}", stack.wake_up("myapp")?);
 
-# L2: on-demand recall
-print(stack.recall(wing="myapp"))
+// L2: on-demand recall
+println!("{}", stack.recall("myapp", "architecture", 10)?);
 
-# L3: deep search
-print(stack.search("pricing change"))
+// L3: deep search
+println!("{}", stack.search("pricing change", "myapp", "", 5)?);
 
 # Status
 print(stack.status())

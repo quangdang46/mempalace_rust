@@ -1,19 +1,26 @@
 # Contributing
 
-PRs welcome. MemPalace is open source and we welcome contributions of all sizes — from typo fixes to new features.
+PRs welcome. MemPalace Rust is open source and we welcome contributions of all sizes — from typo fixes to new features.
 
 ## Getting Started
 
 ```bash
 git clone https://github.com/quangdang46/mempalace_rust.git
-cd mempalace
-pip install -e ".[dev]"
+cd mempalace_rust
+cargo build --release
 ```
 
 ## Running Tests
 
 ```bash
-pytest tests/ -v
+# Run all tests
+cargo test --all
+
+# Run with output
+cargo test --all -- --nocapture
+
+# Run specific test
+cargo test test_name
 ```
 
 All tests must pass before submitting a PR. Tests should run without API keys or network access.
@@ -21,21 +28,26 @@ All tests must pass before submitting a PR. Tests should run without API keys or
 ## Running Benchmarks
 
 ```bash
-# Quick test (20 questions, ~30 seconds)
-python benchmarks/longmemeval_bench.py /path/to/longmemeval_s_cleaned.json --limit 20
+# Run memory stack benchmarks
+cargo bench
 
-# Full benchmark (500 questions, ~5 minutes)
-python benchmarks/longmemeval_bench.py /path/to/longmemeval_s_cleaned.json
+# Run specific benchmark
+cargo bench -- search_memories
 ```
 
-See [Benchmarks](/reference/benchmarks) for data download instructions.
+## Building Documentation
+
+```bash
+# Build the website locally
+cd website && bun install && bun run docs:build
+```
 
 ## PR Guidelines
 
 1. Fork the repo and create a feature branch: `git checkout -b feat/my-thing`
 2. Write your code
 3. Add or update tests if applicable
-4. Run `pytest tests/ -v` — everything must pass
+4. Run `cargo fmt`, `cargo clippy`, and `cargo test --all` — everything must pass
 5. Commit with clear [conventional commits](https://www.conventionalcommits.org/):
    - `feat: add Notion export format`
    - `fix: handle empty transcript files`
@@ -45,20 +57,21 @@ See [Benchmarks](/reference/benchmarks) for data download instructions.
 
 ## Code Style
 
-- **Formatting**: [Ruff](https://docs.astral.sh/ruff/) with 100-char line limit
-- **Naming**: `snake_case` for functions/variables, `PascalCase` for classes
-- **Docstrings**: on all modules and public functions
-- **Type hints**: where they improve readability
-- **Dependencies**: minimize — ChromaDB + PyYAML only. Don't add new deps without discussion.
+- **Formatting**: `cargo fmt` (rustfmt)
+- **Linting**: `cargo clippy`
+- **Naming**: `snake_case` for functions/variables, `PascalCase` for types
+- **Docstrings**: on all public modules and functions
+- **Error handling**: Use `Result` types with descriptive error messages
+- **Dependencies**: Minimize. Don't add new deps without discussion.
 
 ## Good First Issues
 
 Check the [Issues](https://github.com/quangdang46/mempalace_rust/issues) tab:
 
 - **New chat formats** — add import support for Cursor, Copilot, or other AI tool exports
-- **Room detection** — improve pattern matching in `room_detector_local.py`
-- **Tests** — increase coverage, especially for `knowledge_graph.py` and `palace_graph.py`
-- **Entity detection** — better name disambiguation in `entity_detector.py`
+- **Room detection** — improve pattern matching in `room_detector_local.rs`
+- **Tests** — increase coverage, especially for `knowledge_graph.rs` and `palace_graph.rs`
+- **Entity detection** — better name disambiguation in `entity_detector.rs`
 - **Docs** — improve examples, add tutorials
 
 ## Architecture Decisions

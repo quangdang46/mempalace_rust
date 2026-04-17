@@ -113,24 +113,23 @@ Every benchmark runs deterministically from this repository.
 ```bash
 git clone https://github.com/MemPalace/mempalace.git
 cd mempalace
-pip install -e ".[dev]"
 
 # LongMemEval — raw (96.6%)
 curl -fsSL -o /tmp/longmemeval_s_cleaned.json \
   https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
-python benchmarks/longmemeval_bench.py /tmp/longmemeval_s_cleaned.json
+cargo run --release --bench longmemeval_bench -- /tmp/longmemeval_s_cleaned.json
 
 # LongMemEval — hybrid v4 on the held-out 450 (98.4%)
-python benchmarks/longmemeval_bench.py /tmp/longmemeval_s_cleaned.json \
+cargo run --release --bench longmemeval_bench -- /tmp/longmemeval_s_cleaned.json \
   --mode hybrid_v4 --held-out --split-file benchmarks/lme_split_50_450.json
 
 # LoCoMo — session, top-10 (60.3%)
 git clone https://github.com/snap-research/locomo.git /tmp/locomo
-python benchmarks/locomo_bench.py /tmp/locomo/data/locomo10.json \
+cargo run --release --bench locomo_bench -- /tmp/locomo/data/locomo10.json \
   --granularity session --top-k 10
 
 # LongMemEval — hybrid v4 + rerank, any OpenAI-compatible endpoint
-python benchmarks/longmemeval_bench.py /tmp/longmemeval_s_cleaned.json \
+cargo run --release --bench longmemeval_bench -- /tmp/longmemeval_s_cleaned.json \
   --mode hybrid_v4 --llm-rerank \
   --llm-backend ollama --llm-model <your-model-tag>
 ```
