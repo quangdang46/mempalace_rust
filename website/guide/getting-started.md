@@ -74,7 +74,7 @@ That gives you a working local memory index.
 
 ## What Happens Next
 
-After the one-time setup, you don't run MemPalace commands manually. Your AI uses it for you through [MCP integration](/guide/mcp-integration) or a [Claude Code plugin](/guide/claude-code).
+After the one-time setup, you don't run MemPalace commands manually. Your AI uses it for you through [MCP integration](/guide/mcp-integration).
 
 Ask your AI anything:
 
