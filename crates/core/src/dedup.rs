@@ -127,7 +127,7 @@ fn dedup_source_group(
             (len, e.clone())
         })
         .collect();
-    items.sort_by(|a, b| b.0.cmp(&a.0));
+    items.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let mut kept_indices: Vec<usize> = Vec::new();
 
@@ -226,7 +226,7 @@ pub fn show_stats(palace_path: Option<&Path>) -> anyhow::Result<()> {
 
     println!("\n  Top 15 by drawer count:");
     let mut sorted: Vec<_> = groups.iter().collect();
-    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
     for (src, entries) in sorted.iter().take(15) {
         println!("    {:4}  {}", entries.len(), &src[..src.len().min(65)]);
     }
