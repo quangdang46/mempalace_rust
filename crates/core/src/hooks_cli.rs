@@ -6,12 +6,9 @@
 //!     mpr hook save     — save hook for Claude Code stop
 //!     mpr hook precompact — precompact hook for Claude Code
 
-use crate::config::Config;
 use regex::Regex;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 const SAVE_INTERVAL: usize = 15;
 const STATE_DIR: &str = ".mempalace/hook_state";
@@ -173,12 +170,12 @@ pub fn hook_stop(session_id: &str, stop_hook_active: bool, transcript_path: &str
 }
 
 /// Run the session-start hook — initialize session tracking.
-pub fn hook_session_start(session_id: &str) {
+pub fn hook_session_start(_session_id: &str) {
     ensure_state_dir();
 }
 
 /// Run the precompact hook — mine synchronously before compaction.
-pub fn hook_precompact(transcript_path: &str) {
+pub fn hook_precompact(_transcript_path: &str) {
     ensure_state_dir();
 }
 

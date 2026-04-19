@@ -3,7 +3,7 @@
 //! Purely offline. No network calls.
 
 use crate::config::Config;
-use crate::knowledge_graph::{EntityQueryResult, KnowledgeGraph};
+use crate::knowledge_graph::KnowledgeGraph;
 use regex::Regex;
 use std::collections::HashSet;
 use std::path::Path;
@@ -79,7 +79,7 @@ fn load_known_entity_names() -> HashSet<String> {
     let mut names = HashSet::new();
     if let Ok(registry_path) = Config::registry_file_path() {
         if let Ok(registry) = crate::entity_registry::EntityRegistry::load(&registry_path) {
-            for (name, _) in registry.people() {
+            for name in registry.people().keys() {
                 names.insert(name.clone());
             }
         }
@@ -291,6 +291,7 @@ fn objects_match(kg_obj: &str, claim_obj: &str) -> bool {
     kg_obj.trim().eq_ignore_ascii_case(claim_obj.trim())
 }
 
+#[allow(clippy::manual_is_multiple_of)]
 fn chrono_now_date() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

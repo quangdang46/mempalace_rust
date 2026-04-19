@@ -8,7 +8,7 @@
 
 use crate::config::Config;
 use rusqlite::{Connection, Result as SqlResult};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 /// Migration statistics.
@@ -95,6 +95,7 @@ struct RowRaw {
     meta_value: Option<String>,
 }
 
+#[allow(dead_code)]
 struct DrawerRecord {
     id: String,
     document: String,
@@ -140,7 +141,7 @@ pub struct ChromaDetectReport {
 /// Run migration (detect + export + import to embedvec).
 pub fn migrate_palace(palace_path: Option<&Path>, dry_run: bool) -> anyhow::Result<MigrateStats> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
 
     println!("\n{}", "=".repeat(55));
     println!("  MemPalace Migrator");
@@ -184,9 +185,9 @@ pub fn migrate_palace(palace_path: Option<&Path>, dry_run: bool) -> anyhow::Resu
     // Migration would upsert to embedvec here
     // (ChromaDB bypass → embedvec upsert)
     let mut migrated = 0usize;
-    let mut errors = 0usize;
+    let errors = 0usize;
 
-    for record in &records {
+    for _record in &records {
         // Placeholder: upsert to PalaceDb (embedvec)
         // palace_db.upsert_documents(&[(...)])?;
         migrated += 1;

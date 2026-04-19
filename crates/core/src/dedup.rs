@@ -13,6 +13,7 @@ use std::path::Path;
 
 /// Cosine DISTANCE threshold (not similarity). Lower = stricter.
 /// 0.15 = ~85% cosine similarity — catches near-identical chunks.
+#[allow(dead_code)]
 const DEFAULT_THRESHOLD: f64 = 0.15;
 const MIN_DRAWERS_TO_CHECK: usize = 5;
 
@@ -33,7 +34,7 @@ pub fn dedup_palace(
     wing: Option<&str>,
 ) -> anyhow::Result<DedupStats> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
     let palace_db = PalaceDb::open(palace_path)?;
 
     let total_before = palace_db.count();
@@ -191,7 +192,7 @@ fn dedup_source_group(
 /// Show duplication statistics without making changes.
 pub fn show_stats(palace_path: Option<&Path>) -> anyhow::Result<()> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
     let palace_db = PalaceDb::open(palace_path)?;
 
     let all_entries = palace_db.get_all(None, None, usize::MAX);

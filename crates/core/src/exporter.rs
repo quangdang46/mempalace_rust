@@ -2,7 +2,7 @@
 
 use crate::palace_db::PalaceDb;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn safe_path_component(name: &str) -> String {
     let result = name
@@ -26,7 +26,7 @@ pub struct ExportStats {
 
 pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::Result<ExportStats> {
     let config = crate::Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
     let db = PalaceDb::open(palace_path)?;
 
     let total = db.count();
@@ -177,6 +177,8 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
     })
 }
 
+#[allow(dead_code)]
+#[allow(clippy::manual_is_multiple_of)]
 fn chrono_now_date() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

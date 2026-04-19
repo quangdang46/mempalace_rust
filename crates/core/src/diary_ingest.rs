@@ -28,7 +28,7 @@ pub fn ingest_diaries(
     force: bool,
 ) -> anyhow::Result<DiaryIngestStats> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
 
     let diary_dir = diary_dir.expanduser().resolve_path();
     if !diary_dir.exists() {
@@ -111,7 +111,7 @@ pub fn ingest_diaries(
 
         // Extract entries and build closet lines
         let entries = split_entries(&text);
-        let new_entries = if force { &entries } else { &entries };
+        let new_entries = &entries;
 
         if !new_entries.is_empty() {
             closets_created += new_entries.len();
@@ -197,6 +197,7 @@ fn extract_entities_for_metadata(text: &str) -> String {
     names.join(", ")
 }
 
+#[allow(clippy::manual_is_multiple_of)]
 fn chrono_now_iso() -> String {
     // Simple ISO date without timezone
     let now = std::time::SystemTime::now()

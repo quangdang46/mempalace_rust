@@ -19,7 +19,7 @@ pub fn scan_palace(
     only_wing: Option<&str>,
 ) -> anyhow::Result<(HashSet<String>, HashSet<String>)> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
 
     println!("\n  Palace: {}", palace_path.display());
     println!("  Loading...");
@@ -28,8 +28,8 @@ pub fn scan_palace(
     let total = palace_db.count();
     println!("  Total drawers: {}", total);
 
-    if only_wing.is_some() {
-        println!("  Scanning wing: {}", only_wing.unwrap());
+    if let Some(wing) = only_wing {
+        println!("  Scanning wing: {}", wing);
     }
 
     if total == 0 {
@@ -65,7 +65,7 @@ pub fn scan_palace(
 
     // Write bad IDs to file
     let bad_file = palace_path.join("corrupt_ids.txt");
-    let mut lines: Vec<String> = bad_set.iter().map(|s| s.clone()).collect();
+    let mut lines: Vec<String> = bad_set.iter().cloned().collect();
     lines.sort();
     fs::write(&bad_file, lines.join("\n"))?;
     println!("\n  Bad IDs written to: {}", bad_file.display());
@@ -76,7 +76,7 @@ pub fn scan_palace(
 /// Delete corrupt IDs listed in corrupt_ids.txt.
 pub fn prune_corrupt(palace_path: Option<&Path>, confirm: bool) -> anyhow::Result<()> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
     let bad_file = palace_path.join("corrupt_ids.txt");
 
     if !bad_file.exists() {
@@ -120,7 +120,7 @@ pub fn prune_corrupt(palace_path: Option<&Path>, confirm: bool) -> anyhow::Resul
 /// Rebuild the palace index from scratch.
 pub fn rebuild_index(palace_path: Option<&Path>) -> anyhow::Result<()> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
 
     if !palace_path.exists() {
         println!("  No palace found at {}", palace_path.display());

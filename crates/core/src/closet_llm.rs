@@ -69,7 +69,7 @@ pub fn regenerate_closets(
     endpoint: Option<&str>,
 ) -> anyhow::Result<RegenerateStats> {
     let config = Config::load()?;
-    let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
     let palace_db = PalaceDb::open(palace_path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let endpoint = endpoint.unwrap_or(DEFAULT_ENDPOINT);
@@ -185,12 +185,10 @@ fn regenerate_entry(content: &str, endpoint: &str) -> Result<String, RegenerateE
                     return Ok(parsed.response.trim().to_string());
                 }
 
-                if status.as_u16() == 429 || status.as_u16() == 503 {
-                    if attempt < MAX_RETRIES - 1 {
-                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                        delay_ms *= 2;
-                        continue;
-                    }
+                if status.as_u16() == 429 || status.as_u16() == 503 && attempt < MAX_RETRIES - 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    delay_ms *= 2;
+                    continue;
                 }
 
                 return Err(RegenerateError::NonOk {

@@ -1,12 +1,9 @@
 //! instructions.rs — CLI tool for reading instruction markdown files.
-//!
-//! Provides `mpr instructions <name>` command to display built-in
-//! instruction files for init, search, mine, status, and help.
 
-use std::collections::HashMap;
-
+#[allow(dead_code)]
 const INSTRUCTIONS_DIR: &str = "instructions";
 
+#[allow(dead_code)]
 const AVAILABLE_INSTRUCTIONS: &[&str] = &["init", "search", "mine", "status", "help"];
 
 /// Embedded instruction content for each available instruction.
@@ -36,7 +33,7 @@ pub fn run_instructions(name: &str) -> anyhow::Result<()> {
 
 /// List available instruction names.
 pub fn available_instructions() -> Vec<&'static str> {
-    AVAILABLE_INSTRUCTIONS.iter().copied().collect()
+    AVAILABLE_INSTRUCTIONS.to_vec()
 }
 
 const INIT_INSTRUCTION: &str = r#"# MemPalace Init
