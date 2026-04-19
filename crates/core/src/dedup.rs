@@ -74,8 +74,7 @@ pub fn dedup_palace(
     let mut total_deleted = 0usize;
 
     for (i, (source, entries)) in groups.iter().enumerate() {
-        let (kept, deleted) =
-            dedup_source_group(entries, threshold, dry_run, palace_db.count());
+        let (kept, deleted) = dedup_source_group(entries, threshold, dry_run, palace_db.count());
         total_kept += kept;
         total_deleted += deleted;
 
@@ -98,9 +97,7 @@ pub fn dedup_palace(
     println!("\n{}", "-".repeat(55));
     println!(
         "  Done. Drawers: {} → {}  (-{} removed)",
-        total_before,
-        total_kept,
-        total_deleted
+        total_before, total_kept, total_deleted
     );
     if dry_run {
         println!("\n  [DRY RUN] No changes written.");
@@ -145,14 +142,25 @@ fn dedup_source_group(
         }
 
         // Simple cosine similarity check against kept items
-        let query_words: std::collections::HashSet<String> =
-            content.to_lowercase().split_whitespace().map(|s| s.to_string()).collect();
+        let query_words: std::collections::HashSet<String> = content
+            .to_lowercase()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
 
         let mut is_dup = false;
         for &kept_i in &kept_indices {
-            let kept_content = items[kept_i].1.documents.first().cloned().unwrap_or_default();
-            let kept_words: std::collections::HashSet<String> =
-                kept_content.to_lowercase().split_whitespace().map(|s| s.to_string()).collect();
+            let kept_content = items[kept_i]
+                .1
+                .documents
+                .first()
+                .cloned()
+                .unwrap_or_default();
+            let kept_words: std::collections::HashSet<String> = kept_content
+                .to_lowercase()
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect();
 
             if query_words.is_empty() || kept_words.is_empty() {
                 continue;
@@ -227,7 +235,10 @@ pub fn show_stats(palace_path: Option<&Path>) -> anyhow::Result<()> {
         .filter(|(_, e)| e.len() > 20)
         .map(|(_, e)| (e.len() as f64 * 0.4) as usize)
         .sum();
-    println!("\n  Estimated duplicates (groups > 20): ~{}", estimated_dups);
+    println!(
+        "\n  Estimated duplicates (groups > 20): ~{}",
+        estimated_dups
+    );
 
     Ok(())
 }

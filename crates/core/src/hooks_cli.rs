@@ -67,12 +67,16 @@ fn validate_transcript_path(transcript_path: &str) -> Option<PathBuf> {
 }
 
 fn count_human_messages(transcript_path: &str) -> usize {
-    let Some(path) = validate_transcript_path(transcript_path) else { return 0 };
+    let Some(path) = validate_transcript_path(transcript_path) else {
+        return 0;
+    };
     if !path.exists() {
         return 0;
     }
 
-    let Ok(content) = fs::read_to_string(&path) else { return 0 };
+    let Ok(content) = fs::read_to_string(&path) else {
+        return 0;
+    };
     let mut count = 0usize;
 
     for line in content.lines() {
@@ -195,7 +199,8 @@ pub fn parse_hook_json(json_str: &str) -> Option<HookData> {
     let value: serde_json::Value = serde_json::from_str(json_str).ok()?;
     Some(HookData {
         session_id: sanitize_session_id(
-            value.get("session_id")
+            value
+                .get("session_id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown"),
         ),

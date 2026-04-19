@@ -14,7 +14,10 @@ use std::fs;
 use std::path::Path;
 
 /// Scan the palace for corrupt/unfetchable IDs.
-pub fn scan_palace(palace_path: Option<&Path>, only_wing: Option<&str>) -> anyhow::Result<(HashSet<String>, HashSet<String>)> {
+pub fn scan_palace(
+    palace_path: Option<&Path>,
+    only_wing: Option<&str>,
+) -> anyhow::Result<(HashSet<String>, HashSet<String>)> {
     let config = Config::load()?;
     let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
 
@@ -50,9 +53,15 @@ pub fn scan_palace(palace_path: Option<&Path>, only_wing: Option<&str>) -> anyho
     }
 
     println!("  GOOD: {}", good_set.len());
-    println!("  BAD:  {} ({:.1}%)",
+    println!(
+        "  BAD:  {} ({:.1}%)",
         bad_set.len(),
-        if total > 0 { (bad_set.len() as f64 / total as f64) * 100.0 } else { 0.0 });
+        if total > 0 {
+            (bad_set.len() as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        }
+    );
 
     // Write bad IDs to file
     let bad_file = palace_path.join("corrupt_ids.txt");
@@ -76,7 +85,11 @@ pub fn prune_corrupt(palace_path: Option<&Path>, confirm: bool) -> anyhow::Resul
     }
 
     let content = fs::read_to_string(&bad_file)?;
-    let bad_ids: Vec<String> = content.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+    let bad_ids: Vec<String> = content
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect();
     println!("  {} corrupt IDs queued for deletion", bad_ids.len());
 
     if !confirm {

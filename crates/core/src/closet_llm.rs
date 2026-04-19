@@ -89,7 +89,9 @@ pub fn regenerate_closets(
     let mut entries_by_wing: std::collections::HashMap<String, Vec<_>> =
         std::collections::HashMap::new();
     for entry in &all_entries {
-        let wing_name = entry.metadatas.first()
+        let wing_name = entry
+            .metadatas
+            .first()
             .and_then(|m| m.get("wing"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")

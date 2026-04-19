@@ -11,7 +11,11 @@ fn safe_path_component(name: &str) -> String {
         .collect::<String>()
         .trim()
         .to_string();
-    if result.is_empty() { "unknown".to_string() } else { result }
+    if result.is_empty() {
+        "unknown".to_string()
+    } else {
+        result
+    }
 }
 
 pub struct ExportStats {
@@ -28,7 +32,11 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
     let total = db.count();
     if total == 0 {
         println!("  Palace is empty -- nothing to export.");
-        return Ok(ExportStats { wings: 0, rooms: 0, drawers: 0 });
+        return Ok(ExportStats {
+            wings: 0,
+            rooms: 0,
+            drawers: 0,
+        });
     }
 
     std::fs::create_dir_all(output_dir)?;
@@ -37,7 +45,8 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = std::fs::metadata(output_dir) {
             let mode = meta.permissions().mode();
-            let _ = std::fs::set_permissions(output_dir, std::fs::Permissions::from_mode(mode | 0o700));
+            let _ =
+                std::fs::set_permissions(output_dir, std::fs::Permissions::from_mode(mode | 0o700));
         }
     }
 
@@ -93,9 +102,18 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
                 opened_rooms.insert(key, true);
             }
 
-            let source = meta.get("source_file").and_then(|v| v.as_str()).unwrap_or("unknown");
-            let filed = meta.get("filed_at").and_then(|v| v.as_str()).unwrap_or("unknown");
-            let added_by = meta.get("added_by").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let source = meta
+                .get("source_file")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let filed = meta
+                .get("filed_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let added_by = meta
+                .get("added_by")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
 
             writeln!(file, "## {}\n", doc_id)?;
             writeln!(file, "> {}\n", doc)?;
@@ -135,7 +153,13 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
     for wing in wings {
         let rooms = wing_room_counts.get(wing).unwrap();
         let drawer_count: usize = rooms.values().sum();
-        index_lines.push(format!("| [{}]({}/) | {} | {} |", wing, safe_path_component(wing), rooms.len(), drawer_count));
+        index_lines.push(format!(
+            "| [{}]({}/) | {} | {} |",
+            wing,
+            safe_path_component(wing),
+            rooms.len(),
+            drawer_count
+        ));
     }
 
     std::fs::write(&index_path, index_lines.join("\n"))?;

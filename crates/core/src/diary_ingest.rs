@@ -11,8 +11,8 @@
 use crate::config::Config;
 use crate::entity_detector::detect_from_content;
 use crate::palace_db::PalaceDb;
-use sha2::{Digest, Sha256};
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,7 +75,11 @@ pub fn ingest_diaries(
             .unwrap_or("unknown");
 
         // Skip if content hasn't changed
-        let state_key = format!("{}|{}", wing, diary_path.file_name().unwrap_or_default().to_string_lossy());
+        let state_key = format!(
+            "{}|{}",
+            wing,
+            diary_path.file_name().unwrap_or_default().to_string_lossy()
+        );
         let curr_size = text.len();
         if state.get(&state_key).map(|s| s.size) == Some(curr_size) && !force {
             continue;
@@ -89,8 +93,14 @@ pub fn ingest_diaries(
         metadata.insert("date".to_string(), serde_json::json!(date_str));
         metadata.insert("wing".to_string(), serde_json::json!(wing));
         metadata.insert("room".to_string(), serde_json::json!("daily"));
-        metadata.insert("source_file".to_string(), serde_json::json!(diary_path.to_string_lossy()));
-        metadata.insert("source_session".to_string(), serde_json::json!("daily_diary"));
+        metadata.insert(
+            "source_file".to_string(),
+            serde_json::json!(diary_path.to_string_lossy()),
+        );
+        metadata.insert(
+            "source_session".to_string(),
+            serde_json::json!("daily_diary"),
+        );
         metadata.insert("filed_at".to_string(), serde_json::json!(now_iso));
         if !entities.is_empty() {
             metadata.insert("entities".to_string(), serde_json::json!(entities));
@@ -123,7 +133,10 @@ pub fn ingest_diaries(
     // Save state
     if days_updated > 0 {
         fs::write(&state_file, serde_json::to_string_pretty(&state)?)?;
-        println!("Diary: {} days updated, {} new closets", days_updated, closets_created);
+        println!(
+            "Diary: {} days updated, {} new closets",
+            days_updated, closets_created
+        );
     }
 
     Ok(DiaryIngestStats {
@@ -221,7 +234,10 @@ fn chrono_now_iso() -> String {
     let hour = secs_of_day / 3600;
     let min = (secs_of_day % 3600) / 60;
     let sec = secs_of_day % 60;
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", y, month, day, hour, min, sec)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        y, month, day, hour, min, sec
+    )
 }
 
 trait ExpandUser {
@@ -232,7 +248,9 @@ impl ExpandUser for PathBuf {
     fn expanduser(self) -> PathBuf {
         if self.starts_with("~") {
             if let Ok(home) = std::env::var("HOME") {
-                self.strip_prefix("~").map(|p| PathBuf::from(home).join(p)).unwrap_or(self)
+                self.strip_prefix("~")
+                    .map(|p| PathBuf::from(home).join(p))
+                    .unwrap_or(self)
             } else {
                 self
             }

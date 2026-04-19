@@ -105,7 +105,10 @@ struct DrawerRecord {
 pub fn detect_version(palace_path: &Path) -> anyhow::Result<ChromaDetectReport> {
     let db_path = palace_path.join("chroma.sqlite3");
     if !db_path.exists() {
-        return Err(anyhow::anyhow!("No chroma.sqlite3 found at {}", db_path.display()));
+        return Err(anyhow::anyhow!(
+            "No chroma.sqlite3 found at {}",
+            db_path.display()
+        ));
     }
 
     let conn = Connection::open(&db_path)?;
@@ -135,10 +138,7 @@ pub struct ChromaDetectReport {
 }
 
 /// Run migration (detect + export + import to embedvec).
-pub fn migrate_palace(
-    palace_path: Option<&Path>,
-    dry_run: bool,
-) -> anyhow::Result<MigrateStats> {
+pub fn migrate_palace(palace_path: Option<&Path>, dry_run: bool) -> anyhow::Result<MigrateStats> {
     let config = Config::load()?;
     let palace_path = palace_path.unwrap_or_else(|| config.palace_path.as_path());
 
@@ -192,11 +192,7 @@ pub fn migrate_palace(
         migrated += 1;
     }
 
-    println!(
-        "\n  Done. Migrated: {}/{}",
-        migrated,
-        records.len()
-    );
+    println!("\n  Done. Migrated: {}/{}", migrated, records.len());
 
     Ok(MigrateStats {
         drawers_found: records.len(),

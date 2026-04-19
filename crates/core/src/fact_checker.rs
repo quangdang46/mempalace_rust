@@ -181,10 +181,7 @@ fn check_kg_contradictions(text: &str, palace_path: &Path) -> Vec<FactIssue> {
             continue;
         }
 
-        let current_facts: Vec<_> = facts
-            .iter()
-            .filter(|f| f.current)
-            .collect();
+        let current_facts: Vec<_> = facts.iter().filter(|f| f.current).collect();
 
         // Mismatch: same (subject, object) pair but different predicate
         for fact in &current_facts {
