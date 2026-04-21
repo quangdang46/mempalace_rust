@@ -262,11 +262,7 @@ impl PalaceDb {
         self.documents
             .iter()
             .filter(|(_, entry)| {
-                entry
-                    .metadata
-                    .get("session_id")
-                    .and_then(|v| v.as_str())
-                    == Some(session_id)
+                entry.metadata.get("session_id").and_then(|v| v.as_str()) == Some(session_id)
             })
             .map(|(id, entry)| (id.clone(), entry.content.clone(), entry.metadata.clone()))
             .collect()

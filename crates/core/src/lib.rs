@@ -31,8 +31,8 @@ pub mod repair;
 pub mod room_detector_local;
 pub mod searcher;
 pub mod spellcheck;
-pub mod sweeper;
 pub mod split_mega_files;
+pub mod sweeper;
 
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {

@@ -89,7 +89,11 @@ pub fn flatten_content(content: &serde_json::Value) -> String {
                     }
                 }
             }
-            parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n")
+            parts
+                .into_iter()
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
         }
         _ => content.to_string(),
     }
@@ -193,7 +197,10 @@ fn drawer_id_for_message(session_id: &str, message_uuid: &str) -> String {
 // ── Pre-flight check ──────────────────────────────────────────────────────────
 
 /// Check which batch IDs are already present in the palace.
-fn check_existing_ids(palace: &PalaceDb, batch_ids: &[String]) -> std::collections::HashSet<String> {
+fn check_existing_ids(
+    palace: &PalaceDb,
+    batch_ids: &[String],
+) -> std::collections::HashSet<String> {
     let existing = palace.get_documents(batch_ids);
     existing.into_iter().collect()
 }
@@ -260,7 +267,12 @@ pub fn sweep(jsonl_path: &Path, palace_path: Option<&Path>) -> anyhow::Result<Sw
         batch_metas.push(metadata);
 
         if batch_ids.len() >= BATCH_SIZE {
-            let (added, already) = flush_batch(&mut palace, &mut batch_ids, &mut batch_docs, &mut batch_metas);
+            let (added, already) = flush_batch(
+                &mut palace,
+                &mut batch_ids,
+                &mut batch_docs,
+                &mut batch_metas,
+            );
             drawers_added += added;
             drawers_already_present += already;
         }
@@ -268,7 +280,12 @@ pub fn sweep(jsonl_path: &Path, palace_path: Option<&Path>) -> anyhow::Result<Sw
 
     // Flush remaining
     if !batch_ids.is_empty() {
-        let (added, already) = flush_batch(&mut palace, &mut batch_ids, &mut batch_docs, &mut batch_metas);
+        let (added, already) = flush_batch(
+            &mut palace,
+            &mut batch_ids,
+            &mut batch_docs,
+            &mut batch_metas,
+        );
         drawers_added += added;
         drawers_already_present += already;
     }
@@ -299,7 +316,10 @@ fn flush_batch(
 
     // Pre-flight: which IDs in this batch are already present?
     let existing_ids = check_existing_ids(palace, batch_ids);
-    let new_count = batch_ids.iter().filter(|id| !existing_ids.contains(*id)).count();
+    let new_count = batch_ids
+        .iter()
+        .filter(|id| !existing_ids.contains(*id))
+        .count();
     let already_count = batch_ids.len() - new_count;
 
     // Build documents for upsert
