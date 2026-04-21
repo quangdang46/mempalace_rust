@@ -31,6 +31,7 @@ pub mod repair;
 pub mod room_detector_local;
 pub mod searcher;
 pub mod spellcheck;
+pub mod sweeper;
 pub mod split_mega_files;
 
 #[cfg(test)]

@@ -240,6 +240,38 @@ impl PalaceDb {
         self.documents.get(id)
     }
 
+    /// Get metadata for a document by ID.
+    pub fn get_document_metadata(&self, id: &str) -> Option<&HashMap<String, serde_json::Value>> {
+        self.documents.get(id).map(|e| &e.metadata)
+    }
+
+    /// Get documents by their IDs. Returns only the IDs that exist.
+    pub fn get_documents(&self, ids: &[String]) -> Vec<String> {
+        ids.iter()
+            .filter(|id| self.documents.contains_key(id.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    /// Get all documents that have a matching session_id in their metadata.
+    /// Returns vector of (id, content, metadata) tuples.
+    pub fn get_documents_by_session(
+        &self,
+        session_id: &str,
+    ) -> Vec<(String, String, HashMap<String, serde_json::Value>)> {
+        self.documents
+            .iter()
+            .filter(|(_, entry)| {
+                entry
+                    .metadata
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    == Some(session_id)
+            })
+            .map(|(id, entry)| (id.clone(), entry.content.clone(), entry.metadata.clone()))
+            .collect()
+    }
+
     pub fn count(&self) -> usize {
         self.documents.len()
     }
