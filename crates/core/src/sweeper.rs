@@ -470,9 +470,9 @@ mod tests {
         // before cursor -> skip (< cursor is true)
         assert!("2024-01-01T09:00:00Z" < cursor_str);
         // equal to cursor -> don't skip (< cursor is false)
-        assert!(!("2024-01-01T10:00:00Z" < cursor_str));
+        assert!("2024-01-01T10:00:00Z" >= cursor_str);
         // after cursor -> don't skip (< cursor is false)
-        assert!(!("2024-01-01T11:00:00Z" < cursor_str));
+        assert!("2024-01-01T11:00:00Z" >= cursor_str);
 
         // When cursor is None, nothing is skipped (cursor is None means no prior writes)
         // This is tested via integration - here we just verify string comparison works
