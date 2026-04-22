@@ -326,12 +326,18 @@ impl Layer3 {
         let mut hits = Vec::new();
         for qr in results {
             for (i, doc) in qr.documents.iter().enumerate() {
+                // ChromaDB may return None for doc/meta when a drawer's HNSW entry
+                // exists but its metadata/document rows haven't been materialized
+                // (partial-flush states, mid-delete, schema upgrade boundaries).
+                // Degrade gracefully — the hit still appears with real distance;
+                // storage fields show their fallback where content is missing.
+                let doc = doc.clone();
                 let meta = qr.metadatas.get(i).cloned().unwrap_or_default();
                 let distance = qr.distances.get(i).copied().unwrap_or(1.0);
                 let similarity: f64 = (1.0 - distance).clamp(0.0_f64, 1.0);
 
                 hits.push(SearchHit {
-                    text: doc.clone(),
+                    text: doc,
                     wing: meta.get("wing").and_then(|v| v.as_str().map(String::from)),
                     room: meta.get("room").and_then(|v| v.as_str().map(String::from)),
                     source_file: meta
