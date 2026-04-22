@@ -107,13 +107,11 @@ fn read_lock_pid(path: &PathBuf) -> Option<u32> {
 fn is_process_running(pid: u32) -> bool {
     // Simple cross-platform check: try to access /proc/{pid} on Unix-like systems.
     // For simplicity, we use a basic heuristic: if the process dir is young (< 60s),
-    // assume the lock is valid. A more robust implementation would use
-    // platform-specific APIs.
-    let proc_path = format!("/proc/{}", pid);
-    if let Ok(metadata) = fs::metadata(&proc_path) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
+    // assume the lock is valid.
+    #[cfg(unix)]
+    {
+        let proc_path = format!("/proc/{}", pid);
+        if let Ok(metadata) = fs::metadata(&proc_path) {
             // If modified within last 60 seconds, consider it valid
             let age = std::time::SystemTime::now()
                 .duration_since(
@@ -123,16 +121,10 @@ fn is_process_running(pid: u32) -> bool {
                 )
                 .unwrap_or_default()
                 .as_secs();
-            age < 60
+            return age < 60;
         }
-        #[cfg(not(unix))]
-        {
-            let _ = metadata; // suppress warning
-            true // Simplified: assume valid on other platforms
-        }
-    } else {
-        false
     }
+    false
 }
 
 #[cfg(test)]
