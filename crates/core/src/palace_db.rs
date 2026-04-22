@@ -195,7 +195,10 @@ impl PalaceDb {
         let stored_version = entry
             .metadata
             .get("normalize_version")
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(1);
         if stored_version < crate::constants::NORMALIZE_VERSION as i64 {
             return false;

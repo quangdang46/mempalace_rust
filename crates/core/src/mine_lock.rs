@@ -54,12 +54,10 @@ impl MineLock {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 // Lock file exists - check if the process is still running
                 match read_lock_pid(&lock_path) {
-                    Some(pid) if is_process_running(pid) => {
-                        Err(io::Error::new(
-                            io::ErrorKind::WouldBlock,
-                            format!("another process (PID {}) holds the lock", pid),
-                        ))
-                    }
+                    Some(pid) if is_process_running(pid) => Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        format!("another process (PID {}) holds the lock", pid),
+                    )),
                     _ => {
                         // Stale lock - remove and retry
                         fs::remove_file(&lock_path)?;
@@ -103,11 +101,7 @@ fn lock_name(source_file: &str) -> String {
 }
 
 fn read_lock_pid(path: &PathBuf) -> Option<u32> {
-    fs::read_to_string(path)
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
+    fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
 fn is_process_running(pid: u32) -> bool {
@@ -122,7 +116,11 @@ fn is_process_running(pid: u32) -> bool {
             use std::os::unix::fs::MetadataExt;
             // If modified within last 60 seconds, consider it valid
             let age = std::time::SystemTime::now()
-                .duration_since(metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH))
+                .duration_since(
+                    metadata
+                        .modified()
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                )
                 .unwrap_or_default()
                 .as_secs();
             age < 60
