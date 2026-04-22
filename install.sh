@@ -262,7 +262,7 @@ import os
 import sys
 
 path, servers_key, command_path = sys.argv[1:4]
-entry = {"command": command_path, "args": ["mcp"]}
+entry = {"command": command_path, "args": ["serve"]}
 if os.path.exists(path):
     with open(path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
@@ -316,7 +316,7 @@ import re
 import sys
 
 path, command_path = sys.argv[1:3]
-section = '[mcp_servers.mempalace]\ncommand = "{0}"\nargs = ["mcp"]\n'.format(
+section = '[mcp_servers.mempalace]\ncommand = "{0}"\nargs = ["serve"]\n'.format(
     command_path.replace("\\", "\\\\").replace('"', '\\"')
 )
 

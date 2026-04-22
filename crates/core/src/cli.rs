@@ -193,6 +193,13 @@ enum Commands {
 
     /// Show MCP setup command for connecting MemPalace to your AI client.
     Mcp,
+
+    /// Run MemPalace MCP server (stdio transport).
+    Serve {
+        /// Read-only mode (blocks mutations).
+        #[arg(long)]
+        read_only: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -944,7 +951,7 @@ fn cmd_repair(palace_arg: Option<&str>) -> Result<()> {
 }
 
 fn cmd_mcp(palace_arg: Option<&str>) {
-    let base_server_cmd = "python -m mempalace.mcp_server";
+    let base_server_cmd = "mpr serve";
     if let Some(palace) = palace_arg {
         let resolved_palace = if let Some(stripped) = palace.strip_prefix("~/") {
             std::env::var_os("HOME")
@@ -1600,6 +1607,9 @@ pub fn run() -> Result<()> {
             cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
         }
         Commands::Mcp => cmd_mcp(palace_arg),
+        Commands::Serve { read_only } => {
+            crate::mcp_server::run_server(*read_only)?;
+        }
     }
 
     Ok(())
