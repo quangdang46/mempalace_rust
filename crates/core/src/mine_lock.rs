@@ -104,13 +104,13 @@ fn read_lock_pid(path: &PathBuf) -> Option<u32> {
     fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
-fn is_process_running(pid: u32) -> bool {
+fn is_process_running(_pid: u32) -> bool {
     // Simple cross-platform check: try to access /proc/{pid} on Unix-like systems.
     // For simplicity, we use a basic heuristic: if the process dir is young (< 60s),
     // assume the lock is valid.
     #[cfg(unix)]
     {
-        let proc_path = format!("/proc/{}", pid);
+        let proc_path = format!("/proc/{}", _pid);
         if let Ok(metadata) = fs::metadata(&proc_path) {
             // If modified within last 60 seconds, consider it valid
             let age = std::time::SystemTime::now()
