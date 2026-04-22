@@ -190,6 +190,17 @@ impl PalaceDb {
             return false;
         };
 
+        // Pre-v2 drawers have no version field — treat them as stale.
+        // Returns false so the file gets re-mined with the new schema.
+        let stored_version = entry
+            .metadata
+            .get("normalize_version")
+            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .unwrap_or(1);
+        if stored_version < crate::constants::NORMALIZE_VERSION as i64 {
+            return false;
+        }
+
         if !check_mtime {
             return true;
         }

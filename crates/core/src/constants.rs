@@ -47,3 +47,57 @@ pub const AAAK_CODE_LENGTH: usize = 3;
 
 /// AAAK project code length (first N chars of name).
 pub const AAAK_PROJECT_CODE_LENGTH: usize = 4;
+
+/// Schema version for drawer normalization.
+/// Bump when the normalization pipeline changes in a way that existing
+/// drawers should be rebuilt (e.g., new noise-stripping rules).
+/// v2 (2026-04): introduced strip_noise() for Claude Code JSONL;
+/// previous drawers stored system tags / hook chrome verbatim.
+pub const NORMALIZE_VERSION: i32 = 2;
+
+/// Directories to skip during mining operations.
+pub const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    ".next",
+    "coverage",
+    ".mempalace",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".cache",
+    ".tox",
+    ".nox",
+    ".idea",
+    ".vscode",
+    ".ipynb_checkpoints",
+    ".eggs",
+    "htmlcov",
+    "target",
+];
+
+/// Common capitalized words that look like proper nouns but are usually
+/// sentence-starters or filler. Filtered out of entity extraction.
+pub const ENTITY_STOPLIST: &[&str] = &[
+    "The", "This", "That", "These", "Those",
+    "When", "Where", "What", "Why", "Who", "Which", "How",
+    "After", "Before", "Then", "Now", "Here", "There",
+    "And", "But", "Or", "Yet", "So", "If", "Else",
+    "Yes", "No", "Maybe", "Okay",
+    "User", "Assistant", "System", "Tool",
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+];
+
+/// Closet character limit — fill closet until ~1500 chars, then start a new one.
+pub const CLOSET_CHAR_LIMIT: usize = 1500;
+
+/// How many chars of source content to scan for entities/topics when building closets.
+pub const CLOSET_EXTRACT_WINDOW: usize = 5000;

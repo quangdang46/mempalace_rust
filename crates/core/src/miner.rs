@@ -703,6 +703,7 @@ impl Miner {
             .map(|(_, chunk_index)| chunk_index.to_string())
             .collect();
         let mut metadata: Vec<Vec<(&str, &str)>> = Vec::new();
+        let normalize_version = crate::constants::NORMALIZE_VERSION.to_string();
         for (i, _) in drawer_ids.iter().enumerate() {
             let mut chunk_metadata = vec![
                 ("wing", self.wing.as_str()),
@@ -711,6 +712,7 @@ impl Miner {
                 ("chunk_index", chunk_indexes[i].as_str()),
                 ("added_by", "mempalace"),
                 ("filed_at", filed_at.as_str()),
+                ("normalize_version", normalize_version.as_str()),
             ];
             if let Some(source_mtime) = source_mtime.as_deref() {
                 chunk_metadata.push(("source_mtime", source_mtime));
@@ -934,7 +936,10 @@ mod tests {
         let file_path = file.to_string_lossy().to_string();
         db.add(
             &[("d1", "hello world")],
-            &[&[("source_file", file_path.as_str())]],
+            &[&[
+                ("source_file", file_path.as_str()),
+                ("normalize_version", "2"),
+            ]],
         )
         .unwrap();
         db.flush().unwrap();

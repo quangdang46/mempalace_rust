@@ -20,6 +20,7 @@ pub mod languages;
 pub mod layers;
 pub mod mcp_server;
 pub mod migrate;
+pub mod mine_lock;
 pub mod miner;
 pub mod normalize;
 pub mod onboarding;
