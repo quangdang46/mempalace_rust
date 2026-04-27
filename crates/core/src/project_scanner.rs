@@ -927,7 +927,15 @@ mod tests {
         std::fs::create_dir_all(nested.join(".git")).unwrap();
 
         let repos = find_git_repos(temp.path());
-        assert!(repos.contains(&temp.path().to_path_buf()));
+        let root = temp
+            .path()
+            .canonicalize()
+            .expect("temp root should canonicalize");
+        let nested = nested
+            .canonicalize()
+            .expect("nested repo path should canonicalize");
+
+        assert!(repos.contains(&root));
         assert!(repos.contains(&nested));
     }
 
