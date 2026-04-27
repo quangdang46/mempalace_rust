@@ -1,0 +1,95 @@
+Reference sync ledger
+=====================
+
+Reference repo:
+- path: `references/mempalace`
+- pulled on: `2026-04-27`
+- fast-forward: `87102fb` -> `94f1689`
+
+Upstream areas changed in this pull:
+- `mempalace/project_scanner.py`
+- `mempalace/convo_scanner.py`
+- `mempalace/llm_client.py`
+- `mempalace/llm_refine.py`
+- `mempalace/entity_detector.py`
+- `mempalace/miner.py`
+- `mempalace/config.py`
+- `mempalace/mcp_server.py`
+- `mempalace/palace_graph.py`
+- `mempalace/cli.py`
+- `hooks/*`
+- tests and docs around the above
+
+Ported into Rust in this session
+--------------------------------
+
+1. `crates/core/src/project_scanner.rs` added
+- Manifest-first project discovery for `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`
+- Git-author based people discovery with bot filtering and identity dedupe
+- Claude Code conversations-root project discovery (`.claude/projects/*/*.jsonl`) using `cwd`
+- Real-signal-first merge with prose/entity detection
+
+2. `crates/core/src/cli.rs`
+- `mpr init --yes` now uses `project_scanner::discover_entities(...)` instead of raw text-only scan
+- `mpr init --yes` now writes `<dir>/entities.json`
+- Detected people/projects now merge into the global registry path from `Config::registry_file_path()`
+
+3. `crates/core/src/entity_registry.rs`
+- Added `merge_detected_entities(...)` for init-time registry enrichment
+
+4. `crates/core/src/entity_detector.rs`
+- Synced upstream-style false-positive reduction for bare `NAME:` metadata lines
+- Added boilerplate filename skips (`LICENSE`, `NOTICE`, etc.) during detection scans
+- Added versioned candidate extraction (`MemPalace_v2` style)
+- Added stronger pronoun-only promotion logic
+- Preserved existing Rust behavior for strong single-signal person detection (dialogue/action/direct-address repeated enough)
+- Added regression tests for the new cases
+
+5. `crates/core/src/miner.rs`
+- `entities.json` is now skipped during project mining, matching upstream intent
+
+6. `crates/core/src/config.rs`
+- `MEMPALACE_PALACE_PATH` / `MEMPAL_PALACE_PATH` are now normalized to an expanded absolute path
+
+7. `crates/core/src/mcp_server.rs`
+- `mempalace_diary_write` accepts optional `wing`
+- `mempalace_diary_read` accepts optional `wing`; when omitted it reads diary entries across all wings for that agent
+
+Remaining gaps after this sync
+------------------------------
+
+Still not ported from upstream `94f1689`:
+
+1. LLM-assisted init/entity refinement
+- Python: `mempalace/llm_client.py`, `mempalace/llm_refine.py`
+- Rust status: no `mpr init --llm`, no provider abstraction, no refine pass
+
+2. CLI surface for LLM init flags
+- Python added: `--llm`, `--llm-provider`, `--llm-model`, `--llm-endpoint`, `--llm-api-key`
+- Rust status: absent
+
+3. Palace graph cache invalidation
+- Python added TTL cache + invalidation hooks in `palace_graph.py`
+- Rust status: graph rebuilt from DB each time; no cache/invalidation layer added in this sync
+
+4. Hook/doc sync
+- Python hook docs/scripts changed around transcript auto-mine UX and interpreter resolution
+- Rust status: wrapper scripts remain intentionally Rust-delegating; docs were not fully reworded to mirror the new Python hook narrative
+
+5. i18n/doc site sync
+- Python repo added/expanded several `i18n/*.json` files and docs polish
+- Rust status: not mirrored
+
+6. Broader test parity for the new upstream modules
+- Rust now has targeted regression tests for scanner/entity/diary changes
+- Full parity suite for the newly introduced upstream modules is still open
+
+Beads / parity tracking
+----------------------
+
+These remaining gaps map onto the existing parity program:
+- `mr-nrt.17` — MCP, registry, config, hook/instructions parity tests
+- `mr-nrt.19` — final parity gate and approved-deviation ledger
+- `mr-nrt.20` — docs sync and final parity acceptance
+
+This file is the current gap ledger for the `94f1689` reference state.

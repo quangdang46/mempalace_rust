@@ -261,6 +261,63 @@ impl EntityRegistry {
         &self.path
     }
 
+    pub fn merge_detected_entities(
+        &mut self,
+        people: &[crate::entity_detector::PersonEntity],
+        projects: &[crate::entity_detector::ProjectEntity],
+    ) -> anyhow::Result<()> {
+        for person in people {
+            self.data
+                .people
+                .entry(person.name.clone())
+                .and_modify(|entry| {
+                    entry.confidence = entry.confidence.max(person.confidence as f64);
+                    if !person.context.is_empty()
+                        && !entry
+                            .contexts
+                            .iter()
+                            .any(|context| context == &person.context)
+                    {
+                        entry.contexts.push(person.context.clone());
+                    }
+                })
+                .or_insert(EntityEntry {
+                    source: "init_detected".to_string(),
+                    contexts: if person.context.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![person.context.clone()]
+                    },
+                    aliases: Vec::new(),
+                    relationship: String::new(),
+                    confidence: person.confidence as f64,
+                    canonical: None,
+                    seen_count: None,
+                });
+        }
+
+        for project in projects {
+            if !self
+                .data
+                .projects
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(&project.name))
+            {
+                self.data.projects.push(project.name.clone());
+            }
+        }
+
+        self.data.ambiguous_flags = self
+            .data
+            .people
+            .keys()
+            .filter(|name| COMMON_ENGLISH_WORDS.contains(&name.to_lowercase().as_str()))
+            .map(|name| name.to_lowercase())
+            .collect();
+
+        self.save()
+    }
+
     pub fn seed(
         &mut self,
         mode: &str,

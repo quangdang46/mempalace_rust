@@ -7,6 +7,7 @@
 //! Used by mempalace init before mining begins.
 
 use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -32,6 +33,10 @@ const PERSON_VERB_TEMPLATES: &[&str] = &[
     r"\b{name}\s+decided\b",
     r"\b{name}\s+pushed\b",
     r"\b{name}\s+wrote\b",
+    r"\b{name}\s+worked\b",
+    r"\b{name}\s+reviewed\b",
+    r"\b{name}\s+finished\b",
+    r"\b{name}\s+shipped\b",
     r"\bhey\s+{name}\b",
     r"\bthanks?\s+{name}\b",
     r"\bhi\s+{name}\b",
@@ -76,6 +81,9 @@ static MULTI_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b([\p{Lu}][\p{Ll}]+(?:\s+[\p{Lu}][\p{Ll}]+)+)\b").unwrap()
 });
 
+static VERSIONED_CANDIDATE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b([\p{Lu}][\p{Ll}\p{Lu}]{1,19})[-_]v?\d+(?:\.\d+)*\b").unwrap());
+
 static PRONOUN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     PRONOUN_PATTERNS_STATIC
         .iter()
@@ -113,7 +121,7 @@ fn build_name_patterns(name: &str) -> CompiledNamePatterns {
             .case_insensitive(true)
             .build()
             .unwrap(),
-        versioned: RegexBuilder::new(&format!(r"\b{n}[-v]\w+"))
+        versioned: RegexBuilder::new(&format!(r"\b{n}[-_]v?\d+(?:\.\d+)*\b"))
             .case_insensitive(true)
             .build()
             .unwrap(),
@@ -676,21 +684,21 @@ const PRONOUN_PATTERNS_STATIC: &[&str] = &[
 // DATA STRUCTURES
 // =============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonEntity {
     pub name: String,
     pub confidence: f32,
     pub context: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectEntity {
     pub name: String,
     pub confidence: f32,
     pub context: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DetectionResult {
     pub people: Vec<PersonEntity>,
     pub projects: Vec<ProjectEntity>,
@@ -714,6 +722,25 @@ const SKIP_DIRS: &[&str] = &[
     ".next",
     "coverage",
     ".mempalace",
+    ".terraform",
+    "vendor",
+    "target",
+    ".cache",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+];
+
+const SKIP_FILENAMES: &[&str] = &[
+    "license",
+    "licence",
+    "copying",
+    "copyright",
+    "notice",
+    "authors",
+    "patents",
+    "third_party_notices",
+    "third-party-notices",
 ];
 
 #[derive(Debug, Clone)]
@@ -775,6 +802,17 @@ fn extract_candidates(text: &str) -> HashMap<String, usize> {
         }
     }
 
+    // Versioned or suffixed project names like `MemPalace_v2` should still
+    // surface the base candidate so later project scoring can classify them.
+    for cap in VERSIONED_CANDIDATE_RE.captures_iter(text) {
+        if let Some(word) = cap.get(1).map(|m| m.as_str()) {
+            let lower = word.to_lowercase();
+            if !STOPWORDS.contains(lower.as_str()) && word.len() > 1 {
+                *counts.entry(word.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+
     // Filter: must appear at least 3 times
     counts.retain(|_, count| *count >= 3);
     counts
@@ -798,13 +836,19 @@ fn score_entity(name: &str, text: &str, lines: &[&str]) -> ScoredEntity {
 
     // --- Person signals ---
 
-    // Dialogue markers (strong signal, weight 3)
-    for rx in &patterns.dialogue {
+    // Dialogue markers (strong signal, weight 3).
+    // The bare `NAME:` pattern also matches metadata like `Created: 2026-04-24`,
+    // so require at least two hits for that specific variant.
+    for (idx, rx) in patterns.dialogue.iter().enumerate() {
         let matches = rx.find_iter(text).count();
-        if matches > 0 {
-            person_score += (matches * 3) as i32;
-            person_signals.push(format!("dialogue marker ({}x)", matches));
+        if matches == 0 {
+            continue;
         }
+        if idx == 1 && matches < 2 {
+            continue;
+        }
+        person_score += (matches * 3) as i32;
+        person_signals.push(format!("dialogue marker ({}x)", matches));
     }
 
     // Person verbs (weight 2)
@@ -931,45 +975,75 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
     }
 
     let has_two_signal_types = signal_categories.len() >= 2;
+    let signal_count = |needle: &str| -> usize {
+        scores
+            .person_signals
+            .iter()
+            .filter(|signal| signal.contains(needle))
+            .filter_map(|signal| {
+                signal
+                    .rsplit_once('(')
+                    .and_then(|(_, tail)| tail.strip_suffix("x)"))
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .sum()
+    };
+    let dialogue_hits = signal_count("dialogue");
+    let action_hits = signal_count("action");
+    let address_hits = signal_count("addressed");
 
-    // Common names need stronger signals to prevent false positives
+    // Common names need stronger signals to prevent false positives.
     let common_name_penalty = if is_common_name(name) { 0.2 } else { 0.0 };
+    let pronoun_hits = scores
+        .person_signals
+        .iter()
+        .find_map(|signal| {
+            signal
+                .strip_prefix("pronoun nearby (")
+                .and_then(|rest| rest.strip_suffix("x)"))
+                .and_then(|value| value.parse::<usize>().ok())
+        })
+        .unwrap_or(0);
+    let strong_pronoun_signal =
+        pronoun_hits >= 5 && frequency > 0 && (pronoun_hits as f32 / frequency as f32) >= 0.2;
+    let strong_single_signal = dialogue_hits >= 3 || action_hits >= 3 || address_hits >= 3;
 
-    let (entity_type, confidence, signals) =
-        if person_ratio >= 0.7 && (has_two_signal_types || ps >= 3) {
-            // Apply common name penalty - reduce confidence for common names
-            let base_conf = (0.5 + person_ratio * 0.5).min(0.99);
-            let conf = (base_conf - common_name_penalty).max(0.3);
-            let sigs = if scores.person_signals.is_empty() {
-                vec![format!("appears {}x", frequency)]
-            } else {
-                scores.person_signals.clone()
-            };
-            (EntityType::Person, conf, sigs)
-        } else if person_ratio >= 0.7 {
-            // Has person ratio but not enough signals — downgrade to uncertain
-            let mut sigs = scores.person_signals.clone();
-            sigs.push(format!("appears {}x — not enough signal types", frequency));
-            (
-                EntityType::Uncertain,
-                (0.4 - common_name_penalty).max(0.2),
-                sigs,
-            )
-        } else if person_ratio <= 0.3 {
-            let conf = (0.5 + (1.0 - person_ratio) * 0.5).min(0.99);
-            let sigs = if scores.project_signals.is_empty() {
-                vec![format!("appears {}x", frequency)]
-            } else {
-                scores.project_signals.clone()
-            };
-            (EntityType::Project, conf, sigs)
+    let (entity_type, confidence, signals) = if person_ratio >= 0.7
+        && ((has_two_signal_types && ps >= 5) || strong_pronoun_signal || strong_single_signal)
+    {
+        // Apply common name penalty - reduce confidence for common names
+        let base_conf = (0.5 + person_ratio * 0.5).min(0.99);
+        let conf = (base_conf - common_name_penalty).max(0.3);
+        let sigs = if scores.person_signals.is_empty() {
+            vec![format!("appears {}x", frequency)]
         } else {
-            let mut sigs = scores.person_signals.clone();
-            sigs.extend(scores.project_signals.clone());
-            sigs.truncate(3);
-            sigs.push("mixed signals — needs review".to_string());
-            (EntityType::Uncertain, 0.5, sigs)
+            scores.person_signals.clone()
         };
+        (EntityType::Person, conf, sigs)
+    } else if person_ratio >= 0.7 {
+        // Weak single-category person signal — downgrade to uncertain.
+        let mut sigs = scores.person_signals.clone();
+        sigs.push(format!("appears {}x — not enough signal types", frequency));
+        (
+            EntityType::Uncertain,
+            (0.4 - common_name_penalty).max(0.2),
+            sigs,
+        )
+    } else if person_ratio <= 0.3 {
+        let conf = (0.5 + (1.0 - person_ratio) * 0.5).min(0.99);
+        let sigs = if scores.project_signals.is_empty() {
+            vec![format!("appears {}x", frequency)]
+        } else {
+            scores.project_signals.clone()
+        };
+        (EntityType::Project, conf, sigs)
+    } else {
+        let mut sigs = scores.person_signals.clone();
+        sigs.extend(scores.project_signals.clone());
+        sigs.truncate(3);
+        sigs.push("mixed signals — needs review".to_string());
+        (EntityType::Uncertain, 0.5, sigs)
+    };
 
     // Round confidence to 2 decimal places
     let confidence = (confidence * 100.0).round() / 100.0;
@@ -1112,6 +1186,15 @@ pub fn scan_for_detection(project_dir: &Path, max_files: usize) -> Vec<PathBuf> 
         .filter_map(Result::ok)
     {
         if !entry.file_type().is_file() {
+            continue;
+        }
+        let stem = entry
+            .path()
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(|stem| stem.to_ascii_lowercase())
+            .unwrap_or_default();
+        if SKIP_FILENAMES.contains(&stem.as_str()) {
             continue;
         }
         let Some(ext) = entry.path().extension().and_then(|ext| ext.to_str()) else {
@@ -1322,6 +1405,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_single_metadata_colon_line_does_not_trigger_person() {
+        let text = r#"
+        Created: 2026-04-24
+        Created the project notes yesterday.
+        Created another backup today.
+        "#;
+        let people = detect_people(text);
+        let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Created"),
+            "single metadata line should not classify Created as a person, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_high_pronoun_density_promotes_person() {
+        let text = r#"
+        Lu was worried. She felt trapped.
+        I met Lu again. She said it would pass.
+        Lu stayed home. Her notes were still on the desk.
+        Lu called later. She sounded calmer.
+        Lu wrote tonight. Her plan finally made sense.
+        "#;
+        let people = detect_people(text);
+        let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.contains(&"Lu"),
+            "strong pronoun signal should classify Lu as a person, got: {names:?}"
+        );
+    }
+
     // -------------------------------------------------------------------------
     // detect_projects from technical context
     // -------------------------------------------------------------------------
@@ -1340,6 +1455,21 @@ mod tests {
         assert!(
             names.contains(&"MemPalace"),
             "MemPalace (versioned v2) should be detected as project, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_projects_versioned_with_underscore_suffix() {
+        let text = r#"
+        MemPalace_v2 shipped last week.
+        The MemPalace_v2 migration worked.
+        We benchmarked MemPalace_v2 today.
+        "#;
+        let projects = detect_projects(text);
+        let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.contains(&"MemPalace"),
+            "MemPalace (_v2) should be detected as project, got: {names:?}"
         );
     }
 
@@ -1438,6 +1568,34 @@ mod tests {
         assert!(
             !all_names.iter().any(|n| n.as_str() == "System"),
             "'System' is a stopword and should not be detected, got: {all_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_scan_for_detection_skips_boilerplate_filenames() {
+        let temp = tempfile::tempdir().expect("tempdir should be created");
+        std::fs::write(temp.path().join("LICENSE.md"), "Alice Alice Alice").unwrap();
+        std::fs::write(
+            temp.path().join("notes.md"),
+            "Riley said hello.\nRiley asked why.\nRiley laughed loudly.\n",
+        )
+        .unwrap();
+
+        let files = scan_for_detection(temp.path(), 10);
+        let names: Vec<String> = files
+            .iter()
+            .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case("LICENSE.md")),
+            "license-like files should be skipped, got: {names:?}"
+        );
+        assert!(
+            names.iter().any(|name| name == "notes.md"),
+            "non-boilerplate prose should still be scanned, got: {names:?}"
         );
     }
 

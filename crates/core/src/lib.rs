@@ -27,6 +27,7 @@ pub mod onboarding;
 pub mod onnx_embed;
 pub mod palace_db;
 pub mod palace_graph;
+pub mod project_scanner;
 pub mod query_sanitizer;
 pub mod repair;
 pub mod room_detector_local;

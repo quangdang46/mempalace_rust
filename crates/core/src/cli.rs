@@ -18,13 +18,13 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fs, io, sync::LazyLock};
 
 use crate::config::Config;
 use crate::convo_miner::{mine_conversations, ConvoMiningResult};
 use crate::dialect;
-use crate::entity_detector::{detect_from_content, PersonEntity, ProjectEntity};
+use crate::entity_registry::EntityRegistry;
 use crate::layers::MemoryStack;
 use crate::miner::{self, MiningResult};
 use crate::palace_db::PalaceDb;
@@ -276,57 +276,11 @@ fn resolve_palace_path(palace_arg: Option<&str>) -> Result<PathBuf> {
 // Entity detection helpers
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Default, Debug)]
-struct DetectedEntities {
-    people: Vec<PersonEntity>,
-    projects: Vec<ProjectEntity>,
-    uncertain: Vec<UncertainEntity>,
-}
-
-#[derive(Clone, Default, Debug)]
-struct UncertainEntity {
-    _name: String,
-    _confidence: f32,
-    _context: String,
-}
+type DetectedEntities = crate::entity_detector::DetectionResult;
 
 /// Scan directory for files that can be used for entity detection.
-fn scan_and_detect_entities(dir: &PathBuf) -> DetectedEntities {
-    let mut all_text = String::new();
-    let mut count = 0;
-
-    let extensions = ["txt", "md", "py", "js", "ts", "rs", "json", "yaml", "yml"];
-
-    for entry in walkdir::WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .take(50)
-    {
-        let path = entry.path();
-        if let Some(ext) = path.extension() {
-            let ext_str = ext.to_string_lossy().to_lowercase();
-            if extensions.contains(&ext_str.as_str()) {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    all_text.push_str(&content);
-                    all_text.push('\n');
-                    count += 1;
-                }
-            }
-        }
-    }
-
-    if count == 0 {
-        return DetectedEntities::default();
-    }
-
-    let result = detect_from_content(&all_text);
-
-    DetectedEntities {
-        people: result.people,
-        projects: result.projects,
-        uncertain: vec![],
-    }
+fn scan_and_detect_entities(dir: &Path) -> DetectedEntities {
+    crate::project_scanner::discover_entities(dir, 10)
 }
 
 /// Confirm entities with registry integration.
@@ -335,6 +289,20 @@ fn scan_and_detect_entities(dir: &PathBuf) -> DetectedEntities {
 fn confirm_entities(detected: &DetectedEntities, yes: bool) -> DetectedEntities {
     let _ = yes;
     detected.clone()
+}
+
+fn save_detected_entities(dir: &Path, detected: &DetectedEntities) -> Result<PathBuf> {
+    let entities_path = dir.join("entities.json");
+    let content = serde_json::to_string_pretty(detected)?;
+    std::fs::write(&entities_path, content)?;
+    Ok(entities_path)
+}
+
+fn merge_detected_into_registry(detected: &DetectedEntities) -> Result<PathBuf> {
+    let registry_path = Config::registry_file_path()?;
+    let mut registry = EntityRegistry::load(&registry_path)?;
+    registry.merge_detected_entities(&detected.people, &detected.projects)?;
+    Ok(registry_path)
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +337,12 @@ fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
     if total > 0 {
         println!("  Found {} entities", total);
         let confirmed = confirm_entities(&detected, yes);
+        if !confirmed.people.is_empty() || !confirmed.projects.is_empty() {
+            let entities_path = save_detected_entities(dir, &confirmed)?;
+            println!("  Entities saved: {}", entities_path.display());
+            let registry_path = merge_detected_into_registry(&confirmed)?;
+            println!("  Registry updated: {}", registry_path.display());
+        }
         if !confirmed.people.is_empty() {
             println!(
                 "  People: {:?}",
@@ -1624,12 +1598,13 @@ mod tests {
     use super::{
         cmd_compress, cmd_mine, confirm_entities, count_human_messages, detect_mining_mode,
         hook_precompact_response, hook_session_start_response, hook_stop_response,
-        parse_harness_input, run_instructions, scan_and_detect_entities, Cli, Commands,
-        DetectedEntities, HookAction, InstructionName, MiningMode, PRECOMPACT_BLOCK_REASON,
-        SAVE_INTERVAL, STOP_BLOCK_REASON,
+        merge_detected_into_registry, parse_harness_input, run_instructions,
+        save_detected_entities, scan_and_detect_entities, Cli, Commands, DetectedEntities,
+        HookAction, InstructionName, MiningMode, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL,
+        STOP_BLOCK_REASON,
     };
     use crate::config::Config;
-    use crate::entity_detector::PersonEntity;
+    use crate::entity_detector::{PersonEntity, ProjectEntity};
     use crate::entity_registry::EntityRegistry;
     use crate::palace_db::PalaceDb;
     use crate::test_env_lock;
@@ -2194,7 +2169,7 @@ mod tests {
     #[test]
     fn test_scan_and_detect_entities_empty_dir() {
         let temp = tempfile::TempDir::new().expect("tempdir should be created");
-        let result = scan_and_detect_entities(&temp.path().to_path_buf());
+        let result = scan_and_detect_entities(temp.path());
         assert!(result.people.is_empty());
         assert!(result.projects.is_empty());
     }
@@ -2241,6 +2216,63 @@ mod tests {
         let confirmed = confirm_entities(&detected, true);
         assert_eq!(confirmed.people.len(), 1);
         assert_eq!(confirmed.people[0].name, "Alice");
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn test_save_detected_entities_writes_entities_json() {
+        let temp = tempfile::TempDir::new().expect("tempdir should be created");
+        let detected = DetectedEntities {
+            people: vec![PersonEntity {
+                name: "Alice".to_string(),
+                confidence: 0.9,
+                context: "git author".to_string(),
+            }],
+            projects: vec![ProjectEntity {
+                name: "signal-app".to_string(),
+                confidence: 0.95,
+                context: "Cargo.toml".to_string(),
+            }],
+            uncertain: vec![],
+        };
+
+        let path = save_detected_entities(temp.path(), &detected).expect("entities should save");
+        let content = std::fs::read_to_string(path).expect("entities file should be readable");
+        assert!(content.contains("\"Alice\""));
+        assert!(content.contains("\"signal-app\""));
+    }
+
+    #[test]
+    fn test_merge_detected_into_registry_uses_config_path() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+
+        let detected = DetectedEntities {
+            people: vec![PersonEntity {
+                name: "Alice".to_string(),
+                confidence: 0.9,
+                context: "git author".to_string(),
+            }],
+            projects: vec![ProjectEntity {
+                name: "signal-app".to_string(),
+                confidence: 0.95,
+                context: "Cargo.toml".to_string(),
+            }],
+            uncertain: vec![],
+        };
+
+        let registry_path =
+            merge_detected_into_registry(&detected).expect("registry should be updated");
+        let registry = EntityRegistry::load(&registry_path).expect("registry should load");
+        assert!(registry.people().contains_key("Alice"));
+        assert!(registry
+            .projects()
+            .iter()
+            .any(|project| project.eq_ignore_ascii_case("signal-app")));
 
         std::env::remove_var("XDG_CONFIG_HOME");
     }

@@ -374,13 +374,13 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "mempalace_diary_write",
             "Diary Write",
             "Write to your personal agent diary in AAAK format. Your observations, thoughts, what you worked on, what matters. Each agent has their own diary with full history. Write in AAAK for compression.",
-            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Your name — each agent gets their own diary wing" }, "entry": { "type": "string", "description": "Your diary entry in AAAK format — compressed, entity-coded, emotion-marked" }, "topic": { "type": "string", "description": "Topic tag (optional, default: general)" } }, "required": ["agent_name", "entry"] }),
+            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Your name — each agent gets their own diary wing" }, "entry": { "type": "string", "description": "Your diary entry in AAAK format — compressed, entity-coded, emotion-marked" }, "topic": { "type": "string", "description": "Topic tag (optional, default: general)" }, "wing": { "type": "string", "description": "Optional target wing. If omitted, uses wing_{agent_name}." } }, "required": ["agent_name", "entry"] }),
         ),
         tool(
             "mempalace_diary_read",
             "Diary Read",
             "Read your recent diary entries (in AAAK). See what past versions of yourself recorded — your journal across sessions.",
-            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Your name — each agent gets their own diary wing" }, "last_n": { "type": "integer", "description": "Number of recent entries to read (default: 10)" } }, "required": ["agent_name"] }),
+            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Your name — each agent gets their own diary wing" }, "last_n": { "type": "integer", "description": "Number of recent entries to read (default: 10)" }, "wing": { "type": "string", "description": "Optional wing filter. If omitted, returns diary entries across every wing for this agent." } }, "required": ["agent_name"] }),
         ),
     ]
 }
@@ -993,10 +993,32 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     struct Input {
         agent_name: String,
         last_n: Option<usize>,
+        wing: Option<String>,
     }
     let input: Input = parse_args_with_integer_coercion(args, &["last_n"])?;
-    let wing = format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_"));
-    let entries = state.db.get_all(Some(&wing), Some("diary"), usize::MAX);
+    let wing = input
+        .wing
+        .as_deref()
+        .map(str::trim)
+        .filter(|wing| !wing.is_empty())
+        .map(ToString::to_string);
+    let entries = if let Some(wing) = wing.as_deref() {
+        state.db.get_all(Some(wing), Some("diary"), usize::MAX)
+    } else {
+        state
+            .db
+            .get_all(None, Some("diary"), usize::MAX)
+            .into_iter()
+            .filter(|entry| {
+                entry
+                    .metadatas
+                    .first()
+                    .and_then(|meta| meta.get("agent"))
+                    .map(|agent| agent == &input.agent_name)
+                    .unwrap_or(false)
+            })
+            .collect()
+    };
     let mut items: Vec<serde_json::Value> = entries
         .iter()
         .map(|e| {
@@ -1037,10 +1059,17 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
         agent_name: String,
         entry: String,
         topic: Option<String>,
+        wing: Option<String>,
     }
     let input: Input = parse_args(args)?;
     let now = chrono::Local::now();
-    let wing = format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_"));
+    let wing = input
+        .wing
+        .as_deref()
+        .map(str::trim)
+        .filter(|wing| !wing.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_")));
     let topic = input.topic.unwrap_or_else(|| "general".to_string());
     let id = format!(
         "diary_{}_{}_{}",
@@ -1533,6 +1562,44 @@ mod tests {
             json!({ "agent_name": "TestAgent" }),
         );
         assert!(read_result.is_ok(), "diary read failed: {:?}", read_result);
+    }
+
+    #[test]
+    fn test_diary_write_and_read_custom_wing() {
+        let state = test_state();
+        let write_result = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({ "agent_name": "TestAgent", "entry": "Saved in project wing", "wing": "wing_project_alpha" }),
+        );
+        assert!(
+            write_result.is_ok(),
+            "diary write failed: {:?}",
+            write_result
+        );
+
+        let read_result = dispatch(
+            &state,
+            "mempalace_diary_read",
+            json!({ "agent_name": "TestAgent", "wing": "wing_project_alpha" }),
+        )
+        .expect("diary read should succeed");
+        let text = serde_json::to_value(&read_result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|value| value.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let entries = parsed
+            .get("entries")
+            .and_then(|value| value.as_array())
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].get("content").and_then(|value| value.as_str()),
+            Some("Saved in project wing")
+        );
     }
 
     #[test]

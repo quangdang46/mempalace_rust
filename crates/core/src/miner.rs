@@ -108,6 +108,7 @@ static SKIP_DIRS: &[&str] = &[
 ];
 
 static SKIP_FILES: &[&str] = &[
+    "entities.json",
     "mempalace.yaml",
     "mempalace.yml",
     "mempal.yaml",

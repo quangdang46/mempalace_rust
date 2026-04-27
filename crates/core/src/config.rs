@@ -16,6 +16,28 @@ fn expand_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn normalize_pathbuf(path: PathBuf) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
 fn default_palace_path() -> PathBuf {
     Config::config_dir()
         .unwrap_or_else(|_| expand_path("~/.mempalace"))
@@ -220,12 +242,12 @@ impl Config {
             let palace_path = if let Some(env_val) = std::env::var_os("MEMPALACE_PALACE_PATH")
                 .or_else(|| std::env::var_os("MEMPAL_PALACE_PATH"))
             {
-                PathBuf::from(env_val)
+                normalize_pathbuf(expand_path(&env_val.to_string_lossy()))
             } else {
                 file_config
                     .get("palace_path")
                     .and_then(|v| v.as_str())
-                    .map(PathBuf::from)
+                    .map(expand_path)
                     .unwrap_or_else(default_palace_path)
             };
 
