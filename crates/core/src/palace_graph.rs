@@ -1,5 +1,251 @@
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::RwLock;
+use std::time::Duration;
+
+const GRAPH_CACHE_TTL: Duration = Duration::from_secs(60);
+const TOPIC_ROOM_PREFIX: &str = "topic:";
+
+fn topic_room(name: &str) -> String {
+    format!("{}{}", TOPIC_ROOM_PREFIX, name)
+}
+
+fn _normalize_topic(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+fn _tunnel_file() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".mempalace")
+        .join("tunnels.json")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExplicitTunnel {
+    pub id: String,
+    pub source_wing: String,
+    pub source_room: String,
+    pub target_wing: String,
+    pub target_room: String,
+    pub label: String,
+    pub kind: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+fn _load_tunnels() -> Vec<ExplicitTunnel> {
+    let path = _tunnel_file();
+    if !path.exists() {
+        return Vec::new();
+    }
+    match fs::read_to_string(&path) {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn _save_tunnels(tunnels: &[ExplicitTunnel]) -> std::io::Result<()> {
+    let path = _tunnel_file();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+    }
+    let tmp_path = path.with_extension("json.tmp");
+    let json = serde_json::to_string_pretty(tunnels)?;
+    fs::write(&tmp_path, json)?;
+    if let Ok(meta) = tmp_path.metadata() {
+        let mut perms = meta.permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&tmp_path, perms)?;
+    }
+    if let Ok(file) = std::fs::File::open(&tmp_path) {
+        let _ = file.sync_all();
+    }
+    fs::rename(&tmp_path, &path)?;
+    Ok(())
+}
+
+pub fn create_tunnel(
+    source_wing: &str,
+    source_room: &str,
+    target_wing: &str,
+    target_room: &str,
+    label: &str,
+    kind: &str,
+) -> ExplicitTunnel {
+    let mut tunnels = _load_tunnels();
+    let endpoints = if (source_wing, source_room) < (target_wing, target_room) {
+        vec![(source_wing, source_room), (target_wing, target_room)]
+    } else {
+        vec![(target_wing, target_room), (source_wing, source_room)]
+    };
+    let id_input = format!(
+        "{}|{}|{}|{}",
+        endpoints[0].0, endpoints[0].1, endpoints[1].0, endpoints[1].1
+    );
+    let id = hex::encode(Sha256::digest(id_input.as_bytes()));
+    let now = Utc::now().to_rfc3339();
+    let existing_idx = tunnels.iter().position(|t| t.id == id);
+    if let Some(idx) = existing_idx {
+        tunnels[idx].label = label.to_string();
+        tunnels[idx].kind = kind.to_string();
+        tunnels[idx].updated_at = now;
+        let result = tunnels[idx].clone();
+        let _ = _save_tunnels(&tunnels);
+        return result;
+    }
+    let tunnel = ExplicitTunnel {
+        id,
+        source_wing: source_wing.to_string(),
+        source_room: source_room.to_string(),
+        target_wing: target_wing.to_string(),
+        target_room: target_room.to_string(),
+        label: label.to_string(),
+        kind: kind.to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    tunnels.push(tunnel.clone());
+    let _ = _save_tunnels(&tunnels);
+    tunnel
+}
+
+pub fn compute_topic_tunnels(
+    topics_by_wing: &HashMap<String, Vec<String>>,
+    min_count: usize,
+    label_prefix: &str,
+) -> Vec<ExplicitTunnel> {
+    if topics_by_wing.is_empty() {
+        return Vec::new();
+    }
+    let min_count = min_count.max(1);
+
+    let mut wing_topics: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for (wing, names) in topics_by_wing {
+        let mut bucket: HashMap<String, String> = HashMap::new();
+        for n in names {
+            let key = _normalize_topic(n);
+            if !key.is_empty() {
+                bucket.entry(key).or_insert_with(|| n.trim().to_string());
+            }
+        }
+        if !bucket.is_empty() {
+            wing_topics.insert(wing.trim().to_string(), bucket);
+        }
+    }
+
+    if wing_topics.is_empty() {
+        return Vec::new();
+    }
+
+    let mut wings: Vec<&String> = wing_topics.keys().collect();
+    wings.sort();
+    let mut created: Vec<ExplicitTunnel> = Vec::new();
+
+    for (i, wa) in wings.iter().enumerate() {
+        let topics_a = &wing_topics[*wa];
+        for wb in wings.iter().skip(i + 1) {
+            let topics_b = &wing_topics[*wb];
+            let keys_a: HashSet<&String> = topics_a.keys().collect();
+            let keys_b: HashSet<&String> = topics_b.keys().collect();
+            let shared_keys: HashSet<String> = keys_a.intersection(&keys_b).map(|s| (*s).clone()).collect();
+            if shared_keys.len() < min_count {
+                continue;
+            }
+            for key in &shared_keys {
+                let topic_name = topics_a.get(key).cloned().unwrap_or_else(|| topics_b.get(key).cloned().unwrap_or_default());
+                let room = topic_room(&topic_name);
+                let tunnel = create_tunnel(
+                    wa,
+                    &room,
+                    wb,
+                    &room,
+                    &format!("{}: {}", label_prefix, topic_name),
+                    "topic",
+                );
+                created.push(tunnel);
+            }
+        }
+    }
+    created
+}
+
+pub fn list_tunnels(wing: Option<&str>) -> Vec<ExplicitTunnel> {
+    let tunnels = _load_tunnels();
+    match wing {
+        Some(w) => tunnels
+            .into_iter()
+            .filter(|t| t.source_wing == w || t.target_wing == w)
+            .collect(),
+        None => tunnels,
+    }
+}
+
+pub fn delete_tunnel(tunnel_id: &str) -> bool {
+    let mut tunnels = _load_tunnels();
+    let len_before = tunnels.len();
+    tunnels.retain(|t| t.id != tunnel_id);
+    if tunnels.len() != len_before {
+        let _ = _save_tunnels(&tunnels);
+        true
+    } else {
+        false
+    }
+}
+
+static _GRAPH_CACHE: RwLock<GraphCache> = RwLock::new(GraphCache {
+    nodes: None,
+    edges: None,
+    cached_at: 0,
+    invalidate_counter: 0,
+});
+
+static _GRAPH_BUILD_VERSION: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug)]
+struct GraphCache {
+    nodes: Option<HashMap<String, GraphNode>>,
+    edges: Option<Vec<GraphEdge>>,
+    cached_at: u64,
+    invalidate_counter: u64,
+}
+
+pub fn invalidate_cache() {
+    let mut cache = _GRAPH_CACHE.write().unwrap();
+    cache.nodes = None;
+    cache.edges = None;
+    cache.cached_at = 0;
+    cache.invalidate_counter += 1;
+    _GRAPH_BUILD_VERSION.fetch_add(1, Ordering::SeqCst);
+}
+
+pub fn cache_invalidation_count() -> u64 {
+    _GRAPH_CACHE.read().unwrap().invalidate_counter
+}
+
+fn _cache_is_warm() -> bool {
+    let cache = match _GRAPH_CACHE.read() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    if cache.nodes.is_none() {
+        return false;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let elapsed = Duration::from_secs(now.saturating_sub(cache.cached_at));
+    elapsed < GRAPH_CACHE_TTL
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PalaceGraph {

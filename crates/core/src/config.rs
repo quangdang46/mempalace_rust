@@ -156,6 +156,8 @@ pub struct Config {
     /// "all-MiniLM-L6-v2" = fast English embeddings
     #[serde(default = "default_embedding_model")]
     pub embedding_model: String,
+    #[serde(default)]
+    pub languages: Vec<String>,
 }
 
 fn default_embedding_model() -> String {
@@ -228,6 +230,7 @@ impl Default for Config {
             topic_wings: default_topic_wings(),
             hall_keywords: default_hall_keywords(),
             embedding_model: default_embedding_model(),
+            languages: Vec::new(),
         }
     }
 }
@@ -281,6 +284,10 @@ impl Config {
                     .and_then(|v| v.as_str())
                     .map(String::from)
                     .unwrap_or_else(default_embedding_model),
+                languages: file_config
+                    .get("languages")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_else(Vec::new),
             })
         } else {
             Ok(Config::default())
@@ -538,6 +545,7 @@ mod tests {
             topic_wings: default_topic_wings(),
             hall_keywords: default_hall_keywords(),
             embedding_model: default_embedding_model(),
+            languages: vec![],
         };
         let people_map = config.load_people_map().unwrap();
         assert_eq!(people_map.get("bob"), Some(&"Robert".to_string()));

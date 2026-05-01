@@ -1,5 +1,189 @@
 use serde_json::Value;
+use std::collections::HashMap;
 use std::collections::HashSet;
+
+const SLACK_PROVENANCE_FOOTER: &str =
+    "\n[source: slack-export | multi-party chat — speaker roles are positional, not verified]";
+
+fn strip_noise(text: &str) -> String {
+    let mut result = text.to_string();
+
+    let noise_tags = [
+        "system-reminder",
+        "command-message",
+        "command-name",
+        "task-notification",
+        "user-prompt-submit-hook",
+        "hook_output",
+    ];
+    for tag in &noise_tags {
+        let pattern = format!(r"(?m)^[\s]*{}[\s]*$", regex::escape(tag));
+        if let Ok(re) = regex::Regex::new(&pattern) {
+            result = re.replace_all(&result, "").to_string();
+        }
+    }
+
+    if let Ok(re) = regex::Regex::new(r"(?m)^(?:> )?Ran \d+ (?:Stop|PreCompact|PreToolUse|PostToolUse|UserPromptSubmit|Notification|SessionStart|SessionEnd) hook[s]?.*$") {
+        result = re.replace_all(&result, "").to_string();
+    }
+
+    let noise_prefixes = [
+        "CURRENT TIME:",
+        "VERIFIED FACTS",
+        "AGENT SPECIALIZATION:",
+        "Checking verified facts...",
+        "Injecting timestamp...",
+        "Starting background pipeline...",
+        "Checking emotional weights...",
+        "Auto-save reminder...",
+        "Checking pipeline...",
+        "MemPalace auto-save checkpoint.",
+    ];
+    for prefix in &noise_prefixes {
+        let pattern = format!(r"(?m)^[\s]*{}.*$", regex::escape(prefix));
+        if let Ok(re) = regex::Regex::new(&pattern) {
+            result = re.replace_all(&result, "").to_string();
+        }
+    }
+
+    if let Ok(re) = regex::Regex::new(r"(?m)^\s*… \+\d+ lines\s*$") {
+        result = re.replace_all(&result, "").to_string();
+    }
+
+    if let Ok(re) = regex::Regex::new(r"\s*\[(\d+)\s+tokens?\]\s+\(ctrl\+o to (?:open|expand)\)") {
+        result = re.replace_all(&result, "").to_string();
+    }
+
+    if let Ok(re) = regex::Regex::new(r"(?m)^\s*hook_output\s*$") {
+        result = re.replace_all(&result, "").to_string();
+    }
+
+    if let Ok(re) = regex::Regex::new(r"\n{3,}") {
+        result = re.replace_all(&result, "\n\n").to_string();
+    }
+
+    result.trim().to_string()
+}
+
+fn format_tool_use(content: &Value) -> String {
+    let obj = match content.as_object() {
+        Some(o) => o,
+        None => return String::new(),
+    };
+
+    let tool_name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+    let args = obj.get("arguments").or_else(|| obj.get("input")).and_then(|v| v.as_object());
+
+    match tool_name {
+        "Bash" => {
+            let cmd = args
+                .and_then(|a| a.get("command").or_else(|| a.get("cmd")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if cmd.len() > 200 {
+                format!("[Bash] {}...", &cmd[..200])
+            } else {
+                format!("[Bash] {}", cmd)
+            }
+        }
+        "Read" => {
+            let path = args
+                .and_then(|a| a.get("file_path").or_else(|| a.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let offset = args.and_then(|a| a.get("offset")).and_then(|v| v.as_u64());
+            let limit = args.and_then(|a| a.get("limit")).and_then(|v| v.as_u64());
+            if let (Some(off), Some(lim)) = (offset, limit) {
+                format!("[Read {}:{}-{}]", path, off, off.saturating_add(lim))
+            } else {
+                format!("[Read {}]", path)
+            }
+        }
+        "Grep" | "Glob" => {
+            let pattern = args
+                .and_then(|a| a.get("pattern"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let target = args
+                .and_then(|a| a.get("target").or_else(|| a.get("file_path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            format!("[{}] {} in {}", tool_name, pattern, target)
+        }
+        "Edit" | "Write" => {
+            let path = args
+                .and_then(|a| a.get("file_path").or_else(|| a.get("path")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            format!("[{}] {}", tool_name, path)
+        }
+        _ => {
+            let args_str = args
+                .map(|a| serde_json::to_string(a).unwrap_or_default())
+                .unwrap_or_default();
+            let summary = if args_str.len() > 200 {
+                format!("{}...", &args_str[..200])
+            } else {
+                args_str
+            };
+            format!("[{}] {}", tool_name, summary)
+        }
+    }
+}
+
+fn format_tool_result(content: &Value, tool_name: Option<&str>) -> String {
+    let obj = match content.as_object() {
+        Some(o) => o,
+        None => return String::new(),
+    };
+
+    let text = obj
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    match tool_name {
+        Some("Read") | Some("Edit") | Some("Write") => String::new(),
+        Some("Bash") => {
+            let lines: Vec<&str> = text.lines().collect();
+            if lines.len() <= 20 {
+                if text.is_empty() {
+                    String::new()
+                } else {
+                    format!("→ {}", text)
+                }
+            } else if lines.len() <= 40 {
+                format!("→ {}", text)
+            } else {
+                let head: String = lines[..20].join("\n");
+                let tail: String = lines[lines.len() - 20..].join("\n");
+                format!("→ {}\n… [{} lines truncated] …\n{}", head, lines.len() - 40, tail)
+            }
+        }
+        Some("Grep") | Some("Glob") => {
+            let lines: Vec<&str> = text.lines().collect();
+            if lines.len() <= 20 {
+                if text.is_empty() {
+                    String::new()
+                } else {
+                    format!("→ {}", text)
+                }
+            } else {
+                let kept: String = lines[..20].join("\n");
+                format!("→ {}\n… [{} matches truncated] …", kept, lines.len() - 20)
+            }
+        }
+        _ => {
+            if text.len() > 2048 {
+                format!("→ {}", &text[..2048])
+            } else if text.is_empty() {
+                String::new()
+            } else {
+                format!("→ {}", text)
+            }
+        }
+    }
+}
 
 fn load_known_names() -> HashSet<String> {
     let Ok(registry_path) = crate::Config::registry_file_path() else {
@@ -50,8 +234,20 @@ fn spellcheck_transcript_preserving_known_names(content: &str) -> String {
 }
 
 pub fn normalize(file_path: &std::path::Path, content: &str) -> anyhow::Result<String> {
+    use std::fs;
+
     if content.trim().is_empty() {
         return Ok(content.to_string());
+    }
+
+    if let Ok(metadata) = fs::metadata(file_path) {
+        if metadata.len() > 500 * 1024 * 1024 {
+            anyhow::bail!(
+                "Content too large ({} bytes) to normalize: {}",
+                metadata.len(),
+                file_path.display()
+            );
+        }
     }
 
     let lines: Vec<&str> = content.split('\n').collect();
@@ -113,6 +309,7 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
         .filter(|l| !l.trim().is_empty())
         .collect();
     let mut messages: Vec<(String, String)> = Vec::new();
+    let mut tool_use_map: HashMap<String, String> = HashMap::new();
 
     for line in lines {
         let Ok(entry) = serde_json::from_str::<Value>(line) else {
@@ -121,15 +318,53 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
         let entry = entry.as_object()?;
         let msg_type = entry.get("type")?.as_str()?;
         let message = entry.get("message")?.as_object()?;
-        let text = extract_content_to_string(message.get("content")?);
-
-        if text.is_empty() {
-            continue;
-        }
 
         match msg_type {
-            s if s == "human" || s == "user" => messages.push(("user".to_string(), text)),
-            "assistant" => messages.push(("assistant".to_string(), text)),
+            "assistant" => {
+                let content_val = message.get("content")?;
+                if let Some(arr) = content_val.as_array() {
+                    for block in arr {
+                        let obj = match block.as_object() {
+                            Some(o) => o,
+                            None => continue,
+                        };
+                        if obj.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+                            continue;
+                        }
+                        let tool_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let tool_name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                        tool_use_map.insert(tool_id.to_string(), tool_name.to_string());
+                    }
+                }
+
+                let text = extract_claude_code_assistant_text(content_val, &tool_use_map);
+                let text = strip_noise(&text);
+                if text.is_empty() {
+                    continue;
+                }
+                messages.push(("assistant".to_string(), text));
+            }
+            "human" | "user" => {
+                let content_val = message.get("content")?;
+                let (user_text, is_tool_only) = extract_claude_code_user_text(content_val, &tool_use_map);
+
+                if is_tool_only {
+                    if let Some(prev) = messages.last_mut() {
+                        if prev.0 == "assistant" {
+                            if !user_text.is_empty() {
+                                prev.1.push_str("\n");
+                                prev.1.push_str(&user_text);
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                if user_text.is_empty() {
+                    continue;
+                }
+                messages.push(("user".to_string(), user_text));
+            }
             _ => continue,
         }
     }
@@ -285,7 +520,7 @@ fn try_slack_json(data: &Value) -> Option<String> {
     }
 
     if messages.len() >= 2 {
-        return Some(messages_to_transcript(&messages));
+        return Some(messages_to_transcript(&messages) + SLACK_PROVENANCE_FOOTER);
     }
     None
 }
@@ -677,6 +912,96 @@ fn extract_content_to_string(content: &Value) -> String {
             .unwrap_or_default(),
         _ => String::new(),
     }
+}
+
+fn extract_claude_code_assistant_text(content: &Value, tool_use_map: &HashMap<String, String>) -> String {
+    match content {
+        Value::String(s) => s.trim().to_string(),
+        Value::Array(arr) => {
+            let mut parts: Vec<String> = Vec::new();
+            for item in arr {
+                let obj = match item.as_object() {
+                    Some(o) => o,
+                    None => continue,
+                };
+                let item_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                if item_type == "text" {
+                    if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            parts.push(trimmed.to_string());
+                        }
+                    }
+                } else if item_type == "tool_use" {
+                    let formatted = format_tool_use(item);
+                    if !formatted.is_empty() {
+                        parts.push(formatted);
+                    }
+                }
+                // tool_result in assistant messages is rare but possible;
+                // format it if we have the tool name
+                else if item_type == "tool_result" {
+                    let tool_id = obj.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let tool_name = tool_use_map.get(tool_id).map(|s| s.as_str());
+                    let formatted = format_tool_result(item, tool_name);
+                    if !formatted.is_empty() {
+                        parts.push(formatted);
+                    }
+                }
+            }
+            parts.join(" ")
+        }
+        Value::Object(obj) => obj
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn extract_claude_code_user_text(content: &Value, tool_use_map: &HashMap<String, String>) -> (String, bool) {
+    if let Value::String(s) = content {
+        return (s.trim().to_string(), false);
+    }
+
+    let arr = match content.as_array() {
+        Some(a) => a,
+        None => return (String::new(), false),
+    };
+
+    let mut parts: Vec<String> = Vec::new();
+    let mut has_tool_result = false;
+    let mut has_user_text = false;
+
+    for item in arr {
+        let obj = match item.as_object() {
+            Some(o) => o,
+            None => continue,
+        };
+        let item_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        if item_type == "text" {
+            if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                    has_user_text = true;
+                }
+            }
+        } else if item_type == "tool_result" {
+            has_tool_result = true;
+            let tool_id = obj.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
+            let tool_name = tool_use_map.get(tool_id).map(|s| s.as_str());
+            let formatted = format_tool_result(item, tool_name);
+            if !formatted.is_empty() {
+                parts.push(formatted);
+            }
+        }
+    }
+
+    (parts.join(" "), has_tool_result && !has_user_text)
 }
 
 fn messages_to_transcript(messages: &[(String, String)]) -> String {

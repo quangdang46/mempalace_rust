@@ -755,6 +755,7 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     )
     .map_err(|e| internal_error_safe(&e))?;
     db.flush().map_err(|e| internal_error_safe(&e))?;
+    crate::palace_graph::invalidate_cache();
     ok_json(
         serde_json::json!({ "success": true, "drawer_id": drawer_id, "wing": input.wing, "room": input.room }),
     )
@@ -776,6 +777,7 @@ fn tool_delete_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResu
         .delete_id(&input.drawer_id)
         .map_err(|e| internal_error_safe(&e))?;
     if removed {
+        crate::palace_graph::invalidate_cache();
         ok_json(serde_json::json!({ "success": true, "drawer_id": input.drawer_id }))
     } else {
         ok_json(
@@ -1148,6 +1150,7 @@ mod tests {
             topic_wings: vec!["emotions".to_string()],
             hall_keywords: Default::default(),
             embedding_model: "naive".to_string(),
+            languages: vec![],
         };
         std::fs::create_dir_all(&config.palace_path).unwrap();
         AppState::new(config, false).unwrap()
@@ -1406,6 +1409,7 @@ mod tests {
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
                 embedding_model: "naive".to_string(),
+                languages: vec![],
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
@@ -1429,6 +1433,7 @@ mod tests {
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
                 embedding_model: "naive".to_string(),
+                languages: vec![],
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
@@ -1452,6 +1457,7 @@ mod tests {
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
                 embedding_model: "naive".to_string(),
+                languages: vec![],
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()
@@ -1475,6 +1481,7 @@ mod tests {
                 topic_wings: vec![],
                 hall_keywords: Default::default(),
                 embedding_model: "naive".to_string(),
+                languages: vec![],
             };
             std::fs::create_dir_all(&config.palace_path).unwrap();
             AppState::new(config, true).unwrap()

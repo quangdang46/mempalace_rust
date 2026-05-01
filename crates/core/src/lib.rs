@@ -1,6 +1,9 @@
 pub mod cli;
 pub mod closet_llm;
 pub mod config;
+pub mod corpus_origin;
+pub mod llm_client;
+pub mod llm_refine;
 pub mod constants;
 pub mod convo_miner;
 pub mod dedup;
@@ -21,6 +24,7 @@ pub mod layers;
 pub mod mcp_server;
 pub mod migrate;
 pub mod mine_lock;
+pub mod mine_palace_lock;
 pub mod miner;
 pub mod normalize;
 pub mod onboarding;

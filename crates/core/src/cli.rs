@@ -27,10 +27,12 @@ use crate::dialect;
 use crate::entity_registry::EntityRegistry;
 use crate::layers::MemoryStack;
 use crate::miner::{self, MiningResult};
+use crate::mine_palace_lock::{self, MineAlreadyRunning};
 use crate::palace_db::PalaceDb;
 use crate::room_detector_local::detect_rooms_from_folders;
 use crate::searcher;
 use crate::split_mega_files::split_file_with_options;
+use crate::sweeper::{sweep, sweep_directory};
 
 // ---------------------------------------------------------------------------
 // CLI Arguments
@@ -62,6 +64,43 @@ enum Commands {
         /// Auto-accept all detected entities (non-interactive)
         #[arg(long)]
         yes: bool,
+
+        /// DEPRECATED — LLM-assisted entity refinement is now ON by default.
+        /// This flag is preserved for backward compatibility;
+        /// pass --no-llm to opt out instead.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        llm: bool,
+
+        /// Disable LLM-assisted entity refinement. Run init in heuristics-only mode.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_llm: bool,
+
+        /// LLM provider (default: ollama).
+        #[arg(long, default_value = "ollama")]
+        llm_provider: Option<String>,
+
+        /// Model name for the chosen provider (default: gemma4:e4b for Ollama).
+        #[arg(long, default_value = "gemma4:e4b")]
+        llm_model: Option<String>,
+
+        /// Provider endpoint URL. Default for Ollama: http://localhost:11434.
+        #[arg(long)]
+        llm_endpoint: Option<String>,
+
+        /// API key for the provider.
+        #[arg(long)]
+        llm_api_key: Option<String>,
+
+        /// Bypass interactive consent prompt for external LLM.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        accept_external_llm: bool,
+
+        /// Automatically run mine after initialization completes.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        auto_mine: bool,
+
+        #[arg(long)]
+        lang: Option<String>,
     },
 
     /// Mine files into the palace.
@@ -100,6 +139,9 @@ enum Commands {
         /// Extraction strategy for convos: 'exchange' (default) or 'general'
         #[arg(long, default_value = "exchange")]
         extract: Option<String>,
+
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        redetect_origin: bool,
     },
 
     /// Find anything, exact words.
@@ -199,6 +241,12 @@ enum Commands {
         /// Read-only mode (blocks mutations).
         #[arg(long)]
         read_only: bool,
+    },
+
+    Sweep {
+        target: PathBuf,
+        #[arg(long)]
+        palace: Option<String>,
     },
 }
 
@@ -309,7 +357,18 @@ fn merge_detected_into_registry(detected: &DetectedEntities) -> Result<PathBuf> 
 // Command handlers
 // ---------------------------------------------------------------------------
 
-fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
+fn cmd_init(
+    dir: &PathBuf,
+    yes: bool,
+    _use_llm: bool,
+    _llm_provider: Option<&str>,
+    _llm_model: Option<&str>,
+    _llm_endpoint: Option<&str>,
+    _llm_api_key: Option<&str>,
+    _accept_external_llm: bool,
+    _auto_mine: bool,
+    _lang: Option<&str>,
+) -> Result<()> {
     println!();
     println!("{}", "=".repeat(55));
     println!("  MemPalace Init");
@@ -317,6 +376,14 @@ fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
 
     let config = Config::load()?;
     let config_path = config.init()?;
+
+    if let Some(lang_val) = _lang {
+        let languages: Vec<String> = lang_val.split(',').map(|s| s.trim().to_string()).collect();
+        let mut config = Config::load()?;
+        config.languages = languages;
+        config.save()?;
+    }
+
     let config_dir = config_path.parent().unwrap_or(&config_path);
 
     if !yes {
@@ -384,6 +451,26 @@ fn cmd_init(dir: &PathBuf, yes: bool) -> Result<()> {
     println!("    mempalace mine {:?}", dir);
     println!();
     println!("{}", "=".repeat(55));
+
+    if _auto_mine {
+        println!();
+        println!("  Running mine automatically (--auto-mine set)...");
+        if let Err(err) = cmd_mine(
+            dir,
+            &MiningMode::Auto,
+            None,
+            "mempalace",
+            0,
+            false,
+            false,
+            &[],
+            None,
+            None,
+            false,
+        ) {
+            eprintln!("Warning: auto-mine failed: {}", err);
+        }
+    }
 
     Ok(())
 }
@@ -455,8 +542,24 @@ fn cmd_mine(
     include_ignored: &[String],
     palace_arg: Option<&str>,
     extract: Option<&str>,
+    redetect_origin: bool,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
+
+    if redetect_origin {
+        let origin_result = crate::corpus_origin::resolve_corpus_origin(&palace_path, None);
+        let origin_path = palace_path.join(".mempalace").join("origin.json");
+        if let Some(parent) = origin_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&origin_result)?;
+        std::fs::write(&origin_path, json)?;
+        println!(
+            "Re-detected corpus origin: likely_ai_dialogue={}, confidence={:.2}",
+            origin_result.likely_ai_dialogue, origin_result.confidence
+        );
+    }
+
     let include_ignored_flat: Vec<String> = include_ignored
         .iter()
         .flat_map(|raw| raw.split(','))
@@ -1167,6 +1270,23 @@ fn cmd_compress(
     Ok(())
 }
 
+fn cmd_sweep(target: &PathBuf, palace_arg: Option<&str>) -> Result<()> {
+    let palace_path = resolve_palace_path(palace_arg)?;
+
+    let stats = if target.is_dir() {
+        sweep_directory(target, Some(&palace_path))?
+    } else {
+        sweep(target, Some(&palace_path))?
+    };
+
+    println!("  Sweep complete");
+    println!("    drawers added: {}", stats.drawers_added);
+    println!("    already present: {}", stats.drawers_already_present);
+    println!("    skipped: {}", stats.drawers_skipped);
+
+    Ok(())
+}
+
 fn cmd_split(
     dir: &PathBuf,
     output_dir: Option<&PathBuf>,
@@ -1524,7 +1644,10 @@ pub fn run() -> Result<()> {
     let palace_arg = cli.palace.as_deref();
 
     match &cli.command {
-        Commands::Init { dir, yes } => cmd_init(dir, *yes)?,
+        Commands::Init { dir, yes, llm: _, no_llm, llm_provider, llm_model, llm_endpoint, llm_api_key, accept_external_llm, auto_mine, lang } => {
+            let use_llm = !no_llm;
+            cmd_init(dir, *yes, use_llm, llm_provider.as_deref(), llm_model.as_deref(), llm_endpoint.as_deref(), llm_api_key.as_deref(), *accept_external_llm, *auto_mine, lang.as_deref())?
+        }
         Commands::Mine {
             dir,
             mode,
@@ -1535,18 +1658,27 @@ pub fn run() -> Result<()> {
             limit,
             dry_run,
             extract,
-        } => cmd_mine(
-            dir,
-            mode,
-            wing.as_deref(),
-            agent,
-            *limit,
-            *dry_run,
-            *no_gitignore,
-            include_ignored,
-            palace_arg,
-            extract.as_deref(),
-        )?,
+            redetect_origin,
+        } => {
+            let palace_path = resolve_palace_path(palace_arg)?;
+            if let Err(MineAlreadyRunning { pid }) = mine_palace_lock::mine_palace_lock(&palace_path) {
+                eprintln!("  Error: another mpr mine process (PID {}) already running for this palace", pid);
+                std::process::exit(1);
+            }
+            cmd_mine(
+                dir,
+                mode,
+                wing.as_deref(),
+                agent,
+                *limit,
+                *dry_run,
+                *no_gitignore,
+                include_ignored,
+                palace_arg,
+                extract.as_deref(),
+                *redetect_origin,
+            )?
+        }
         Commands::Search {
             query,
             wing,
@@ -1584,6 +1716,7 @@ pub fn run() -> Result<()> {
         Commands::Serve { read_only } => {
             crate::mcp_server::run_server(*read_only)?;
         }
+        Commands::Sweep { target, palace } => cmd_sweep(target, palace.as_deref())?,
     }
 
     Ok(())
@@ -1614,7 +1747,7 @@ mod tests {
 
     fn expect_init(args: Cli) -> (PathBuf, bool) {
         assert!(matches!(args.command, Commands::Init { .. }));
-        if let Commands::Init { dir, yes } = args.command {
+        if let Commands::Init { dir, yes, .. } = args.command {
             (dir, yes)
         } else {
             (PathBuf::new(), false)
@@ -2320,6 +2453,7 @@ mod tests {
             &["a.txt,b.txt".to_string(), "c.txt".to_string()],
             Some("/tmp/palace"),
             Some("exchange"),
+            false,
         );
 
         assert!(result.is_ok());

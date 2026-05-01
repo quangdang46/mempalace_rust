@@ -1,0 +1,15 @@
+2026-05-01 19:31:42.584 [info] Diagram store initialized {"dbPath":"/home/quangdang/.excalidraw_mcp/excalidraw.sqlite"}
+2026-05-01 19:31:42.604 [info] MCP session initialized: excalidraw-mcp (session: mcp-persistent-session)
+2026-05-01 19:31:42.605 [info] Default diagram: default. Use create_diagram to create a named diagram.
+2026-05-01 19:31:42.611 [info] Starting Excalidraw MCP server...
+2026-05-01 19:31:42.612 [debug] Connecting to stdio transport...
+2026-05-01 19:31:42.613 [info] Excalidraw MCP server running on stdio
+2026-05-01 19:31:42.835 [info] Listing available tools
+2026-05-01 23:56:26.664 [info] Diagram store initialized {"dbPath":"/home/quangdang/.excalidraw_mcp/excalidraw.sqlite"}
+2026-05-01 23:56:26.737 [info] MCP session initialized: excalidraw-mcp (session: mcp-persistent-session)
+2026-05-01 23:56:26.738 [info] Default diagram: default. Use create_diagram to create a named diagram.
+2026-05-01 23:56:26.750 [info] Restored active diagram from session: mon2k9a5ikrcz66nuuq
+2026-05-01 23:56:26.773 [info] Starting Excalidraw MCP server...
+2026-05-01 23:56:26.773 [debug] Connecting to stdio transport...
+2026-05-01 23:56:26.774 [info] Excalidraw MCP server running on stdio
+2026-05-01 23:56:27.008 [info] Listing available tools
