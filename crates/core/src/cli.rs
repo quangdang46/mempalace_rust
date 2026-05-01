@@ -26,8 +26,8 @@ use crate::convo_miner::{mine_conversations, ConvoMiningResult};
 use crate::dialect;
 use crate::entity_registry::EntityRegistry;
 use crate::layers::MemoryStack;
-use crate::miner::{self, MiningResult};
 use crate::mine_palace_lock::{self, MineAlreadyRunning};
+use crate::miner::{self, MiningResult};
 use crate::palace_db::PalaceDb;
 use crate::room_detector_local::detect_rooms_from_folders;
 use crate::searcher;
@@ -1644,9 +1644,32 @@ pub fn run() -> Result<()> {
     let palace_arg = cli.palace.as_deref();
 
     match &cli.command {
-        Commands::Init { dir, yes, llm: _, no_llm, llm_provider, llm_model, llm_endpoint, llm_api_key, accept_external_llm, auto_mine, lang } => {
+        Commands::Init {
+            dir,
+            yes,
+            llm: _,
+            no_llm,
+            llm_provider,
+            llm_model,
+            llm_endpoint,
+            llm_api_key,
+            accept_external_llm,
+            auto_mine,
+            lang,
+        } => {
             let use_llm = !no_llm;
-            cmd_init(dir, *yes, use_llm, llm_provider.as_deref(), llm_model.as_deref(), llm_endpoint.as_deref(), llm_api_key.as_deref(), *accept_external_llm, *auto_mine, lang.as_deref())?
+            cmd_init(
+                dir,
+                *yes,
+                use_llm,
+                llm_provider.as_deref(),
+                llm_model.as_deref(),
+                llm_endpoint.as_deref(),
+                llm_api_key.as_deref(),
+                *accept_external_llm,
+                *auto_mine,
+                lang.as_deref(),
+            )?
         }
         Commands::Mine {
             dir,
@@ -1661,8 +1684,13 @@ pub fn run() -> Result<()> {
             redetect_origin,
         } => {
             let palace_path = resolve_palace_path(palace_arg)?;
-            if let Err(MineAlreadyRunning { pid }) = mine_palace_lock::mine_palace_lock(&palace_path) {
-                eprintln!("  Error: another mpr mine process (PID {}) already running for this palace", pid);
+            if let Err(MineAlreadyRunning { pid }) =
+                mine_palace_lock::mine_palace_lock(&palace_path)
+            {
+                eprintln!(
+                    "  Error: another mpr mine process (PID {}) already running for this palace",
+                    pid
+                );
                 std::process::exit(1);
             }
             cmd_mine(

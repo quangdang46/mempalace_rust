@@ -164,7 +164,11 @@ fn collect_contexts(corpus_lines: &[String], name: &str, max_lines: usize) -> Ve
         if !needle_regex.is_match(line) {
             continue;
         }
-        let trimmed = line.trim().chars().take(CONTEXT_WINDOW_CHARS).collect::<String>();
+        let trimmed = line
+            .trim()
+            .chars()
+            .take(CONTEXT_WINDOW_CHARS)
+            .collect::<String>();
         if trimmed.is_empty() || seen.contains(&trimmed) {
             continue;
         }
@@ -180,7 +184,12 @@ fn collect_contexts(corpus_lines: &[String], name: &str, max_lines: usize) -> Ve
 fn build_user_prompt(candidates_with_contexts: &[(String, String, Vec<String>)]) -> String {
     let mut parts = vec!["CANDIDATES:".to_string()];
     for (i, (name, current_type, contexts)) in candidates_with_contexts.iter().enumerate() {
-        parts.push(format!("\n{}. {}  (currently: {})", i + 1, name, current_type));
+        parts.push(format!(
+            "\n{}. {}  (currently: {})",
+            i + 1,
+            name,
+            current_type
+        ));
         if contexts.is_empty() {
             parts.push("   > (no context available)".to_string());
         } else {
@@ -280,18 +289,21 @@ fn parse_response(text: &str, expected_names: &[String]) -> HashMap<String, (Ent
                     None => continue,
                 };
 
-                let name = obj.get("name")
+                let name = obj
+                    .get("name")
                     .or(obj.get("candidate"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let label = obj.get("label")
+                let label = obj
+                    .get("label")
                     .or(obj.get("type"))
                     .or(obj.get("classification"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let reason = obj.get("reason")
+                let reason = obj
+                    .get("reason")
                     .and_then(|v| v.as_str())
                     .map(|s| s.chars().take(120).collect::<String>())
                     .unwrap_or_default();
@@ -300,7 +312,10 @@ fn parse_response(text: &str, expected_names: &[String]) -> HashMap<String, (Ent
                     continue;
                 };
 
-                let canonical = expected_lower.get(&name.to_lowercase()).cloned().unwrap_or(name.clone());
+                let canonical = expected_lower
+                    .get(&name.to_lowercase())
+                    .cloned()
+                    .unwrap_or(name.clone());
                 let lbl = EntityLabel::from_str(&label);
                 result.insert(canonical, (lbl, reason));
             }
@@ -340,14 +355,19 @@ fn apply_classifications(
         ("PROJECT", "projects"),
         ("TOPIC", "topics"),
         ("AMBIGUOUS", "uncertain"),
-    ].into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
 
     let bucket_to_type: HashMap<&str, &str> = [
         ("people", "person"),
         ("projects", "project"),
         ("topics", "topic"),
         ("uncertain", "uncertain"),
-    ].into_iter().collect();
+    ]
+    .into_iter()
+    .collect();
 
     let buckets = [
         ("people", &detected.people),
@@ -384,9 +404,15 @@ fn apply_classifications(
                 continue;
             }
 
-            let target_bucket = label_to_bucket.get(label.as_str()).copied().unwrap_or("uncertain");
+            let target_bucket = label_to_bucket
+                .get(label.as_str())
+                .copied()
+                .unwrap_or("uncertain");
 
-            let final_bucket = if *label == EntityLabel::Project && !allow_project_promotions && !is_authoritative_project(entry) {
+            let final_bucket = if *label == EntityLabel::Project
+                && !allow_project_promotions
+                && !is_authoritative_project(entry)
+            {
                 "uncertain"
             } else {
                 target_bucket
@@ -401,7 +427,10 @@ fn apply_classifications(
             };
             signals.push(reason_short);
             updated.signals = signals;
-            updated.entry_type = bucket_to_type.get(final_bucket).unwrap_or(&"uncertain").to_string();
+            updated.entry_type = bucket_to_type
+                .get(final_bucket)
+                .unwrap_or(&"uncertain")
+                .to_string();
 
             if final_bucket != old_bucket {
                 reclassified += 1;
@@ -437,7 +466,11 @@ pub fn refine_entities(
     allow_project_promotions: bool,
     cancel_flag: Option<&AtomicBool>,
 ) -> RefineResult {
-    let batch_size = if batch_size == 0 { BATCH_SIZE } else { batch_size };
+    let batch_size = if batch_size == 0 {
+        BATCH_SIZE
+    } else {
+        batch_size
+    };
 
     // Collect candidates from people/projects/uncertain buckets
     let mut candidates: Vec<(String, String)> = Vec::new();
@@ -542,7 +575,12 @@ pub fn refine_entities(
         completed += 1;
 
         if show_progress {
-            eprint_progress(idx + 1, batches.len(), &batch[batch.len().saturating_sub(1)].0, batches.len());
+            eprint_progress(
+                idx + 1,
+                batches.len(),
+                &batch[batch.len().saturating_sub(1)].0,
+                batches.len(),
+            );
         }
     }
 
@@ -550,11 +588,8 @@ pub fn refine_entities(
         eprintln!();
     }
 
-    let (merged, reclassified, dropped) = apply_classifications(
-        detected,
-        &all_decisions,
-        allow_project_promotions,
-    );
+    let (merged, reclassified, dropped) =
+        apply_classifications(detected, &all_decisions, allow_project_promotions);
 
     RefineResult {
         merged,
@@ -569,10 +604,21 @@ pub fn refine_entities(
 
 fn eprint_progress(batch_idx: usize, total: usize, current_name: &str, _total_batches: usize) {
     let width = 40;
-    let filled = if total > 0 { (width * batch_idx) / total } else { 0 };
+    let filled = if total > 0 {
+        (width * batch_idx) / total
+    } else {
+        0
+    };
     let bar = format!("{:█<1$}{:░<2$}", "", filled, width - filled);
-    let name = if current_name.len() > 30 { &current_name[..30] } else { current_name };
-    eprint!("\r  LLM refine: [{:40}] batch {}/{}  current: {:.<30}", bar, batch_idx, total, name);
+    let name = if current_name.len() > 30 {
+        &current_name[..30]
+    } else {
+        current_name
+    };
+    eprint!(
+        "\r  LLM refine: [{:40}] batch {}/{}  current: {:.<30}",
+        bar, batch_idx, total, name
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -610,7 +656,10 @@ mod tests {
             topics: vec![],
             uncertain: vec![],
         };
-        let decisions = HashMap::from([("The".to_string(), (EntityLabel::CommonWord, "English word".to_string()))]);
+        let decisions = HashMap::from([(
+            "The".to_string(),
+            (EntityLabel::CommonWord, "English word".to_string()),
+        )]);
 
         let (merged, reclassified, dropped) = apply_classifications(&detected, &decisions, true);
         assert_eq!(dropped, 1);

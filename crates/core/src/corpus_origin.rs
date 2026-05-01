@@ -32,14 +32,7 @@ const AI_UNAMBIGUOUS_TERMS: &[&str] = &[
 ];
 
 const AI_AMBIGUOUS_TERMS: &[&str] = &[
-    "Claude",
-    "Opus",
-    "Sonnet",
-    "Haiku",
-    "Gemini",
-    "Bard",
-    "Llama",
-    "Mistral",
+    "Claude", "Opus", "Sonnet", "Haiku", "Gemini", "Bard", "Llama", "Mistral",
 ];
 
 const TURN_MARKERS: &[&str] = &[
@@ -66,12 +59,22 @@ pub struct CorpusOriginResult {
 
 fn brand_pattern(term: &str) -> String {
     let escaped = regex::escape(term);
-    let prefix = if term.chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
+    let prefix = if term
+        .chars()
+        .next()
+        .map(|c| c.is_alphanumeric() || c == '_')
+        .unwrap_or(false)
+    {
         r"\b"
     } else {
         ""
     };
-    let suffix = if term.chars().last().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
+    let suffix = if term
+        .chars()
+        .last()
+        .map(|c| c.is_alphanumeric() || c == '_')
+        .unwrap_or(false)
+    {
         r"\b"
     } else {
         ""
@@ -83,7 +86,8 @@ pub fn detect_origin_heuristic(samples: &[&str]) -> CorpusOriginResult {
     let combined = samples.join("\n\n");
     let total_chars = combined.len().max(1);
 
-    let mut unambiguous_hits: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut unambiguous_hits: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut total_unambiguous = 0usize;
     for term in AI_UNAMBIGUOUS_TERMS {
         let pattern = brand_pattern(term);
@@ -96,7 +100,8 @@ pub fn detect_origin_heuristic(samples: &[&str]) -> CorpusOriginResult {
         }
     }
 
-    let mut ambiguous_hits: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut ambiguous_hits: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     let mut total_ambiguous = 0usize;
     for term in AI_AMBIGUOUS_TERMS {
         let pattern = brand_pattern(term);
@@ -121,12 +126,7 @@ pub fn detect_origin_heuristic(samples: &[&str]) -> CorpusOriginResult {
     }
 
     let has_ai_context = total_unambiguous > 0 || turn_hits > 0;
-    let counted_brand_hits = total_unambiguous
-        + if has_ai_context {
-            total_ambiguous
-        } else {
-            0
-        };
+    let counted_brand_hits = total_unambiguous + if has_ai_context { total_ambiguous } else { 0 };
 
     let brand_density = counted_brand_hits as f64 / (total_chars as f64 / 1000.0);
     let turn_density = turn_hits as f64 / (total_chars as f64 / 1000.0);
@@ -231,7 +231,10 @@ pub fn resolve_corpus_origin(
     detect_origin_heuristic(&samples)
 }
 
-pub fn write_origin_json(palace_path: &std::path::Path, result: &CorpusOriginResult) -> std::io::Result<()> {
+pub fn write_origin_json(
+    palace_path: &std::path::Path,
+    result: &CorpusOriginResult,
+) -> std::io::Result<()> {
     let origin_path = palace_path.join(".mempalace").join("origin.json");
     if let Some(parent) = origin_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -246,7 +249,10 @@ mod tests {
 
     #[test]
     fn test_detect_ai_dialogue_with_unambiguous_terms() {
-        let samples = vec!["user: Hello\nassistant: Hi, I'm Claude.", "ChatGPT is great!"];
+        let samples = vec![
+            "user: Hello\nassistant: Hi, I'm Claude.",
+            "ChatGPT is great!",
+        ];
         let result = detect_origin_heuristic(&samples);
         assert!(result.likely_ai_dialogue);
         assert!(result.confidence > 0.4);
@@ -269,8 +275,10 @@ mod tests {
 
     #[test]
     fn test_ambiguous_terms_suppressed_without_context() {
-        let samples = vec!["My friend Claude told me a story about a haiku.",
-                          "The gemini constellation is visible tonight."];
+        let samples = vec![
+            "My friend Claude told me a story about a haiku.",
+            "The gemini constellation is visible tonight.",
+        ];
         let result = detect_origin_heuristic(&samples);
         assert!(!result.likely_ai_dialogue);
         assert!(result.confidence >= 0.9);

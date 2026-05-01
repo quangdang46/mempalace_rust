@@ -156,12 +156,16 @@ pub fn compute_topic_tunnels(
             let topics_b = &wing_topics[*wb];
             let keys_a: HashSet<&String> = topics_a.keys().collect();
             let keys_b: HashSet<&String> = topics_b.keys().collect();
-            let shared_keys: HashSet<String> = keys_a.intersection(&keys_b).map(|s| (*s).clone()).collect();
+            let shared_keys: HashSet<String> =
+                keys_a.intersection(&keys_b).map(|s| (*s).clone()).collect();
             if shared_keys.len() < min_count {
                 continue;
             }
             for key in &shared_keys {
-                let topic_name = topics_a.get(key).cloned().unwrap_or_else(|| topics_b.get(key).cloned().unwrap_or_default());
+                let topic_name = topics_a
+                    .get(key)
+                    .cloned()
+                    .unwrap_or_else(|| topics_b.get(key).cloned().unwrap_or_default());
                 let room = topic_room(&topic_name);
                 let tunnel = create_tunnel(
                     wa,

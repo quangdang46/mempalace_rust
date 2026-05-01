@@ -23,7 +23,9 @@ fn strip_noise(text: &str) -> String {
         }
     }
 
-    if let Ok(re) = regex::Regex::new(r"(?m)^(?:> )?Ran \d+ (?:Stop|PreCompact|PreToolUse|PostToolUse|UserPromptSubmit|Notification|SessionStart|SessionEnd) hook[s]?.*$") {
+    if let Ok(re) = regex::Regex::new(
+        r"(?m)^(?:> )?Ran \d+ (?:Stop|PreCompact|PreToolUse|PostToolUse|UserPromptSubmit|Notification|SessionStart|SessionEnd) hook[s]?.*$",
+    ) {
         result = re.replace_all(&result, "").to_string();
     }
 
@@ -71,8 +73,14 @@ fn format_tool_use(content: &Value) -> String {
         None => return String::new(),
     };
 
-    let tool_name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
-    let args = obj.get("arguments").or_else(|| obj.get("input")).and_then(|v| v.as_object());
+    let tool_name = obj
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+    let args = obj
+        .get("arguments")
+        .or_else(|| obj.get("input"))
+        .and_then(|v| v.as_object());
 
     match tool_name {
         "Bash" => {
@@ -137,10 +145,7 @@ fn format_tool_result(content: &Value, tool_name: Option<&str>) -> String {
         None => return String::new(),
     };
 
-    let text = obj
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let text = obj.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
     match tool_name {
         Some("Read") | Some("Edit") | Some("Write") => String::new(),
@@ -157,7 +162,12 @@ fn format_tool_result(content: &Value, tool_name: Option<&str>) -> String {
             } else {
                 let head: String = lines[..20].join("\n");
                 let tail: String = lines[lines.len() - 20..].join("\n");
-                format!("→ {}\n… [{} lines truncated] …\n{}", head, lines.len() - 40, tail)
+                format!(
+                    "→ {}\n… [{} lines truncated] …\n{}",
+                    head,
+                    lines.len() - 40,
+                    tail
+                )
             }
         }
         Some("Grep") | Some("Glob") => {
@@ -332,7 +342,10 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
                             continue;
                         }
                         let tool_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let tool_name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                        let tool_name = obj
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown");
                         tool_use_map.insert(tool_id.to_string(), tool_name.to_string());
                     }
                 }
@@ -346,7 +359,8 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
             }
             "human" | "user" => {
                 let content_val = message.get("content")?;
-                let (user_text, is_tool_only) = extract_claude_code_user_text(content_val, &tool_use_map);
+                let (user_text, is_tool_only) =
+                    extract_claude_code_user_text(content_val, &tool_use_map);
 
                 if is_tool_only {
                     if let Some(prev) = messages.last_mut() {
@@ -914,7 +928,10 @@ fn extract_content_to_string(content: &Value) -> String {
     }
 }
 
-fn extract_claude_code_assistant_text(content: &Value, tool_use_map: &HashMap<String, String>) -> String {
+fn extract_claude_code_assistant_text(
+    content: &Value,
+    tool_use_map: &HashMap<String, String>,
+) -> String {
     match content {
         Value::String(s) => s.trim().to_string(),
         Value::Array(arr) => {
@@ -942,7 +959,10 @@ fn extract_claude_code_assistant_text(content: &Value, tool_use_map: &HashMap<St
                 // tool_result in assistant messages is rare but possible;
                 // format it if we have the tool name
                 else if item_type == "tool_result" {
-                    let tool_id = obj.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let tool_id = obj
+                        .get("tool_use_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     let tool_name = tool_use_map.get(tool_id).map(|s| s.as_str());
                     let formatted = format_tool_result(item, tool_name);
                     if !formatted.is_empty() {
@@ -961,7 +981,10 @@ fn extract_claude_code_assistant_text(content: &Value, tool_use_map: &HashMap<St
     }
 }
 
-fn extract_claude_code_user_text(content: &Value, tool_use_map: &HashMap<String, String>) -> (String, bool) {
+fn extract_claude_code_user_text(
+    content: &Value,
+    tool_use_map: &HashMap<String, String>,
+) -> (String, bool) {
     if let Value::String(s) = content {
         return (s.trim().to_string(), false);
     }
@@ -992,7 +1015,10 @@ fn extract_claude_code_user_text(content: &Value, tool_use_map: &HashMap<String,
             }
         } else if item_type == "tool_result" {
             has_tool_result = true;
-            let tool_id = obj.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
+            let tool_id = obj
+                .get("tool_use_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let tool_name = tool_use_map.get(tool_id).map(|s| s.as_str());
             let formatted = format_tool_result(item, tool_name);
             if !formatted.is_empty() {

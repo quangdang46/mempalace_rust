@@ -161,7 +161,12 @@ pub trait LlmProvider: Send + Sync {
 // HTTP helper
 // ---------------------------------------------------------------------------
 
-fn http_post_json(url: &str, body: serde_json::Value, headers: &[(String, String)], timeout: Duration) -> Result<serde_json::Value, LlmError> {
+fn http_post_json(
+    url: &str,
+    body: serde_json::Value,
+    headers: &[(String, String)],
+    timeout: Duration,
+) -> Result<serde_json::Value, LlmError> {
     let client = Client::builder()
         .timeout(timeout)
         .build()
@@ -181,15 +186,15 @@ fn http_post_json(url: &str, body: serde_json::Value, headers: &[(String, String
         let detail = resp.text().unwrap_or_default();
         return Err(LlmError::NonOk {
             code: status.as_u16(),
-            message: if detail.len() > 500 { detail[..500].to_string() } else { detail },
+            message: if detail.len() > 500 {
+                detail[..500].to_string()
+            } else {
+                detail
+            },
         });
     }
 
-    let text = resp
-        .text()
-        .map_err(LlmError::Http)?
-        .trim()
-        .to_string();
+    let text = resp.text().map_err(LlmError::Http)?.trim().to_string();
     let json: serde_json::Value = serde_json::from_str(&text).map_err(LlmError::InvalidJson)?;
     Ok(json)
 }
@@ -270,7 +275,10 @@ impl LlmProvider for OllamaProvider {
         };
 
         let Ok(data) = resp.json::<serde_json::Value>() else {
-            return (false, format!("Invalid JSON from Ollama at {}", self.endpoint));
+            return (
+                false,
+                format!("Invalid JSON from Ollama at {}", self.endpoint),
+            );
         };
 
         let names: std::collections::HashSet<String> = data
@@ -278,15 +286,18 @@ impl LlmProvider for OllamaProvider {
             .and_then(|m| m.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|m| m.get("name").and_then(|n| n.as_str().map(|s| s.to_string())))
+                    .filter_map(|m| {
+                        m.get("name")
+                            .and_then(|n| n.as_str().map(|s| s.to_string()))
+                    })
                     .collect()
             })
             .unwrap_or_default();
 
-        let wanted: std::collections::HashSet<String> = [
-            self.model.clone(),
-            format!("{}:latest", self.model),
-        ].into_iter().collect();
+        let wanted: std::collections::HashSet<String> =
+            [self.model.clone(), format!("{}:latest", self.model)]
+                .into_iter()
+                .collect();
 
         if names.intersection(&wanted).count() == 0 {
             return (
@@ -341,7 +352,9 @@ impl OpenAICompatProvider {
     }
 
     fn resolve_url(&self) -> Result<String, LlmError> {
-        let endpoint = self.endpoint.as_ref()
+        let endpoint = self
+            .endpoint
+            .as_ref()
             .ok_or_else(|| LlmError::Unreachable {
                 endpoint: "(none)".to_string(),
                 reason: "no --llm-endpoint configured".to_string(),
@@ -411,7 +424,8 @@ impl LlmProvider for OpenAICompatProvider {
             return (false, "no --llm-endpoint configured".to_string());
         };
 
-        let base = endpoint.trim_end_matches('/')
+        let base = endpoint
+            .trim_end_matches('/')
             .trim_end_matches("/chat/completions")
             .trim_end_matches("/v1");
 
@@ -428,7 +442,15 @@ impl LlmProvider for OpenAICompatProvider {
 
         match req.send() {
             Ok(resp) if resp.status().is_success() => (true, "ok".to_string()),
-            Ok(resp) => (false, format!("HTTP {} from {}: {}", resp.status().as_u16(), endpoint, resp.text().unwrap_or_default())),
+            Ok(resp) => (
+                false,
+                format!(
+                    "HTTP {} from {}: {}",
+                    resp.status().as_u16(),
+                    endpoint,
+                    resp.text().unwrap_or_default()
+                ),
+            ),
             Err(e) => (false, format!("Cannot reach {}: {}", endpoint, e)),
         }
     }
@@ -472,11 +494,10 @@ impl AnthropicProvider {
 
 impl LlmProvider for AnthropicProvider {
     fn classify(&self, system: &str, user: &str, json_mode: bool) -> Result<LlmResponse, LlmError> {
-        let api_key = self.api_key.as_ref()
-            .ok_or_else(|| LlmError::Unreachable {
-                endpoint: self.endpoint.clone(),
-                reason: "ANTHROPIC_API_KEY not set (use --llm-api-key or env)".to_string(),
-            })?;
+        let api_key = self.api_key.as_ref().ok_or_else(|| LlmError::Unreachable {
+            endpoint: self.endpoint.clone(),
+            reason: "ANTHROPIC_API_KEY not set (use --llm-api-key or env)".to_string(),
+        })?;
 
         let mut sys_prompt = system.to_string();
         if json_mode {
@@ -493,10 +514,18 @@ impl LlmProvider for AnthropicProvider {
 
         let headers = [
             ("X-API-Key".to_string(), api_key.clone()),
-            ("anthropic-version".to_string(), ANTHROPIC_API_VERSION.to_string()),
+            (
+                "anthropic-version".to_string(),
+                ANTHROPIC_API_VERSION.to_string(),
+            ),
         ];
 
-        let data = http_post_json(&format!("{}/v1/messages", self.endpoint), body, &headers, self.timeout)?;
+        let data = http_post_json(
+            &format!("{}/v1/messages", self.endpoint),
+            body,
+            &headers,
+            self.timeout,
+        )?;
 
         let text: String = data
             .get("content")
@@ -525,7 +554,10 @@ impl LlmProvider for AnthropicProvider {
 
     fn check_available(&self) -> Availability {
         if self.api_key.is_none() {
-            return (false, "ANTHROPIC_API_KEY not set (use --llm-api-key or env)".to_string());
+            return (
+                false,
+                "ANTHROPIC_API_KEY not set (use --llm-api-key or env)".to_string(),
+            );
         }
         // Don't probe — a live request would cost money. First real call will surface auth errors.
         (true, "ok".to_string())
@@ -559,9 +591,22 @@ pub fn get_provider(
     let timeout = Duration::from_secs(timeout_secs);
 
     match name {
-        "ollama" => Ok(Box::new(OllamaProvider::new(model.to_string(), endpoint, timeout))),
-        "openai-compat" => Ok(Box::new(OpenAICompatProvider::new(model.to_string(), endpoint, api_key, timeout))),
-        "anthropic" => Ok(Box::new(AnthropicProvider::new(model.to_string(), api_key, timeout))),
+        "ollama" => Ok(Box::new(OllamaProvider::new(
+            model.to_string(),
+            endpoint,
+            timeout,
+        ))),
+        "openai-compat" => Ok(Box::new(OpenAICompatProvider::new(
+            model.to_string(),
+            endpoint,
+            api_key,
+            timeout,
+        ))),
+        "anthropic" => Ok(Box::new(AnthropicProvider::new(
+            model.to_string(),
+            api_key,
+            timeout,
+        ))),
         _ => Err(LlmError::UnknownProvider {
             name: name.to_string(),
             choices: "ollama, openai-compat, anthropic".to_string(),
@@ -585,31 +630,55 @@ mod tests {
 
     #[test]
     fn test_localhost_is_local() {
-        assert!(endpoint_is_local(&Some("http://localhost:11434".to_string())));
-        assert!(endpoint_is_local(&Some("http://127.0.0.1:11434".to_string())));
+        assert!(endpoint_is_local(&Some(
+            "http://localhost:11434".to_string()
+        )));
+        assert!(endpoint_is_local(&Some(
+            "http://127.0.0.1:11434".to_string()
+        )));
         assert!(endpoint_is_local(&Some("http://[::1]:11434".to_string())));
     }
 
     #[test]
     fn test_rfc1918_is_local() {
-        assert!(endpoint_is_local(&Some("http://192.168.1.100:11434".to_string())));
-        assert!(endpoint_is_local(&Some("http://10.0.0.1:11434".to_string())));
-        assert!(endpoint_is_local(&Some("http://172.16.0.1:11434".to_string())));
-        assert!(endpoint_is_local(&Some("http://172.31.255.255:11434".to_string())));
+        assert!(endpoint_is_local(&Some(
+            "http://192.168.1.100:11434".to_string()
+        )));
+        assert!(endpoint_is_local(&Some(
+            "http://10.0.0.1:11434".to_string()
+        )));
+        assert!(endpoint_is_local(&Some(
+            "http://172.16.0.1:11434".to_string()
+        )));
+        assert!(endpoint_is_local(&Some(
+            "http://172.31.255.255:11434".to_string()
+        )));
     }
 
     #[test]
     fn test_public_is_not_local() {
-        assert!(!endpoint_is_local(&Some("https://api.anthropic.com".to_string())));
-        assert!(!endpoint_is_local(&Some("https://api.openai.com/v1".to_string())));
-        assert!(!endpoint_is_local(&Some("https://openrouter.ai".to_string())));
+        assert!(!endpoint_is_local(&Some(
+            "https://api.anthropic.com".to_string()
+        )));
+        assert!(!endpoint_is_local(&Some(
+            "https://api.openai.com/v1".to_string()
+        )));
+        assert!(!endpoint_is_local(&Some(
+            "https://openrouter.ai".to_string()
+        )));
     }
 
     #[test]
     fn test_tailscale_cgnat_is_local() {
-        assert!(endpoint_is_local(&Some("http://100.64.0.1:11434".to_string())));
-        assert!(endpoint_is_local(&Some("http://100.127.255.255:11434".to_string())));
-        assert!(!endpoint_is_local(&Some("http://100.128.0.0:11434".to_string())));
+        assert!(endpoint_is_local(&Some(
+            "http://100.64.0.1:11434".to_string()
+        )));
+        assert!(endpoint_is_local(&Some(
+            "http://100.127.255.255:11434".to_string()
+        )));
+        assert!(!endpoint_is_local(&Some(
+            "http://100.128.0.0:11434".to_string()
+        )));
     }
 
     #[test]

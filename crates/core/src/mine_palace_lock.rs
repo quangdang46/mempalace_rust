@@ -1,7 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::path::PathBuf;
 use std::path::Path;
+use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
@@ -19,7 +19,11 @@ impl std::fmt::Debug for MineAlreadyRunning {
 
 impl std::fmt::Display for MineAlreadyRunning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "another mpr mine process (PID {}) already running for this palace", self.pid)
+        write!(
+            f,
+            "another mpr mine process (PID {}) already running for this palace",
+            self.pid
+        )
     }
 }
 
@@ -61,19 +65,17 @@ pub fn mine_palace_lock(palace_path: &Path) -> Result<(), MineAlreadyRunning> {
             }
             Ok(())
         }
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            match read_lock_pid(&lock_path) {
-                Some(pid) if is_process_running(pid) => Err(MineAlreadyRunning { pid }),
-                _ => {
-                    if let Err(e) = fs::remove_file(&lock_path) {
-                        return Err(MineAlreadyRunning {
-                            pid: e.raw_os_error().unwrap_or(0) as u32,
-                        });
-                    }
-                    mine_palace_lock(palace_path)
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => match read_lock_pid(&lock_path) {
+            Some(pid) if is_process_running(pid) => Err(MineAlreadyRunning { pid }),
+            _ => {
+                if let Err(e) = fs::remove_file(&lock_path) {
+                    return Err(MineAlreadyRunning {
+                        pid: e.raw_os_error().unwrap_or(0) as u32,
+                    });
                 }
+                mine_palace_lock(palace_path)
             }
-        }
+        },
         Err(e) => Err(MineAlreadyRunning {
             pid: e.raw_os_error().unwrap_or(0) as u32,
         }),
@@ -81,8 +83,8 @@ pub fn mine_palace_lock(palace_path: &Path) -> Result<(), MineAlreadyRunning> {
 }
 
 fn get_lock_dir() -> io::Result<PathBuf> {
-    let home =
-        std::env::var_os("HOME").ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "$HOME not set"))?;
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "$HOME not set"))?;
     Ok(PathBuf::from(home).join(".mempalace").join("locks"))
 }
 
