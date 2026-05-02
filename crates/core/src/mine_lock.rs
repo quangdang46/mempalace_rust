@@ -104,6 +104,7 @@ fn read_lock_pid(path: &PathBuf) -> Option<u32> {
     fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
+#[allow(unused)]
 fn is_process_running(_pid: u32) -> bool {
     // Simple cross-platform check: try to access /proc/{pid} on Unix-like systems.
     // For simplicity, we use a basic heuristic: if the process dir is young (< 60s),
