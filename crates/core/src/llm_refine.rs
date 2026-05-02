@@ -77,12 +77,13 @@ impl EntityLabel {
         }
     }
 
+    #[allow(unused)]
     fn as_bucket(&self) -> &'static str {
         match self {
             EntityLabel::Person => "people",
             EntityLabel::Project => "projects",
             EntityLabel::Topic => "topics",
-            EntityLabel::CommonWord => return "", // dropped
+            EntityLabel::CommonWord => "", // dropped
             EntityLabel::Ambiguous => "uncertain",
         }
     }
@@ -604,11 +605,7 @@ pub fn refine_entities(
 
 fn eprint_progress(batch_idx: usize, total: usize, current_name: &str, _total_batches: usize) {
     let width = 40;
-    let filled = if total > 0 {
-        (width * batch_idx) / total
-    } else {
-        0
-    };
+    let filled = batch_idx.saturating_mul(width).checked_div(total).unwrap_or(0);
     let bar = format!("{:█<1$}{:░<2$}", "", filled, width - filled);
     let name = if current_name.len() > 30 {
         &current_name[..30]
@@ -625,6 +622,7 @@ fn eprint_progress(batch_idx: usize, total: usize, current_name: &str, _total_ba
 // Corpus text collection
 // ---------------------------------------------------------------------------
 
+#[allow(unused)]
 const PROSE_EXTENSIONS: &[&str] = &[".md", ".txt", ".rst", ".markdown"];
 
 #[cfg(test)]
@@ -661,7 +659,7 @@ mod tests {
             (EntityLabel::CommonWord, "English word".to_string()),
         )]);
 
-        let (merged, reclassified, dropped) = apply_classifications(&detected, &decisions, true);
+        let (merged, _reclassified, dropped) = apply_classifications(&detected, &decisions, true);
         assert_eq!(dropped, 1);
         assert!(merged.people.is_empty());
     }

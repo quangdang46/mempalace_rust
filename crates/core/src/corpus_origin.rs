@@ -82,6 +82,7 @@ fn brand_pattern(term: &str) -> String {
     format!("{}{}{}", prefix, escaped, suffix)
 }
 
+#[allow(clippy::regex_creation_in_loops)]
 pub fn detect_origin_heuristic(samples: &[&str]) -> CorpusOriginResult {
     let combined = samples.join("\n\n");
     let total_chars = combined.len().max(1);

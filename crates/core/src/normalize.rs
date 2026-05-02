@@ -366,7 +366,7 @@ fn try_claude_code_jsonl(content: &str) -> Option<String> {
                     if let Some(prev) = messages.last_mut() {
                         if prev.0 == "assistant" {
                             if !user_text.is_empty() {
-                                prev.1.push_str("\n");
+                                prev.1.push('\n');
                                 prev.1.push_str(&user_text);
                             }
                             continue;

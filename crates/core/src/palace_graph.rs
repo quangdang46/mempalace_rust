@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;
 
+#[allow(unused)]
 const GRAPH_CACHE_TTL: Duration = Duration::from_secs(60);
 const TOPIC_ROOM_PREFIX: &str = "topic:";
 

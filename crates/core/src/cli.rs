@@ -357,6 +357,7 @@ fn merge_detected_into_registry(detected: &DetectedEntities) -> Result<PathBuf> 
 // Command handlers
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_init(
     dir: &PathBuf,
     yes: bool,
@@ -1270,7 +1271,7 @@ fn cmd_compress(
     Ok(())
 }
 
-fn cmd_sweep(target: &PathBuf, palace_arg: Option<&str>) -> Result<()> {
+fn cmd_sweep(target: &Path, palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
     let stats = if target.is_dir() {

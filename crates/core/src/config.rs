@@ -287,7 +287,7 @@ impl Config {
                 languages: file_config
                     .get("languages")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_else(Vec::new),
+                    .unwrap_or_default(),
             })
         } else {
             Ok(Config::default())
