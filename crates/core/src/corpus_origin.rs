@@ -168,7 +168,7 @@ pub fn detect_origin_heuristic(samples: &[&str]) -> CorpusOriginResult {
         ));
     }
 
-    const MEANINGFUL_TEXT_FLOOR: usize = 150;
+    const MEANINGFUL_TEXT_FLOOR: usize = 50;
 
     if brand_density >= 0.5 || turn_density >= 2.0 {
         let confidence = (0.6 + 0.1 * (brand_density + turn_density)).min(0.95);
@@ -182,20 +182,38 @@ pub fn detect_origin_heuristic(samples: &[&str]) -> CorpusOriginResult {
         };
     }
 
-    if counted_brand_hits == 0 && turn_hits == 0 && total_chars >= MEANINGFUL_TEXT_FLOOR {
-        let mut narrative_evidence = evidence;
-        narrative_evidence.push(format!(
-            "no unambiguous AI signal across {} chars of text — pure narrative",
-            total_chars
-        ));
-        return CorpusOriginResult {
-            likely_ai_dialogue: false,
-            confidence: 0.9,
-            primary_platform: None,
-            user_name: None,
-            agent_persona_names: Vec::new(),
-            evidence: narrative_evidence,
-        };
+    if counted_brand_hits == 0 && turn_hits == 0 {
+        // Zero AI signals — if substantial enough, narrative (not AI dialogue)
+        if total_chars >= MEANINGFUL_TEXT_FLOOR {
+            let mut narrative_evidence = evidence;
+            narrative_evidence.push(format!(
+                "no unambiguous AI signal across {} chars of text — pure narrative",
+                total_chars
+            ));
+            return CorpusOriginResult {
+                likely_ai_dialogue: false,
+                confidence: 0.9,
+                primary_platform: None,
+                user_name: None,
+                agent_persona_names: Vec::new(),
+                evidence: narrative_evidence,
+            };
+        } else {
+            // Trivial text — insufficient to determine, default to AI
+            let mut insufficient_evidence = evidence;
+            insufficient_evidence.push(format!(
+                "insufficient text ({} chars) — applying default-stance (ai_dialogue=True, low confidence). Tier 2 LLM check recommended to confirm or override.",
+                total_chars
+            ));
+            return CorpusOriginResult {
+                likely_ai_dialogue: true,
+                confidence: 0.4,
+                primary_platform: None,
+                user_name: None,
+                agent_persona_names: Vec::new(),
+                evidence: insufficient_evidence,
+            };
+        }
     }
 
     let reason = if counted_brand_hits > 0 || turn_hits > 0 {
