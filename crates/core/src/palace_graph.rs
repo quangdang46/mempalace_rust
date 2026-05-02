@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,11 +58,13 @@ fn _save_tunnels(tunnels: &[ExplicitTunnel]) -> std::io::Result<()> {
     let path = _tunnel_file();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
+        #[cfg(unix)]
         fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
     }
     let tmp_path = path.with_extension("json.tmp");
     let json = serde_json::to_string_pretty(tunnels)?;
     fs::write(&tmp_path, json)?;
+    #[cfg(unix)]
     if let Ok(meta) = tmp_path.metadata() {
         let mut perms = meta.permissions();
         perms.set_mode(0o600);
