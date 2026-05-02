@@ -605,7 +605,10 @@ pub fn refine_entities(
 
 fn eprint_progress(batch_idx: usize, total: usize, current_name: &str, _total_batches: usize) {
     let width = 40;
-    let filled = batch_idx.saturating_mul(width).checked_div(total).unwrap_or(0);
+    let filled = batch_idx
+        .saturating_mul(width)
+        .checked_div(total)
+        .unwrap_or(0);
     let bar = format!("{:█<1$}{:░<2$}", "", filled, width - filled);
     let name = if current_name.len() > 30 {
         &current_name[..30]
