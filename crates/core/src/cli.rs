@@ -411,18 +411,23 @@ fn cmd_init(
     println!("  MemPalace Init");
     println!("{}", "=".repeat(55));
 
-    let config = Config::load()?;
+    let mut config = Config::load()?;
     
-    // Idempotency check: if palace already exists, handle gracefully
-    let existing_config_path = &config.palace_path;
-    if existing_config_path.exists() {
+    // Canonicalize the target directory for comparison
+    let target_dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+    
+    // Idempotency check: if palace already exists at target dir, handle gracefully
+    let existing_palace_path = std::fs::canonicalize(&config.palace_path).unwrap_or_else(|_| config.palace_path.clone());
+    
+    // Check if target is the same as existing palace
+    if target_dir == existing_palace_path {
         // Check if it's a valid palace
-        let palace_db_path = existing_config_path.join(format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME));
+        let palace_db_path = target_dir.join(format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME));
         let is_valid_palace = palace_db_path.exists();
         
         if is_valid_palace {
             println!();
-            println!("  Palace already exists at: {}", existing_config_path.display());
+            println!("  Palace already exists at: {}", target_dir.display());
             println!();
             
             if yes {
@@ -504,11 +509,14 @@ fn cmd_init(
         }
     }
     
+    // Set the palace path to the target directory
+    config.palace_path = target_dir.clone();
+    config.save()?;
+    
     let config_path = config.init()?;
 
     if let Some(lang_val) = _lang {
         let languages: Vec<String> = lang_val.split(',').map(|s| s.trim().to_string()).collect();
-        let mut config = Config::load()?;
         config.languages = languages;
         config.save()?;
     }
