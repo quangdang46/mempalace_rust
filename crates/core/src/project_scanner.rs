@@ -878,7 +878,7 @@ pub fn discover_entities(project_dir: &Path, prose_file_cap: usize) -> Detection
     let prose_detected = if prose_files.is_empty() {
         DetectionResult::default()
     } else {
-        detect_prose_entities(&prose_files, prose_file_cap)
+        detect_prose_entities(&prose_files, prose_file_cap, None)
     };
 
     let has_real_signal = !real_signal.people.is_empty() || !real_signal.projects.is_empty();

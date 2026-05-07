@@ -364,7 +364,7 @@ pub fn auto_detect_from_directory(
         known_people.iter().map(|p| p.name.to_lowercase()).collect();
 
     let files = scan_for_detection(directory, 10);
-    let detection = detect_entities(&files, 10);
+    let detection = detect_entities(&files, 10, None);
     detection
         .people
         .into_iter()

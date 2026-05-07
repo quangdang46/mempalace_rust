@@ -723,7 +723,7 @@ impl EntityRegistry {
         text: &str,
         min_confidence: f32,
     ) -> anyhow::Result<Vec<LearnedEntity>> {
-        let detection = detect_from_content(text);
+        let detection = detect_from_content(text, None);
         let mut learned = Vec::new();
 
         for person in detection.people {

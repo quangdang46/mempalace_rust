@@ -627,19 +627,34 @@ Higher confidence thresholds eliminate false positives. Common English words tha
 
 ### Internationalization (i18n)
 
-Full locale system with language-specific entity detection patterns and UI strings:
+Locale system foundation with language-specific entity detection patterns and UI strings:
 
 **Supported locales:**
 - English (en) - Default
 - Portuguese (Brazil) (pt-BR) - Cyrillic script support
 - Russian (ru) - Cyrillic script support
 
-**Features:**
-- Locale-aware entity detection with language-specific verb patterns
+**Infrastructure:**
+- Locale-aware entity detection patterns (person verbs, project verbs, pronouns, stopwords)
 - Case-insensitive BCP 47 language code resolution (e.g., "pt" → "pt-BR")
-- Script-aware word boundaries for Unicode (Latin, Cyrillic, CJK, Arabic)
-- Localized UI strings for CLI messages
+- Localized CLI string retrieval API
 - Pluggable locale system for easy language additions
+
+**Integration status:**
+- Entity detection: Infrastructure in place, locale patterns can be loaded and used
+- CLI strings: API available for localized message retrieval
+- Script-aware boundaries: Module implemented but not yet integrated into entity detection
+
+**Usage:**
+```rust
+use mempalace_core::entity_detector::{load_locale_patterns, get_localized_string};
+
+// Load locale-specific patterns for entity detection
+let patterns = load_locale_patterns("pt-BR");
+
+// Get localized CLI strings
+let message = get_localized_string("init_complete", "pt-BR");
+```
 
 ### BM25 Reranking
 

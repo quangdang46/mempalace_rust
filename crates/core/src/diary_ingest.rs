@@ -187,7 +187,7 @@ fn split_entries(text: &str) -> Vec<(String, String)> {
 }
 
 fn extract_entities_for_metadata(text: &str) -> String {
-    let detection = detect_from_content(text);
+    let detection = detect_from_content(text, None);
     let names: Vec<String> = detection
         .people
         .into_iter()

@@ -16,6 +16,61 @@ use std::sync::LazyLock;
 // PATTERN TEMPLATES (stored as static strings, compiled per-name)
 // =============================================================================
 
+/// Locale-specific entity patterns loaded from i18n system
+#[derive(Debug, Clone, Default)]
+pub struct LocalePatterns {
+    pub person_verbs: Vec<String>,
+    pub project_verbs: Vec<String>,
+    pub pronouns: Vec<String>,
+    pub stopwords: Vec<String>,
+    pub candidate_pattern: String,
+    pub boundary_chars: String,
+    pub versioned_pattern: String,
+}
+
+/// Load locale patterns from the i18n system for a given locale code
+pub fn load_locale_patterns(locale_code: &str) -> Option<LocalePatterns> {
+    use crate::i18n::LocaleManager;
+    
+    let manager = LocaleManager::new().ok()?;
+    let locale = manager.get_locale(locale_code)?;
+    
+    let entity_data = &locale.entity;
+    
+    Some(LocalePatterns {
+        person_verbs: entity_data.person_verbs.clone(),
+        project_verbs: entity_data.project_verbs.clone(),
+        pronouns: entity_data.pronouns.clone(),
+        stopwords: entity_data.stopwords.clone(),
+        candidate_pattern: entity_data.candidate_pattern.clone(),
+        boundary_chars: entity_data.boundary_chars.clone(),
+        versioned_pattern: entity_data.versioned_pattern.clone(),
+    })
+}
+
+/// Get localized CLI string for a given key and locale code
+pub fn get_localized_string(key: &str, locale_code: &str) -> String {
+    use crate::i18n::LocaleManager;
+    
+    if let Ok(manager) = LocaleManager::new() {
+        if let Some(locale) = manager.get_locale(locale_code) {
+            // Simple key lookup based on the i18n structure
+            match key {
+                "init_complete" => locale.cli.init_complete.clone(),
+                "mine_complete" => locale.cli.mine_complete.clone(),
+                "search_no_results" => locale.cli.search_no_results.clone(),
+                "palace_not_found" => locale.cli.palace_not_found.clone(),
+                "corpus_empty" => locale.cli.corpus_empty.clone(),
+                _ => key.to_string(), // Fallback to key if not found
+            }
+        } else {
+            key.to_string() // Fallback to key if locale not found
+        }
+    } else {
+        key.to_string() // Fallback to key if manager fails
+    }
+}
+
 const PERSON_VERB_TEMPLATES: &[&str] = &[
     r"\b{name}\s+said\b",
     r"\b{name}\s+asked\b",
@@ -92,8 +147,40 @@ static PRONOUN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 });
 
 /// Build all patterns for a specific candidate name, with name escaped.
-fn build_name_patterns(name: &str) -> CompiledNamePatterns {
+fn build_name_patterns(name: &str, locale: Option<&LocalePatterns>) -> CompiledNamePatterns {
     let n = regex::escape(name);
+    
+    // Use locale-specific patterns if available, otherwise fall back to defaults
+    let person_verbs: Vec<&str> = locale
+        .and_then(|l| if l.person_verbs.is_empty() { None } else { Some(l.person_verbs.iter().map(|s| s.as_str()).collect()) })
+        .unwrap_or_else(|| PERSON_VERB_TEMPLATES.to_vec());
+    
+    let project_verbs: Vec<&str> = locale
+        .and_then(|l| if l.project_verbs.is_empty() { None } else { Some(l.project_verbs.iter().map(|s| s.as_str()).collect()) })
+        .unwrap_or_else(|| PROJECT_VERB_TEMPLATES.to_vec());
+    
+    // Build verb patterns from locale verbs
+    let person_verb_patterns: Vec<String> = person_verbs
+        .iter()
+        .map(|verb| format!(r"\b{name}\s+{}\b", verb))
+        .collect();
+    
+    let project_verb_patterns: Vec<String> = project_verbs
+        .iter()
+        .map(|verb| format!(r"\b(?:building|built|shipping|launching|deploying|installing)?\s+{}\b", verb))
+        .collect();
+    
+    // Combine locale patterns with default patterns
+    let combined_person_verbs: Vec<String> = person_verb_patterns
+        .into_iter()
+        .chain(PERSON_VERB_TEMPLATES.iter().map(|&s| s.to_string()))
+        .collect();
+    
+    let combined_project_verbs: Vec<String> = project_verb_patterns
+        .into_iter()
+        .chain(PROJECT_VERB_TEMPLATES.iter().map(|&s| s.to_string()))
+        .collect();
+    
     CompiledNamePatterns {
         // Dialogue patterns need multiline mode for ^ anchor
         dialogue: DIALOGUE_TEMPLATES
@@ -103,14 +190,14 @@ fn build_name_patterns(name: &str) -> CompiledNamePatterns {
                 RegexBuilder::new(&p).multi_line(true).build().unwrap()
             })
             .collect(),
-        person_verbs: PERSON_VERB_TEMPLATES
+        person_verbs: combined_person_verbs
             .iter()
             .map(|t| {
                 let p = t.replace("{name}", &n);
                 Regex::new(&p).unwrap()
             })
             .collect(),
-        project_verbs: PROJECT_VERB_TEMPLATES
+        project_verbs: combined_project_verbs
             .iter()
             .map(|t| {
                 let p = t.replace("{name}", &n);
@@ -827,8 +914,8 @@ fn is_common_name(name: &str) -> bool {
 // SIGNAL SCORING
 // =============================================================================
 
-fn score_entity(name: &str, text: &str, lines: &[&str]) -> ScoredEntity {
-    let patterns = build_name_patterns(name);
+fn score_entity(name: &str, text: &str, lines: &[&str], locale: Option<&LocalePatterns>) -> ScoredEntity {
+    let patterns = build_name_patterns(name, locale);
     let mut person_score: i32 = 0;
     let mut project_score: i32 = 0;
     let mut person_signals: Vec<String> = Vec::new();
@@ -1063,6 +1150,7 @@ fn classify_entity(name: &str, frequency: usize, scores: &ScoredEntity) -> Class
 
 fn detect_entities_two_pass(
     text: &str,
+    locale: Option<&LocalePatterns>,
 ) -> (
     Vec<ClassifiedEntity>,
     Vec<ClassifiedEntity>,
@@ -1084,7 +1172,7 @@ fn detect_entities_two_pass(
     sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     for (name, frequency) in sorted {
-        let mut scores = score_entity(&name, text, &lines);
+        let mut scores = score_entity(&name, text, &lines, locale);
         scores.frequency = frequency;
         let classified = classify_entity(&name, frequency, &scores);
 
@@ -1108,8 +1196,8 @@ fn detect_entities_two_pass(
 // =============================================================================
 
 /// Detect person entities in the given text.
-pub fn detect_people(text: &str) -> Vec<PersonEntity> {
-    let (people, _, _) = detect_entities_two_pass(text);
+pub fn detect_people(text: &str, locale: Option<&LocalePatterns>) -> Vec<PersonEntity> {
+    let (people, _, _) = detect_entities_two_pass(text, locale);
     people
         .into_iter()
         .take(15)
@@ -1122,8 +1210,8 @@ pub fn detect_people(text: &str) -> Vec<PersonEntity> {
 }
 
 /// Detect project entities in the given text.
-pub fn detect_projects(text: &str) -> Vec<ProjectEntity> {
-    let (_, projects, _) = detect_entities_two_pass(text);
+pub fn detect_projects(text: &str, locale: Option<&LocalePatterns>) -> Vec<ProjectEntity> {
+    let (_, projects, _) = detect_entities_two_pass(text, locale);
     projects
         .into_iter()
         .take(10)
@@ -1136,8 +1224,8 @@ pub fn detect_projects(text: &str) -> Vec<ProjectEntity> {
 }
 
 /// Detect both people and projects from content.
-pub fn detect_from_content(text: &str) -> DetectionResult {
-    let (people, projects, _) = detect_entities_two_pass(text);
+pub fn detect_from_content(text: &str, locale: Option<&LocalePatterns>) -> DetectionResult {
+    let (people, projects, _) = detect_entities_two_pass(text, locale);
 
     let people_entities: Vec<PersonEntity> = people
         .into_iter()
@@ -1217,7 +1305,7 @@ pub fn scan_for_detection(project_dir: &Path, max_files: usize) -> Vec<PathBuf> 
     files.into_iter().take(max_files).collect()
 }
 
-pub fn detect_entities(file_paths: &[PathBuf], max_files: usize) -> DetectionResult {
+pub fn detect_entities(file_paths: &[PathBuf], max_files: usize, locale: Option<&LocalePatterns>) -> DetectionResult {
     let mut all_text = Vec::new();
     let mut all_lines = Vec::new();
     let mut files_read = 0usize;
@@ -1260,7 +1348,7 @@ pub fn detect_entities(file_paths: &[PathBuf], max_files: usize) -> DetectionRes
     sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     for (name, frequency) in sorted {
-        let scores = score_entity(&name, &combined_text, &line_refs);
+        let scores = score_entity(&name, &combined_text, &line_refs, locale);
         let entity = classify_entity(&name, frequency, &scores);
         let signal_text = entity.signals.join("; ");
         let person = PersonEntity {
@@ -1318,7 +1406,7 @@ mod tests {
         "Dave said the timeline is tight."
         "Dave said we need more time."
         "#;
-        let people = detect_people(text);
+        let people = detect_people(text, None);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
         assert!(
             names.contains(&"Alice"),
@@ -1357,7 +1445,7 @@ mod tests {
         Eve loves the direction.
         Eve loves what we built.
         "#;
-        let people = detect_people(text);
+        let people = detect_people(text, None);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"Alice"), "Alice (said) should be detected");
         assert!(names.contains(&"Bob"), "Bob (asked) should be detected");
@@ -1385,7 +1473,7 @@ mod tests {
         dear Dave, your feedback matters.
         dear Dave, thanks for your time.
         "#;
-        let people = detect_people(text);
+        let people = detect_people(text, None);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
         assert!(
             names.contains(&"Alice"),
@@ -1412,7 +1500,7 @@ mod tests {
         Created the project notes yesterday.
         Created another backup today.
         "#;
-        let people = detect_people(text);
+        let people = detect_people(text, None);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
         assert!(
             !names.contains(&"Created"),
@@ -1429,7 +1517,7 @@ mod tests {
         Lu called later. She sounded calmer.
         Lu wrote tonight. Her plan finally made sense.
         "#;
-        let people = detect_people(text);
+        let people = detect_people(text, None);
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
         assert!(
             names.contains(&"Lu"),
@@ -1450,7 +1538,7 @@ mod tests {
         The MemPalace-core package is on crates.io.
         Check the mempalace-local config file.
         "#;
-        let projects = detect_projects(text);
+        let projects = detect_projects(text, None);
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
         assert!(
             names.contains(&"MemPalace"),
@@ -1465,7 +1553,7 @@ mod tests {
         The MemPalace_v2 migration worked.
         We benchmarked MemPalace_v2 today.
         "#;
-        let projects = detect_projects(text);
+        let projects = detect_projects(text, None);
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
         assert!(
             names.contains(&"MemPalace"),
@@ -1484,7 +1572,7 @@ mod tests {
         Import the MemPalace module here.
         The MemPalace.py runs the core logic.
         "#;
-        let projects = detect_projects(text);
+        let projects = detect_projects(text, None);
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
         assert!(
             names.contains(&"MemPalace"),
@@ -1505,7 +1593,7 @@ mod tests {
         The Gateway architecture is solid.
         Gateway architecture powers our infra.
         "#;
-        let projects = detect_projects(text);
+        let projects = detect_projects(text, None);
         let names: Vec<&str> = projects.iter().map(|p| p.name.as_str()).collect();
         assert!(
             names.contains(&"Phoenix"),
@@ -1536,7 +1624,7 @@ mod tests {
         But Robert disagrees.
         So Lisa and Tom went ahead.
         "#;
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         // Collect all entity names into a flat Vec<String>
         let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
@@ -1561,7 +1649,7 @@ mod tests {
         Every System needs monitoring.
         The System architecture is robust.
         "#;
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         // "System" is a stopword so should not be detected
         let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
@@ -1610,7 +1698,7 @@ mod tests {
         hey Alice, can you help? hey Alice, can you help? hey Alice, can you help?
         Bob ran the script. Bob ran the script. Bob ran the script.
         "#;
-        let people = detect_people(text);
+        let people = detect_people(text, None);
         assert!(!people.is_empty(), "Should detect at least some people");
         // Alice has direct address signals, should rank higher than Bob
         if people.len() >= 2 {
@@ -1640,7 +1728,7 @@ mod tests {
         The Phoenix project is great. Phoenix said it would be ready.
         Phoenix thinks the timeline is realistic. But Phoenix v1 is already deployed.
         "#;
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         // Mixed signals should produce either uncertain entities or lower confidence
         let uncertain_or_low = result
             .people
@@ -1666,7 +1754,7 @@ mod tests {
         The palace was built centuries ago.
         We need better memory management.
         "#;
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
         // These are single occurrences, so they shouldn't pass the 3x threshold
@@ -1688,7 +1776,7 @@ mod tests {
         Alice reviewed the PR. Alice shipped the feature. Alice is great.
         Alice said it was good. Alice thinks it's ready.
         "#;
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         let alice = result.people.iter().find(|p| p.name == "Alice");
         assert!(
             alice.is_some(),
@@ -1706,7 +1794,7 @@ mod tests {
         ProjectX is being built. ProjectX is being built. ProjectX is being built.
         ProjectX is essential. ProjectX is great.
         "#;
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         assert!(
             !result.people.is_empty() || !result.projects.is_empty(),
             "Should detect at least people or projects from mixed content"
@@ -1736,11 +1824,11 @@ mod tests {
 
     #[test]
     fn test_empty_text_returns_empty_result() {
-        let result = detect_from_content("");
+        let result = detect_from_content("", None);
         assert!(result.people.is_empty());
         assert!(result.projects.is_empty());
 
-        let result2 = detect_from_content("no entities here just lowercase words");
+        let result2 = detect_from_content("no entities here just lowercase words", None);
         assert!(result2.people.is_empty());
         assert!(result2.projects.is_empty());
     }
@@ -1753,7 +1841,7 @@ mod tests {
         Memory Palace helps with recall.
         We love Memory Palace for studying.
         "#;
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         let mut all_names: Vec<String> = result.people.iter().map(|p| p.name.clone()).collect();
         all_names.extend(result.projects.iter().map(|p| p.name.clone()));
         // "Memory Palace" (multi-word) should be extracted as one candidate
@@ -1775,7 +1863,7 @@ mod tests {
         hey Alice, are you there? hey Alice, can you help?
         Alice wrote the report. Alice reviewed the code. Alice shipped it.
         "#;
-        let people = detect_people(text);
+        let people = detect_people(text, None);
         let alice = people.iter().find(|p| p.name == "Alice");
         assert!(alice.is_some(), "Alice should be detected");
         let ctx = alice.unwrap().context.clone();
@@ -1815,9 +1903,45 @@ mod tests {
             candidates.contains_key("Alice") && candidates.contains_key("Bob"),
             "Both names should pass frequency threshold"
         );
-        let result = detect_from_content(text);
+        let result = detect_from_content(text, None);
         let names: Vec<&str> = result.people.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"Alice"), "Alice should be detected");
         assert!(names.contains(&"Bob"), "Bob should be detected");
+    }
+
+    #[test]
+    fn test_load_locale_patterns() {
+        // Test that we can load locale patterns from the i18n system
+        let en_patterns = load_locale_patterns("en");
+        assert!(en_patterns.is_some(), "Should load English patterns");
+        
+        let patterns = en_patterns.unwrap();
+        assert!(!patterns.person_verbs.is_empty(), "Should have person verbs");
+        assert!(!patterns.project_verbs.is_empty(), "Should have project verbs");
+        assert!(!patterns.pronouns.is_empty(), "Should have pronouns");
+        assert!(!patterns.stopwords.is_empty(), "Should have stopwords");
+        
+        // Test case-insensitive locale code
+        let en_patterns_lower = load_locale_patterns("EN");
+        assert!(en_patterns_lower.is_some(), "Should load English patterns with lowercase code");
+        
+        // Test invalid locale code
+        let invalid_patterns = load_locale_patterns("invalid-locale");
+        assert!(invalid_patterns.is_none(), "Should return None for invalid locale");
+    }
+
+    #[test]
+    fn test_get_localized_string() {
+        // Test that we can get localized CLI strings
+        let init_complete = get_localized_string("init_complete", "en");
+        assert!(!init_complete.is_empty(), "Should return localized string");
+        
+        // Test fallback for unknown key
+        let unknown = get_localized_string("unknown_key", "en");
+        assert_eq!(unknown, "unknown_key", "Should fallback to key for unknown strings");
+        
+        // Test fallback for invalid locale
+        let invalid_locale = get_localized_string("init_complete", "invalid-locale");
+        assert_eq!(invalid_locale, "init_complete", "Should fallback to key for invalid locale");
     }
 }
