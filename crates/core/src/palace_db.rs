@@ -78,6 +78,17 @@ impl PalaceDb {
         room: Option<&str>,
         n_results: usize,
     ) -> anyhow::Result<Vec<QueryResult>> {
+        self.query_sync_with_filter(query_text, wing, room, n_results, None)
+    }
+
+    pub fn query_sync_with_filter(
+        &self,
+        query_text: &str,
+        wing: Option<&str>,
+        room: Option<&str>,
+        n_results: usize,
+        metadata_filter: Option<&std::collections::HashMap<String, String>>,
+    ) -> anyhow::Result<Vec<QueryResult>> {
         let query_lower = query_text.to_lowercase();
 
         let mut results: Vec<(String, f64, &DocumentEntry)> = self
@@ -104,6 +115,21 @@ impl PalaceDb {
                         return None;
                     }
                 }
+                
+                // Apply custom metadata filter if provided
+                if let Some(filter) = metadata_filter {
+                    for (key, expected_value) in filter {
+                        let entry_value = entry
+                            .metadata
+                            .get(key)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if entry_value != *expected_value {
+                            return None;
+                        }
+                    }
+                }
+                
                 let similarity = naive_similarity(&query_lower, &entry.content.to_lowercase());
                 if similarity > 0.05 {
                     Some((id.clone(), similarity, entry))

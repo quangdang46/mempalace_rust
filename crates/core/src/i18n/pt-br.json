@@ -1,0 +1,29 @@
+{
+  "name": "Português (Brasil)",
+  "code": "pt-BR",
+  "status_drawers": "{count} gavetas arquivadas",
+  "status_wings": "{count} alas",
+  "status_rooms": "{count} quartos",
+  "error_not_found": "Não encontrado: {item}",
+  "error_no_palace": "Palácio não encontrado em {path}",
+  "error_invalid_input": "Entrada inválida: {reason}",
+  "entity": {
+    "person_verbs": ["disse", "perguntou", "contou", "respondeu", "respondeu", "falou", "mencionou", "notou", "sugeriu", "recomendou", "decidiu", "concordou", "pensou", "acreditou", "lembrou", "esqueceu", "percebeu", "descobriu", "encontrou", "viu", "ouviu", "aprendeu", "sabia", "entendeu", "se perguntou", "esperou", "temeu", "preocupou", "duvidou", "suspeitou", "esperava", "previu", "assumiu", "adivinhou", "estimou", "calculou", "mediu", "contou", "verificou", "confirmou", "negou", "rejeitou", "aceitou", "aprovou", "autorizou", "permitiu", "permitiu", "proibiu", "proibiu", "bloqueou", "parou", "começou", "iniciou", "terminou", "completou", "acabou", "pausou", "retomou", "continuou", "procedeu", "avançou", "progrediu", "moveu", "mudou", "alterou", "modificou", "ajustou", "consertou", "reparou", "restaurou", "recuperou", "salvou", "carregou", "leu", "escreveu", "criou", "construiu", "fez", "fez", "tem", "teve", "foi", "foram", "sido", "tem"],
+    "project_verbs": ["construiu", "criou", "desenvolveu", "desenhou", "implementou", "escreveu", "codou", "programou", "engenheirou", "manteve", "gerenciou", "deployou", "lançou", "publicou", "enviou", "lançou", "começou", "fundou", "co-fundou", "possui", "roda", "opera", "lidera", "direciona", "gerencia", "coordena", "organiza", "patrocina", "suporta", "apoiou", "investiu", "financiou", "contribuiu", "participa"],
+    "pronouns": ["ele", "o", "seu", "si mesmo", "ela", "a", "seus", "si mesma", "eles", "os", "seus", "si mesmos", "isso", "seu", "si mesmo", "nós", "nos", "nosso", "nossos", "nós mesmos", "você", "seu", "seus", "si mesmo", "eu", "me", "meu", "eu mesmo"],
+    "stopwords": ["o", "a", "um", "uma", "e", "ou", "mas", "se", "porque", "como", "o que", "quando", "onde", "quem", "qual", "como", "por que", "isto", "isso", "estes", "esses", "é", "são", "era", "foram", "ser", "sido", "sendo", "tem", "têm", "teve", "fazer", "faz", "fez", "vai", "iria", "poderia", "deveria", "pode", "poder", "deve", "precisa"],
+    "candidate_pattern": "[A-Z][a-z]{2,}",
+    "boundary_chars": "",
+    "versioned_pattern": "[A-Z][a-z]{2,}-v?\\d+(?:\\.\\d+)*"
+  },
+  "cli": {
+    "init_complete": "Inicialização completa",
+    "mine_complete": "Mineração completa",
+    "search_no_results": "Nenhum resultado encontrado",
+    "palace_not_found": "Palácio não encontrado. Execute 'mempalace init <dir>' primeiro.",
+    "corpus_empty": "Nenhum conteúdo encontrado no diretório especificado."
+  },
+  "dialect": {
+    "compression_instructions": "Comprima suas memórias no formato AAAK para armazenamento e recuperação eficientes. AAAK é um dialeto abreviado sem perdas projetado para agentes de IA."
+  }
+}

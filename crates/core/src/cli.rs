@@ -19,7 +19,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use std::{fs, io, sync::LazyLock};
+use std::{env, fs, io, sync::LazyLock};
 
 use crate::config::Config;
 use crate::convo_miner::{mine_conversations, ConvoMiningResult};
@@ -35,12 +35,23 @@ use crate::split_mega_files::split_file_with_options;
 use crate::sweeper::{sweep, sweep_directory};
 
 // ---------------------------------------------------------------------------
+// Environment Variables
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+static VERBOSE: LazyLock<bool> = LazyLock::new(|| {
+    env::var("MEMPAL_VERBOSE")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false)
+});
+
+// ---------------------------------------------------------------------------
 // CLI Arguments
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
 #[command(
-    name = "mempalace",
+    name = "mpr",
     about = "MemPalace - Give your AI a memory. No API key required.",
     long_about = None,
     infer_subcommands = true,
@@ -124,8 +135,8 @@ enum Commands {
         #[arg(long, action = clap::ArgAction::Append)]
         include_ignored: Vec<String>,
 
-        /// Your name -- recorded on every drawer (default: mempalace)
-        #[arg(long, default_value = "mempalace")]
+        /// Your name -- recorded on every drawer (default: mpr)
+        #[arg(long, default_value = "mpr")]
         agent: String,
 
         /// Max files to process (0 = all)
@@ -160,6 +171,10 @@ enum Commands {
         /// Number of results
         #[arg(long, default_value = "5")]
         results: usize,
+
+        /// Enable BM25 reranking for better relevance
+        #[arg(long)]
+        bm25: bool,
     },
 
     /// Show L0 + L1 wake-up context (~600-900 tokens).
@@ -216,7 +231,8 @@ enum Commands {
     },
 
     /// Rebuild palace vector index from stored data.
-    Repair,
+    #[command(subcommand)]
+    Repair(RepairCommands),
 
     /// Show what's been filed.
     Status,
@@ -258,6 +274,26 @@ enum HookAction {
         #[arg(long, value_parser = ["claude-code", "codex"])]
         harness: String,
     },
+}
+
+#[derive(Subcommand)]
+enum RepairCommands {
+    /// Scan for corrupt/unfetchable drawer IDs
+    Scan {
+        /// Only scan this wing
+        #[arg(long)]
+        wing: Option<String>,
+    },
+    /// Delete corrupt IDs (requires --confirm)
+    Prune {
+        /// Actually delete (otherwise dry run)
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Rebuild the palace index
+    Rebuild,
+    /// Clean up stale PID file from interrupted mine operations
+    CleanupPid,
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -376,6 +412,98 @@ fn cmd_init(
     println!("{}", "=".repeat(55));
 
     let config = Config::load()?;
+    
+    // Idempotency check: if palace already exists, handle gracefully
+    let existing_config_path = &config.palace_path;
+    if existing_config_path.exists() {
+        // Check if it's a valid palace
+        let palace_db_path = existing_config_path.join(format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME));
+        let is_valid_palace = palace_db_path.exists();
+        
+        if is_valid_palace {
+            println!();
+            println!("  Palace already exists at: {}", existing_config_path.display());
+            println!();
+            
+            if yes {
+                // In non-interactive mode, skip re-initialization
+                println!("  Skipping re-initialization (--yes set).");
+                println!("  Use 'mpr status' to check palace status.");
+                println!("  Use 'mpr mine' to add new content.");
+                println!("{}", "=".repeat(55));
+                return Ok(());
+            }
+            
+            println!("  This palace contains existing data.");
+            println!("  Options:");
+            println!("    1. Keep existing palace and exit (recommended)");
+            println!("    2. Re-scan entities (doesn't affect existing drawers)");
+            println!("    3. Force re-initialization (WARNING: may affect configuration)");
+            println!();
+            println!("  Your choice [1]: ");
+            
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let choice = input.trim();
+            
+            match choice {
+                "2" => {
+                    println!("  Re-scanning entities only...");
+                    // Continue with entity detection but skip full init
+                    let config_path = config.init()?;
+                    
+                    if let Some(lang_val) = _lang {
+                        let languages: Vec<String> = lang_val.split(',').map(|s| s.trim().to_string()).collect();
+                        let mut config = Config::load()?;
+                        config.languages = languages;
+                        config.save()?;
+                    }
+                    
+                    let _config_dir = config_path.parent().unwrap_or(&config_path);
+                    let detected = scan_and_detect_entities(dir);
+                    let total = detected.people.len() + detected.projects.len() + detected.uncertain.len();
+                    if total > 0 {
+                        println!("  Found {} entities", total);
+                        let confirmed = confirm_entities(&detected, yes);
+                        if !confirmed.people.is_empty() || !confirmed.projects.is_empty() {
+                            let entities_path = save_detected_entities(dir, &confirmed)?;
+                            println!("  Entities saved: {}", entities_path.display());
+                            let registry_path = merge_detected_into_registry(&confirmed)?;
+                            println!("  Registry updated: {}", registry_path.display());
+                        }
+                    }
+                    println!("  Entity re-scan complete.");
+                    println!("{}", "=".repeat(55));
+                    return Ok(());
+                }
+                "3" => {
+                    println!("  WARNING: Force re-initialization may affect existing configuration.");
+                    println!("  Existing drawers will NOT be deleted, but config may change.");
+                    println!();
+                    if !yes {
+                        println!("  Continue? [y/N]: ");
+                        let mut confirm = String::new();
+                        io::stdin().read_line(&mut confirm)?;
+                        if !confirm.trim().to_lowercase().starts_with('y') {
+                            println!("  Cancelled.");
+                            println!("{}", "=".repeat(55));
+                            return Ok(());
+                        }
+                    }
+                    println!("  Proceeding with re-initialization...");
+                    // Continue with normal init flow
+                }
+                _ => {
+                    println!("  Keeping existing palace.");
+                    println!("  Use 'mpr status' to check palace status.");
+                    println!("  Use 'mpr mine' to add new content.");
+                    println!("{}", "=".repeat(55));
+                    return Ok(());
+                }
+            }
+        }
+    }
+    
     let config_path = config.init()?;
 
     if let Some(lang_val) = _lang {
@@ -392,7 +520,7 @@ fn cmd_init(
         println!("  Config saved: {:?}", config_path);
         println!();
         println!("  Next step:");
-        println!("    mempalace mine {:?}", dir);
+        println!("    mpr mine {:?}", dir);
         println!();
         println!("{}", "=".repeat(55));
         return Ok(());
@@ -444,12 +572,34 @@ fn cmd_init(
         println!("          {}", room.description);
     }
 
+    // Pass 2.5: estimate mining scope
+    println!();
+    println!("  Estimating mining scope...");
+    let scope_estimate = estimate_mining_scope(dir)?;
+    println!("  ~{} files (~{} MB) would be mined into this palace.", 
+             scope_estimate.file_count, scope_estimate.size_mb);
+
     // Pass 3: initialize config
     println!();
     println!("  Config saved: {:?}", config_path);
+    
+    if !yes && !_auto_mine {
+        println!();
+        println!("  Mine this directory now? [Y/n]");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+        if input == "n" || input == "no" {
+            println!("  Skipped. Run manually: mpr mine {:?}", dir);
+            println!();
+            println!("{}", "=".repeat(55));
+            return Ok(());
+        }
+    }
+    
     println!();
     println!("  Next step:");
-    println!("    mempalace mine {:?}", dir);
+    println!("    mpr mine {:?}", dir);
     println!();
     println!("{}", "=".repeat(55));
 
@@ -460,7 +610,7 @@ fn cmd_init(
             dir,
             &MiningMode::Auto,
             None,
-            "mempalace",
+            "mpr",
             0,
             false,
             false,
@@ -546,6 +696,24 @@ fn cmd_mine(
     redetect_origin: bool,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
+
+    // Acquire PID guard to prevent concurrent mine operations
+    let mut pid_guard = crate::mine_pid_guard::MinePidGuard::new(&palace_path);
+    if let Err(e) = pid_guard.acquire() {
+        match e {
+            crate::mine_pid_guard::PidGuardError::AlreadyRunning { pid, timestamp } => {
+                eprintln!("  Error: Mine operation already in progress");
+                eprintln!("  PID: {}", pid);
+                eprintln!("  Started at: {}", timestamp);
+                eprintln!("  If you believe this is stale, run: mpr repair --cleanup-pid");
+                return Err(anyhow::anyhow!("Mine operation already in progress"));
+            }
+            _ => return Err(e.into()),
+        }
+    }
+
+    // Check for shutdown request
+    crate::signal_handler::check_shutdown()?;
 
     if redetect_origin {
         let origin_result = crate::corpus_origin::resolve_corpus_origin(&palace_path, None);
@@ -687,16 +855,18 @@ fn cmd_search(
     wing: Option<&str>,
     room: Option<&str>,
     results: usize,
+    bm25: bool,
     palace_arg: Option<&str>,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    runtime().block_on(searcher::search(
+    runtime().block_on(searcher::search_memories_with_rerank(
         query,
         &palace_path,
         wing,
         room,
         results,
         None,
+        bm25,
     ))?;
     Ok(())
 }
@@ -988,43 +1158,34 @@ fn run_instructions(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_repair(palace_arg: Option<&str>) -> Result<()> {
+fn cmd_repair(cmd: &RepairCommands, palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
-    if !palace_path.is_dir() {
-        println!("\n  No palace found at {}", palace_path.display());
-        return Ok(());
+    match cmd {
+        RepairCommands::Scan { wing } => {
+            crate::repair::scan_palace(
+                Some(palace_path.as_path()),
+                wing.as_deref(),
+            )?;
+        }
+        RepairCommands::Prune { confirm } => {
+            crate::repair::prune_corrupt(
+                Some(palace_path.as_path()),
+                *confirm,
+            )?;
+        }
+        RepairCommands::Rebuild => {
+            crate::repair::rebuild_index(
+                Some(palace_path.as_path()),
+            )?;
+        }
+        RepairCommands::CleanupPid => {
+            crate::repair::cleanup_pid(
+                Some(palace_path.as_path()),
+            )?;
+        }
     }
 
-    println!("\n{}", "=".repeat(55));
-    println!("  MemPalace Repair");
-    println!("{}\n", "=".repeat(55));
-    println!("  Palace: {}", palace_path.display());
-
-    let mut db = PalaceDb::open(&palace_path)?;
-    let total = db.count();
-    println!("  Drawers found: {}", total);
-    if total == 0 {
-        println!("  Nothing to repair.");
-        return Ok(());
-    }
-
-    let backup_path = PathBuf::from(format!("{}.backup", palace_path.display()));
-    if backup_path.exists() {
-        std::fs::remove_dir_all(&backup_path)?;
-    }
-    std::fs::create_dir_all(&backup_path)?;
-    let docs_name = format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME);
-    let source_docs = palace_path.join(&docs_name);
-    let backup_docs = backup_path.join(&docs_name);
-    if source_docs.exists() {
-        std::fs::copy(&source_docs, &backup_docs)?;
-    }
-
-    db.flush()?;
-    println!("\n  Repair complete. {} drawers rebuilt.", total);
-    println!("  Backup saved at {}", backup_path.display());
-    println!("\n{}\n", "=".repeat(55));
     Ok(())
 }
 
@@ -1041,7 +1202,7 @@ fn cmd_mcp(palace_arg: Option<&str>) {
         };
         println!("MemPalace MCP quick setup:");
         println!(
-            "  claude mcp add mempalace -- {} --palace {}",
+            "  claude mcp add mpr -- {} --palace {}",
             base_server_cmd,
             resolved_palace.display()
         );
@@ -1053,12 +1214,12 @@ fn cmd_mcp(palace_arg: Option<&str>) {
         );
     } else {
         println!("MemPalace MCP quick setup:");
-        println!("  claude mcp add mempalace -- {}", base_server_cmd);
+        println!("  claude mcp add mpr -- {}", base_server_cmd);
         println!("\nRun the server directly:");
         println!("  {}", base_server_cmd);
         println!("\nOptional custom palace:");
         println!(
-            "  claude mcp add mempalace -- {} --palace /path/to/palace",
+            "  claude mcp add mpr -- {} --palace /path/to/palace",
             base_server_cmd
         );
         println!("  {} --palace /path/to/palace", base_server_cmd);
@@ -1133,7 +1294,7 @@ fn cmd_compress(
     // Connect to palace
     let Ok(palace_db) = PalaceDb::open(&palace_path) else {
         println!("\n  No palace found at {:?}", palace_path);
-        println!("  Run: mempalace init <dir> then mempalace mine <dir>");
+        println!("  Run: mpr init <dir> then mpr mine <dir>");
         return Ok(());
     };
 
@@ -1251,7 +1412,7 @@ fn cmd_compress(
         compressed_db.upsert_documents(&upserts)?;
         compressed_db.flush()?;
         println!(
-            "  Stored {} compressed drawers in 'mempalace_compressed' collection.",
+            "  Stored {} compressed drawers in 'mpr_compressed' collection.",
             compressed_entries.len()
         );
     }
@@ -1562,7 +1723,7 @@ fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
         }
         Err(e) => {
             println!("  Palace not yet initialized: {}", e);
-            println!("  Run: mempalace init <dir> then mempalace mine <dir>");
+            println!("  Run: mpr init <dir> then mpr mine <dir>");
         }
     }
 
@@ -1641,6 +1802,9 @@ fn runtime() -> tokio::runtime::Runtime {
 // ---------------------------------------------------------------------------
 
 pub fn run() -> Result<()> {
+    // Setup signal handler for graceful shutdown
+    let _signal_guard = crate::signal_handler::setup_signal_handler();
+
     let cli = Cli::parse();
     let palace_arg = cli.palace.as_deref();
 
@@ -1713,11 +1877,13 @@ pub fn run() -> Result<()> {
             wing,
             room,
             results,
+            bm25,
         } => cmd_search(
             query,
             wing.as_deref(),
             room.as_deref(),
             *results,
+            *bm25,
             palace_arg,
         )?,
         Commands::WakeUp { wing } => cmd_wakeup(wing.as_deref(), palace_arg)?,
@@ -1736,7 +1902,7 @@ pub fn run() -> Result<()> {
             HookAction::Run { hook, harness } => cmd_hook(hook, harness)?,
         },
         Commands::Instructions { name } => cmd_instructions(name)?,
-        Commands::Repair => cmd_repair(palace_arg)?,
+        Commands::Repair(ref cmd) => cmd_repair(cmd, palace_arg)?,
         Commands::Status => cmd_status(palace_arg)?,
         Commands::MineDevice { wing, dry_run } => {
             cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
@@ -1752,8 +1918,70 @@ pub fn run() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Helper Functions
 // ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct MiningScopeEstimate {
+    file_count: usize,
+    size_mb: f64,
+}
+
+fn estimate_mining_scope(dir: &PathBuf) -> Result<MiningScopeEstimate> {
+    use walkdir::WalkDir;
+    
+    let mut file_count = 0;
+    let mut total_bytes = 0u64;
+    
+    const SKIP_DIRS: &[&str] = &[
+        ".git", "node_modules", "__pycache__", ".venv", "venv", "env",
+        "dist", "build", ".next", "coverage", ".terraform", "vendor",
+        "target", ".mempalace", ".cache", ".pytest_cache", ".ruff_cache",
+    ];
+    
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        
+        // Skip directories
+        if path.is_dir() {
+            let dir_name = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if SKIP_DIRS.contains(&dir_name) {
+                continue;
+            }
+        }
+        
+        // Only count readable files
+        if path.is_file() {
+            // Skip common non-content files
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if matches!(ext_str.as_str(), 
+                    "lock" | "pyc" | "pyo" | "dll" | "so" | "dylib" | "exe" | "bin" 
+                    | "class" | "jar" | "war" | "zip" | "tar" | "gz" | "rar" | "7z"
+                ) {
+                    continue;
+                }
+            }
+            
+            if let Ok(metadata) = path.metadata() {
+                file_count += 1;
+                total_bytes += metadata.len();
+            }
+        }
+    }
+    
+    let size_mb = total_bytes as f64 / (1024.0 * 1024.0);
+    
+    Ok(MiningScopeEstimate {
+        file_count,
+        size_mb,
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -1798,6 +2026,7 @@ mod tests {
             wing,
             room,
             results,
+            bm25: _,
         } = args.command
         {
             (query, wing, room, results)
@@ -1881,7 +2110,7 @@ mod tests {
     #[test]
     fn test_cli_args_parse_mine() {
         let args = Cli::try_parse_from([
-            "mempalace",
+            "mpr",
             "mine",
             "/tmp/test",
             "--mode",
@@ -1917,7 +2146,7 @@ mod tests {
     #[test]
     fn test_cli_args_parse_mine_gitignore_flags() {
         let args = Cli::try_parse_from([
-            "mempalace",
+            "mpr",
             "mine",
             "/tmp/test",
             "--no-gitignore",
@@ -1943,7 +2172,7 @@ mod tests {
     #[test]
     fn test_cli_args_parse_search() {
         let args = Cli::try_parse_from([
-            "mempalace",
+            "mpr",
             "search",
             "rust async",
             "--wing",
@@ -1971,7 +2200,7 @@ mod tests {
     #[test]
     fn test_cli_args_parse_compress() {
         let args = Cli::try_parse_from([
-            "mempalace",
+            "mpr",
             "compress",
             "--wing",
             "myapp",
@@ -1989,7 +2218,7 @@ mod tests {
     #[test]
     fn test_cli_args_parse_split() {
         let args = Cli::try_parse_from([
-            "mempalace",
+            "mpr",
             "split",
             "/tmp/chats",
             "--output-dir",
@@ -2014,14 +2243,14 @@ mod tests {
 
     #[test]
     fn test_cli_args_parse_repair() {
-        let args = Cli::try_parse_from(["mempalace", "repair"]).unwrap();
-        assert!(matches!(args.command, Commands::Repair));
+        let args = Cli::try_parse_from(["mpr", "repair", "scan"]).unwrap();
+        assert!(matches!(args.command, Commands::Repair(_)));
     }
 
     #[test]
     fn test_cli_args_parse_hook_run() {
         let args = Cli::try_parse_from([
-            "mempalace",
+            "mpr",
             "hook",
             "run",
             "--hook",
@@ -2475,7 +2704,7 @@ mod tests {
             &PathBuf::from("/tmp/project"),
             &MiningMode::Projects,
             None,
-            "mempalace",
+            "mpr",
             0,
             true,
             false,
@@ -2485,6 +2714,9 @@ mod tests {
             false,
         );
 
+        if let Err(e) = &result {
+            eprintln!("Error: {:?}", e);
+        }
         assert!(result.is_ok());
     }
 

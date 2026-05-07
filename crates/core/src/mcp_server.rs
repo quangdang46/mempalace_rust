@@ -349,8 +349,8 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
         tool(
             "mempalace_search",
             "Search",
-            "Semantic search. Returns verbatim drawer content with similarity scores.",
-            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "What to search for" }, "limit": { "type": "integer", "description": "Max results (default 5)" }, "wing": { "type": "string", "description": "Filter by wing (optional)" }, "room": { "type": "string", "description": "Filter by room (optional)" }, "context": { "type": "string", "description": "Optional caller context for transparency metadata" } }, "required": ["query"] }),
+            "Semantic search. Returns verbatim drawer content with similarity scores. Supports metadata filtering via where_filter.",
+            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "What to search for" }, "limit": { "type": "integer", "description": "Max results (default 5)" }, "wing": { "type": "string", "description": "Filter by wing (optional)" }, "room": { "type": "string", "description": "Filter by room (optional)" }, "context": { "type": "string", "description": "Optional caller context for transparency metadata" }, "where_filter": { "type": "object", "description": "Filter by custom metadata fields (e.g., {\"priority\": \"high\", \"status\": \"open\"})" } }, "required": ["query"] }),
         ),
         tool(
             "mempalace_check_duplicate",
@@ -361,8 +361,8 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
         tool(
             "mempalace_add_drawer",
             "Add Drawer",
-            "File verbatim content into the palace. Checks for duplicates first.",
-            serde_json::json!({ "type": "object", "properties": { "wing": { "type": "string", "description": "Wing (project name)" }, "room": { "type": "string", "description": "Room (aspect: backend, decisions, meetings...)" }, "content": { "type": "string", "description": "Verbatim content to store — exact words, never summarized" }, "source_file": { "type": "string", "description": "Where this came from (optional)" }, "added_by": { "type": "string", "description": "Who is filing this (default: mcp)" } }, "required": ["wing", "room", "content"] }),
+            "File verbatim content into the palace. Checks for duplicates first. Supports custom metadata fields.",
+            serde_json::json!({ "type": "object", "properties": { "wing": { "type": "string", "description": "Wing (project name)" }, "room": { "type": "string", "description": "Room (aspect: backend, decisions, meetings...)" }, "content": { "type": "string", "description": "Verbatim content to store — exact words, never summarized" }, "source_file": { "type": "string", "description": "Where this came from (optional)" }, "added_by": { "type": "string", "description": "Who is filing this (default: mcp)" } }, "required": ["wing", "room", "content"], "additionalProperties": { "type": "string", "description": "Custom metadata fields (optional string values)" } }),
         ),
         tool(
             "mempalace_delete_drawer",
@@ -621,17 +621,37 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
         room: Option<String>,
         limit: Option<usize>,
         context: Option<String>,
+        where_filter: Option<serde_json::Value>,
     }
     let input: Input = parse_args_with_integer_coercion(args, &["limit"])?;
     let sanitized = crate::query_sanitizer::sanitize_query(&input.query);
+    
+    // Convert where_filter to metadata filter if provided
+    let metadata_filter = if let Some(filter) = input.where_filter {
+        if let Some(obj) = filter.as_object() {
+            let mut filter_map = std::collections::HashMap::new();
+            for (key, value) in obj {
+                if let Some(str_val) = value.as_str() {
+                    filter_map.insert(key.clone(), str_val.to_string());
+                }
+            }
+            Some(filter_map)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
     let query_results = db
-        .query_sync(
+        .query_sync_with_filter(
             &sanitized.clean_query,
             input.wing.as_deref(),
             input.room.as_deref(),
             input.limit.unwrap_or(5),
+            metadata_filter.as_ref(),
         )
         .map_err(|e| internal_error_safe(&e))?;
     let mut response = serde_json::to_value(crate::searcher::SearchResponse {
@@ -729,6 +749,8 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         content: String,
         source_file: Option<String>,
         added_by: Option<String>,
+        #[serde(flatten)]
+        custom_metadata: Option<serde_json::Value>,
     }
     let input: Input = parse_args(args)?;
     let hash = short_hash(
@@ -743,15 +765,30 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
             serde_json::json!({ "success": true, "reason": "already_exists", "drawer_id": drawer_id }),
         );
     }
+    
+    // Build standard metadata
+    let mut standard_metadata = vec![
+        ("wing", input.wing.as_str()),
+        ("room", input.room.as_str()),
+        ("source_file", input.source_file.as_deref().unwrap_or("")),
+        ("added_by", input.added_by.as_deref().unwrap_or("mcp")),
+        ("chunk_index", "0"),
+    ];
+    
+    // Add custom metadata if provided
+    if let Some(custom_meta) = &input.custom_metadata {
+        if let Some(obj) = custom_meta.as_object() {
+            for (key, value) in obj {
+                if let Some(str_val) = value.as_str() {
+                    standard_metadata.push((key.as_str(), str_val));
+                }
+            }
+        }
+    }
+    
     db.add(
         &[(&drawer_id, &input.content)],
-        &[&[
-            ("wing", &input.wing),
-            ("room", &input.room),
-            ("source_file", input.source_file.as_deref().unwrap_or("")),
-            ("added_by", input.added_by.as_deref().unwrap_or("mcp")),
-            ("chunk_index", "0"),
-        ]],
+        &[&standard_metadata],
     )
     .map_err(|e| internal_error_safe(&e))?;
     db.flush().map_err(|e| internal_error_safe(&e))?;

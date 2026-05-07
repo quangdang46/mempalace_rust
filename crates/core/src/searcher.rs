@@ -1,4 +1,5 @@
 use crate::palace_db::{PalaceDb, QueryResult};
+use crate::bm25::{Bm25Scorer, Bm25Params};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,9 @@ pub struct SearchResult {
     pub room: String,
     pub source_file: String,
     pub similarity: f64,
+    pub created_at: Option<String>,
+    pub bm25_score: Option<f64>,
+    pub combined_score: Option<f64>,
 }
 
 impl From<QueryResult> for SearchResult {
@@ -33,6 +37,16 @@ impl From<QueryResult> for SearchResult {
             })
             .unwrap_or_else(|| "?".to_string());
 
+        let created_at = meta
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                meta.get("filed_at")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
+
         Self {
             text: qr.documents.into_iter().next().unwrap_or_default(),
             wing: meta
@@ -47,6 +61,9 @@ impl From<QueryResult> for SearchResult {
                 .to_string(),
             source_file,
             similarity: (1.0 - qr.distances.into_iter().next().unwrap_or(1.0)).round_to_3(),
+            created_at,
+            bm25_score: None,
+            combined_score: None,
         }
     }
 }
@@ -82,6 +99,19 @@ pub async fn search_memories(
     n_results: usize,
     _embedding_model: Option<&str>,
 ) -> anyhow::Result<SearchResponse> {
+    search_memories_with_rerank(query, palace_path, wing, room, n_results, _embedding_model, false).await
+}
+
+/// Search with optional BM25 reranking.
+pub async fn search_memories_with_rerank(
+    query: &str,
+    palace_path: &Path,
+    wing: Option<&str>,
+    room: Option<&str>,
+    n_results: usize,
+    _embedding_model: Option<&str>,
+    use_bm25: bool,
+) -> anyhow::Result<SearchResponse> {
     let sanitized = crate::query_sanitizer::sanitize_query(query);
 
     if !palace_path.exists() {
@@ -91,12 +121,42 @@ pub async fn search_memories(
     let palace_db = PalaceDb::open(palace_path)
         .map_err(|_| SearchError::NoPalace(palace_path.display().to_string()))?;
 
+    // Fetch more results for reranking (3x requested)
+    let fetch_count = if use_bm25 { n_results * 3 } else { n_results };
     let results = palace_db
-        .query(&sanitized.clean_query, wing, room, n_results)
+        .query(&sanitized.clean_query, wing, room, fetch_count)
         .await
         .map_err(|e| SearchError::Query(e.to_string()))?;
 
-    let search_results: Vec<SearchResult> = results.into_iter().map(SearchResult::from).collect();
+    let mut search_results: Vec<SearchResult> = results.into_iter().map(SearchResult::from).collect();
+
+    if use_bm25 && !search_results.is_empty() {
+        // Extract documents for BM25 scoring
+        let documents: Vec<String> = search_results.iter().map(|r| r.text.clone()).collect();
+        
+        // Create BM25 scorer
+        let scorer = Bm25Scorer::new(&documents, Bm25Params::default());
+        
+        // Calculate BM25 scores for each result
+        for result in &mut search_results {
+            let bm25_score = scorer.score(&result.text, &sanitized.clean_query);
+            result.bm25_score = Some(bm25_score);
+            
+            // Combine scores: 70% similarity, 30% BM25 (weighted combination)
+            result.combined_score = Some(0.7 * result.similarity + 0.3 * (bm25_score / (bm25_score + 1.0)));
+        }
+        
+        // Sort by combined score
+        search_results.sort_by(|a, b| {
+            b.combined_score
+                .unwrap_or(0.0)
+                .partial_cmp(&a.combined_score.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        // Truncate to requested count
+        search_results.truncate(n_results);
+    }
 
     Ok(SearchResponse {
         query: sanitized.clean_query,

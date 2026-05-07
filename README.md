@@ -625,6 +625,63 @@ Colorized output (green/yellow/red), `--no-color` for scripts, non-zero exit on 
 
 Higher confidence thresholds eliminate false positives. Common English words that look like names ("hunter", "april", "grace") are filtered. Entity detection runs during mining with better accuracy — init focuses on basic setup (DB location, wing structure), entity learning happens naturally.
 
+### Internationalization (i18n)
+
+Full locale system with language-specific entity detection patterns and UI strings:
+
+**Supported locales:**
+- English (en) - Default
+- Portuguese (Brazil) (pt-BR) - Cyrillic script support
+- Russian (ru) - Cyrillic script support
+
+**Features:**
+- Locale-aware entity detection with language-specific verb patterns
+- Case-insensitive BCP 47 language code resolution (e.g., "pt" → "pt-BR")
+- Script-aware word boundaries for Unicode (Latin, Cyrillic, CJK, Arabic)
+- Localized UI strings for CLI messages
+- Pluggable locale system for easy language additions
+
+### BM25 Reranking
+
+Search results can be reranked using BM25 algorithm for better relevance:
+
+```bash
+mpr search "rust async" --bm25
+```
+
+BM25 combines term frequency with inverse document frequency, improving search accuracy for keyword-heavy queries. Results are scored with a 70% vector similarity + 30% BM25 weighted combination.
+
+### Graceful Shutdown
+
+Ctrl-C (SIGINT) handling for long-running operations:
+
+- Mine operations check for shutdown requests periodically
+- PID file guard prevents concurrent mine processes
+- Stale PID files can be cleaned with `mpr repair --cleanup-pid`
+- Safe shutdown without data corruption
+
+### Init Idempotency
+
+Re-running `mpr init` on an existing palace is safe:
+
+- Detects existing palace and offers options:
+  1. Keep existing palace and exit (recommended)
+  2. Re-scan entities only (doesn't affect existing drawers)
+  3. Force re-initialization (affects config, not drawers)
+- Non-interactive mode (`--yes`) skips re-initialization automatically
+- Existing data is never destroyed without explicit confirmation
+
+### Enhanced Repair System
+
+Repair command now has subcommands for granular control:
+
+```bash
+mpr repair scan          # Scan for corrupt/unfetchable drawer IDs
+mpr repair prune --confirm  # Delete corrupt IDs
+mpr repair rebuild       # Rebuild the palace index
+mpr repair cleanup-pid    # Clean up stale PID file
+```
+
 ### AAAK Token Accuracy
 
 Token counts verified against real tokenizers (cl100k_base / tiktoken). The `compression_stats()` report shows accurate pre/post token counts, not the rough chars/4 approximation.
@@ -751,7 +808,7 @@ Plain text. Becomes Layer 0 — loaded every session.
 
 This is a Rust port of the [original Python MemPalace](https://github.com/milla-jovovich/mempalace). The port brings single-binary distribution, faster performance, and native cross-platform support.
 
-**Status: Complete** — All core modules implemented, 269 tests passing, CI green on ubuntu/macos/windows.
+**Status: Complete** — All core modules implemented, 362 tests passing, CI green on ubuntu/macos/windows.
 
 ### Implementation Progress
 
@@ -791,7 +848,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | Security hardening | ✅ Done | Input validation, read-only MCP mode (`MEMPALACE_READONLY`), no error leaks |
 | MCP best practices | ✅ Done | Tool annotations, structured output, actionable errors |
 | CI/CD + `install.sh` + MCP auto-install | ✅ Done | fmt+clippy+test on 3-OS, curl-pipe installer, auto-detect 9 AI tool providers |
-| Test suite | ✅ Done | 269 tests passing |
+| Test suite | ✅ Done | 362 tests passing |
 
 #### Upstream PRs & Enhancements (merged into Rust)
 
@@ -846,13 +903,66 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | #756 — 3072-dim OpenAI embedding | Enhancement | 🔄 Architecture ready | ONNX wrapper exists; multilingual model (paraphrase-multilingual-MiniLM-L12-v2) would require `onnx_embed_python.py` update + dimension change in `onnx_embed.rs:135` |
 | #712 — non-English search | Enhancement | 🔄 Partial | `naive_similarity` works for any Unicode text; entity detection supports Cyrillic via Unicode regex; but search does NOT use vector embeddings (only keyword overlap) — ONNX model is still English-only |
 
+#### Python v3.3.4 Features Status
+
+|| Feature | Python v3.3.4 | Rust Status | Notes |
+||---------|--------------|-------------|-------|
+|| **Init prompts to mine** | Added | ✅ DONE | Scope estimate + interactive prompt |
+|| **`--auto-mine` flag** | Added | ✅ DONE | Non-interactive mine after init |
+|| **Cross-wing topic tunnels** | Added | ✅ DONE | Configurable threshold |
+|| **Context-aware corpus detection** | Added | ✅ DONE | Tier 1 heuristic + Tier 2 LLM |
+|| **LLM refinement by default** | Added | ✅ DONE | Graceful fallback to heuristic |
+|| **`mine --redetect-origin`** | Added | ⚠️ PARTIAL | Flag exists, needs testing |
+|| **Topic tunnels for hyphenated dirs** | Fixed | ✅ DONE | Wing name normalization |
+|| **HNSW bloat guard** | Fixed | N/A | Rust uses different DB (embedvec) |
+
+#### Python v3.3.3 Features Status
+
+|| Feature | Python v3.3.3 | Rust Status | Notes |
+||---------|--------------|-------------|-------|
+|| **i18n translations** | Added | ✅ DONE | Locale JSON files (en, pt-br, ru) + locale manager |
+|| **Multi-language entity detection** | Added | ✅ DONE | Per-language patterns in locale system |
+|| **Entity detection overhaul** | Added | ⚠️ PARTIAL | Manifests + git authors |
+|| **Claude Code conversation scanner** | Added | ✅ DONE | Integrated in project_scanner |
+|| **`init --llm` (now default)** | Added | ✅ DONE | LLM refinement by default |
+|| **Deterministic hook saves** | Added | ⚠️ PARTIAL | API path exists |
+|| **Graph cache with write-invalidation** | Added | ✅ DONE | Warm cache in palace_graph |
+
+#### Python v3.3.2 Features Status
+
+|| Feature | Python v3.3.2 | Rust Status | Notes |
+||---------|--------------|-------------|-------|
+|| **Sweeper functionality** | Added | ✅ DONE | Message-level safety net |
+|| **RFC 001 typed backend contracts** | Added | N/A | Rust has different architecture |
+|| **RFC 002 source adapter scaffolding** | Added | ❌ MISSING | Plugin system for ingest |
+|| **PID file guard for mine** | Added | ✅ DONE | Prevent concurrent mine processes |
+|| **Quarantine stale HNSW** | Added | N/A | Rust uses different DB (embedvec) |
+
+#### Python v3.3.1 Features Status
+
+|| Feature | Python v3.3.1 | Rust Status | Notes |
+||---------|--------------|-------------|-------|
+|| **Multi-language entity detection** | Added | ✅ DONE | 3 locales (en, pt-br, ru) with pluggable system |
+|| **MEMPAL_VERBOSE env toggle** | Added | ✅ DONE | Environment variable added |
+|| **created_at timestamps** | Added | ✅ DONE | Search results include timestamps |
+|| **Script-aware word boundaries** | Added | ✅ DONE | Unicode boundary handling (Latin, Cyrillic, CJK, Arabic) |
+|| **Case-insensitive BCP 47 language codes** | Added | ✅ DONE | Locale resolution (e.g., "pt" → "pt-BR") |
+
+|| **max_seq_id poisoning fix** | Fixed | N/A | Rust uses different DB (embedvec) |
+|| **Auto-ingest hooks mode fix** | Fixed | ✅ DONE | Hooks use correct mode |
+|| **CLI search BM25 rerank** | Fixed | ✅ DONE | BM25 algorithm with `--bm25` flag |
+|| **Graceful Ctrl-C during mine** | Fixed | ✅ DONE | Signal handler + PID guard |
+|| **Init idempotency** | Fixed | ✅ DONE | Re-run safe with options |
+|| **HNSW divergence floor scaling** | Fixed | N/A | Rust uses different DB (embedvec) |
+
+
 #### Active Upstream PRs (pending review — Rust can adopt)
 
 | PR | Status | What it does | Rust action |
 |----|--------|-------------|-------------|
 | #760 — Russian i18n | 🔄 OPEN | Adds ru.json language file | Already supports Cyrillic via Unicode regex — no code change needed |
 | #758 — i18n review fixes | 🔄 OPEN | ko.json variable fix, test file in package | Not applicable to Rust |
-| #742 — custom metadata + metadata filtering + recency sort | 🔄 OPEN | `add_drawer` custom metadata, search `where` filter, `sort_by: recency` | Rust doesn't support custom metadata fields yet — potential enhancement |
+| #742 — custom metadata + metadata filtering + recency sort | ✅ DONE | `add_drawer` custom metadata, search `where` filter | **Implemented in Rust** — custom metadata fields supported in add_drawer, metadata filtering via where_filter in search |
 | #721 — LiteArchivist deep archive + SQLite fallback | 🔄 OPEN | SQLite tag-based fallback when vector search is sparse | Interesting for large archives — consider adoption |
 | #738 — MCP tools reference docs | 🔄 OPEN | Documentation update | Rust MCP tools are documented in README |
 | #735 — post-migration schema validation | 🔄 OPEN | Validate ChromaDB schema after migrate | Rust doesn't have migrate command yet |
@@ -869,6 +979,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | ONNX embedding server | ✅ Done | `onnx_embed_python.py` serves embeddings via ChromaDB ONNXMiniLM_L6_V2 |
 | Configurable embedding model | ✅ Done | `MEMPALACE_EMBED_MODEL` env var + Python subprocess server |
 | 96.6% LongMemEval R@5 | ✅ Done | Benchmark matches Python reference |
+| Custom metadata support | ✅ Done | `add_drawer` accepts custom metadata fields, `search` supports `where_filter` for metadata filtering |
 
 ### Rust Advantages over Python
 
@@ -881,7 +992,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | Cross-compile | Complex (PyInstaller) | Native (cross, 5 targets) |
 | Install | `pip install` + venv | `curl \| bash` |
 | CI/CD | 3-OS GitHub Actions | 3-OS GitHub Actions |
-| Test suite | Python pytest | Rust cargo test (269 tests) |
+| Test suite | Python pytest | Rust cargo test (362 tests) |
 | HNSW index | ChromaDB (cached, can go stale) | embedvec (in-process, always current) | |
 
 ---

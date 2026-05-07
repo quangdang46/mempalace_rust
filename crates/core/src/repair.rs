@@ -147,6 +147,47 @@ pub fn rebuild_index(palace_path: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Clean up stale PID file from interrupted mine operations.
+pub fn cleanup_pid(palace_path: Option<&Path>) -> anyhow::Result<()> {
+    let config = Config::load()?;
+    let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
+
+    println!("\n  Palace: {}", palace_path.display());
+
+    let pid_file = palace_path.join(".mine.pid");
+    if !pid_file.exists() {
+        println!("  No PID file found — no cleanup needed.");
+        return Ok(());
+    }
+
+    // Read the PID file to show information
+    let content = fs::read_to_string(&pid_file)?;
+    let lines: Vec<&str> = content.lines().collect();
+    
+    if lines.len() >= 2 {
+        let pid = lines[0].trim();
+        let timestamp = lines[1].trim();
+        println!("  Found PID file:");
+        println!("  PID: {}", pid);
+        println!("  Started at: {}", timestamp);
+    }
+
+    // Use the PID guard to check if the process is still running
+    let guard = crate::mine_pid_guard::MinePidGuard::new(palace_path);
+    match guard.force_cleanup() {
+        Ok(()) => {
+            println!("  PID file removed successfully.");
+            println!("  You can now run a new mine operation.");
+        }
+        Err(e) => {
+            eprintln!("  Failed to remove PID file: {}", e);
+            return Err(e.into());
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,29 @@
+{
+  "name": "English",
+  "code": "en",
+  "status_drawers": "{count} drawers filed",
+  "status_wings": "{count} wings",
+  "status_rooms": "{count} rooms",
+  "error_not_found": "Not found: {item}",
+  "error_no_palace": "No palace found at {path}",
+  "error_invalid_input": "Invalid input: {reason}",
+  "entity": {
+    "person_verbs": ["said", "asked", "told", "replied", "answered", "spoke", "mentioned", "noted", "suggested", "recommended", "decided", "agreed", "thought", "believed", "remembered", "forgot", "realized", "discovered", "found", "saw", "heard", "learned", "knew", "understood", "wondered", "hoped", "feared", "worried", "doubted", "suspected", "expected", "predicted", "assumed", "guessed", "estimated", "calculated", "measured", "counted", "checked", "verified", "confirmed", "denied", "rejected", "accepted", "approved", "authorized", "permitted", "allowed", "forbade", "prohibited", "blocked", "stopped", "started", "began", "finished", "completed", "ended", "paused", "resumed", "continued", "proceeded", "advanced", "progressed", "moved", "changed", "altered", "modified", "adjusted", "fixed", "repaired", "restored", "recovered", "saved", "loaded", "read", "wrote", "created", "built", "made", "did", "has", "had", "was", "were", "been", "have"],
+    "project_verbs": ["built", "created", "developed", "designed", "implemented", "wrote", "coded", "programmed", "engineered", "maintained", "managed", "deployed", "released", "published", "shipped", "launched", "started", "founded", "co-founded", "owns", "runs", "operates", "leads", "directs", "manages", "coordinates", "organizes", "sponsors", "supports", "backed", "invested", "funded", "contributed", "participates"],
+    "pronouns": ["he", "him", "his", "himself", "she", "her", "hers", "herself", "they", "them", "their", "themselves", "it", "its", "itself", "we", "us", "our", "ours", "ourselves", "you", "your", "yours", "yourself", "i", "me", "my", "myself"],
+    "stopwords": ["the", "a", "an", "and", "or", "but", "if", "because", "as", "what", "when", "where", "who", "which", "how", "why", "this", "that", "these", "those", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "must", "shall", "can", "need"],
+    "candidate_pattern": "[A-Z][a-z]{2,}",
+    "boundary_chars": "",
+    "versioned_pattern": "[A-Z][a-z]{2,}-v?\\d+(?:\\.\\d+)*"
+  },
+  "cli": {
+    "init_complete": "Initialization complete",
+    "mine_complete": "Mining complete",
+    "search_no_results": "No results found",
+    "palace_not_found": "Palace not found. Run 'mempalace init <dir>' first.",
+    "corpus_empty": "No content found in the specified directory."
+  },
+  "dialect": {
+    "compression_instructions": "Compress your memories into AAAK format for efficient storage and retrieval. AAAK is a lossless shorthand dialect designed for AI agents."
+  }
+}
