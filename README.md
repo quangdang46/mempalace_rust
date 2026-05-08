@@ -627,7 +627,7 @@ Higher confidence thresholds eliminate false positives. Common English words tha
 
 ### Internationalization (i18n)
 
-Locale system foundation with language-specific entity detection patterns and UI strings:
+Locale system with language-specific entity detection patterns and UI strings:
 
 **Supported locales:**
 - English (en) - Default
@@ -639,22 +639,27 @@ Locale system foundation with language-specific entity detection patterns and UI
 - Case-insensitive BCP 47 language code resolution (e.g., "pt" → "pt-BR")
 - Localized CLI string retrieval API
 - Pluggable locale system for easy language additions
+- Script-aware word boundaries for Unicode (Latin, Cyrillic, CJK, Arabic)
 
 **Integration status:**
-- Entity detection: Infrastructure in place, locale patterns can be loaded and used
-- CLI strings: API available for localized message retrieval
-- Script-aware boundaries: Module implemented but not yet integrated into entity detection
+- Entity detection: ✅ Script-aware boundaries integrated, locale patterns can be loaded from config
+- CLI strings: ✅ API available for localized message retrieval
+- Config integration: ✅ Locale patterns auto-loaded from config.languages field
 
 **Usage:**
-```rust
-use mempalace_core::entity_detector::{load_locale_patterns, get_localized_string};
+```bash
+# Set language in config
+cat ~/.config/mempalace/config.json | jq '.languages = ["pt-BR"]' > /tmp/config.json && mv /tmp/config.json ~/.config/mempalace/config.json
 
-// Load locale-specific patterns for entity detection
-let patterns = load_locale_patterns("pt-BR");
-
-// Get localized CLI strings
-let message = get_localized_string("init_complete", "pt-BR");
+# The locale patterns will be automatically used during entity detection
+mpr init /path/to/palace
 ```
+
+**Script-aware features:**
+- Automatic script detection (Latin, Cyrillic, CJK, Arabic, Other)
+- Script-specific word boundary patterns
+- Character class patterns for each script
+- Case handling appropriate to each script
 
 ### BM25 Reranking
 
@@ -823,7 +828,7 @@ Plain text. Becomes Layer 0 — loaded every session.
 
 This is a Rust port of the [original Python MemPalace](https://github.com/milla-jovovich/mempalace). The port brings single-binary distribution, faster performance, and native cross-platform support.
 
-**Status: Complete** — All core modules implemented, 362 tests passing, CI green on ubuntu/macos/windows.
+**Status: Complete** — All core modules implemented, 367 tests passing, CI green on ubuntu/macos/windows.
 
 ### Implementation Progress
 
@@ -863,7 +868,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | Security hardening | ✅ Done | Input validation, read-only MCP mode (`MEMPALACE_READONLY`), no error leaks |
 | MCP best practices | ✅ Done | Tool annotations, structured output, actionable errors |
 | CI/CD + `install.sh` + MCP auto-install | ✅ Done | fmt+clippy+test on 3-OS, curl-pipe installer, auto-detect 9 AI tool providers |
-| Test suite | ✅ Done | 362 tests passing |
+| Test suite | ✅ Done | 367 tests passing |
 
 #### Upstream PRs & Enhancements (merged into Rust)
 

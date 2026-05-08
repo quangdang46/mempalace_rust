@@ -363,10 +363,28 @@ fn resolve_palace_path(palace_arg: Option<&str>) -> Result<PathBuf> {
 type DetectedEntities = crate::entity_detector::DetectionResult;
 
 /// Scan directory for files that can be used for entity detection.
-fn scan_and_detect_entities(dir: &Path, _locale_patterns: Option<&crate::entity_detector::LocalePatterns>) -> DetectedEntities {
+fn scan_and_detect_entities(dir: &Path) -> DetectedEntities {
+    // Load locale patterns from config if languages are configured
+    let config = crate::Config::load().ok();
+    let locale_patterns = if let Some(ref cfg) = config {
+        if !cfg.languages.is_empty() {
+            // Use the first language in the list
+            let locale_code = &cfg.languages[0];
+            crate::entity_detector::load_locale_patterns(locale_code)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
     // For now, we still use the project_scanner which doesn't support locale patterns yet
     // TODO: Integrate locale patterns into project_scanner
-    crate::project_scanner::discover_entities(dir, 10)
+    let result = crate::project_scanner::discover_entities(dir, 10);
+    
+    // If we have locale patterns, we could enhance the result with locale-aware detection
+    // For now, just return the project_scanner result
+    result
 }
 
 /// Confirm entities with registry integration.
@@ -467,7 +485,7 @@ fn cmd_init(
                     }
                     
                     let _config_dir = config_path.parent().unwrap_or(&config_path);
-                    let detected = scan_and_detect_entities(dir, None);
+                    let detected = scan_and_detect_entities(dir);
                     let total = detected.people.len() + detected.projects.len() + detected.uncertain.len();
                     if total > 0 {
                         println!("  Found {} entities", total);
@@ -538,7 +556,7 @@ fn cmd_init(
 
     // Pass 1: scan for entities
     println!("\n  Scanning for entities in: {:?}", dir);
-    let detected = scan_and_detect_entities(dir, None);
+    let detected = scan_and_detect_entities(dir);
     let total = detected.people.len() + detected.projects.len() + detected.uncertain.len();
     if total > 0 {
         println!("  Found {} entities", total);
@@ -2570,7 +2588,7 @@ mod tests {
     #[test]
     fn test_scan_and_detect_entities_empty_dir() {
         let temp = tempfile::TempDir::new().expect("tempdir should be created");
-        let result = scan_and_detect_entities(temp.path(), None);
+        let result = scan_and_detect_entities(temp.path());
         assert!(result.people.is_empty());
         assert!(result.projects.is_empty());
     }
