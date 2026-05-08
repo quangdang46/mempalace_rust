@@ -125,11 +125,7 @@ const PROJECT_VERB_TEMPLATES: &[&str] = &[
     r"\bpip\s+install\s+{name}\b",
 ];
 
-static SINGLE_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // Match words starting with uppercase (including CamelCase like MemPalace)
-    // Uses Unicode-aware \p{Lu}/\p{Ll} for cross-script support (Cyrillic, etc.)
-    Regex::new(r"\b([\p{Lu}][\p{Ll}\p{Lu}]{1,19})\b").unwrap()
-});
+// Note: SINGLE_WORD_RE is no longer used directly - script-aware patterns are used instead
 
 static MULTI_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Unicode-aware multi-word proper nouns
@@ -861,14 +857,9 @@ enum EntityType {
 // CANDIDATE EXTRACTION
 // =============================================================================
 
-/// Extract all capitalized proper noun candidates from text.
+/// Extract all capitalized proper noun candidates from text using script-aware word boundaries.
 /// Returns a map of name -> frequency for names appearing 3+ times.
 /// Filters out stopwords and common first names (requires strong signals for those).
-fn extract_candidates(text: &str) -> HashMap<String, usize> {
-    extract_candidates_with_script(text, None)
-}
-
-/// Extract entity candidates using script-aware word boundaries.
 /// If locale_patterns is provided, use locale-specific stopwords.
 fn extract_candidates_with_script(text: &str, locale_patterns: Option<&LocalePatterns>) -> HashMap<String, usize> {
     use crate::script_aware::{detect_script, get_word_regex, ScriptType};
@@ -1914,7 +1905,7 @@ mod tests {
         // They may be classified as Uncertain (not Person) due to lack of English person signals,
         // but extract_candidates should still find them
         let text = "Иван работает над проектом. Иван закончил важную задачу. Иван написал код. Анна проверила результаты. Анна завершила работу. Анна довольна.";
-        let candidates = extract_candidates(text);
+        let candidates = extract_candidates_with_script(text, None);
         // Иван appears 3 times, Анна appears 3 times - both should pass frequency threshold
         assert!(
             candidates.contains_key("Иван") || candidates.contains_key("Анна"),
@@ -1931,7 +1922,7 @@ mod tests {
         hey Alice, can you help? hey Alice, can you help? hey Alice, can you help?
         Bob wrote the script. Bob wrote the script. Bob wrote the script.
         "#;
-        let candidates = extract_candidates(text);
+        let candidates = extract_candidates_with_script(text, None);
         assert!(
             candidates.contains_key("Alice") && candidates.contains_key("Bob"),
             "Both names should pass frequency threshold"

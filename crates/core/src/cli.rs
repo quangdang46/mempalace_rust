@@ -365,8 +365,8 @@ type DetectedEntities = crate::entity_detector::DetectionResult;
 /// Scan directory for files that can be used for entity detection.
 fn scan_and_detect_entities(dir: &Path) -> DetectedEntities {
     // Load locale patterns from config if languages are configured
-    let config = crate::Config::load().ok();
-    let locale_patterns = if let Some(ref cfg) = config {
+    let _config = crate::Config::load().ok();
+    let _locale_patterns = if let Some(ref cfg) = _config {
         if !cfg.languages.is_empty() {
             // Use the first language in the list
             let locale_code = &cfg.languages[0];
@@ -380,11 +380,7 @@ fn scan_and_detect_entities(dir: &Path) -> DetectedEntities {
     
     // For now, we still use the project_scanner which doesn't support locale patterns yet
     // TODO: Integrate locale patterns into project_scanner
-    let result = crate::project_scanner::discover_entities(dir, 10);
-    
-    // If we have locale patterns, we could enhance the result with locale-aware detection
-    // For now, just return the project_scanner result
-    result
+    crate::project_scanner::discover_entities(dir, 10)
 }
 
 /// Confirm entities with registry integration.
