@@ -308,8 +308,17 @@ enum InstructionName {
 const SAVE_INTERVAL: usize = 15;
 const STOP_BLOCK_REASON: &str = "AUTO-SAVE checkpoint. Save key topics, decisions, quotes, and code from this session to your memory system. Organize into appropriate categories. Use verbatim quotes where possible. Continue conversation after saving.";
 const PRECOMPACT_BLOCK_REASON: &str = "COMPACTION IMMINENT. Save ALL topics, decisions, quotes, code, and important context from this session to your memory system. Be thorough — after compaction, detailed context will be lost. Organize into appropriate categories. Use verbatim quotes where possible. Save everything, then allow compaction to proceed.";
-static INSTRUCTIONS_DIR: LazyLock<PathBuf> =
-    LazyLock::new(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../instructions"));
+// Instruction markdown is embedded at compile time so the binary works
+// regardless of where it's installed. The previous version computed a
+// runtime path from `env!("CARGO_MANIFEST_DIR")` which baked the build
+// machine's source tree into the released binary (e.g.
+// `/home/runner/work/mempalace_rust/mempalace_rust/...`), so a packaged
+// binary failed `mpr instructions <topic>` with "file not found".
+const INSTRUCTION_INIT: &str = include_str!("../../../instructions/init.md");
+const INSTRUCTION_SEARCH: &str = include_str!("../../../instructions/search.md");
+const INSTRUCTION_MINE: &str = include_str!("../../../instructions/mine.md");
+const INSTRUCTION_HELP: &str = include_str!("../../../instructions/help.md");
+const INSTRUCTION_STATUS: &str = include_str!("../../../instructions/status.md");
 
 #[derive(Clone, Default, Debug)]
 enum MiningMode {
@@ -1199,18 +1208,17 @@ fn run_hook(hook_name: &str, harness: &str) -> Result<()> {
 }
 
 fn run_instructions(name: &str) -> Result<()> {
-    const AVAILABLE: &[&str] = &["init", "search", "mine", "help", "status"];
-    if !AVAILABLE.contains(&name) {
-        anyhow::bail!(
-            "Unknown instructions: {name}. Available: {}",
-            AVAILABLE.join(", ")
-        );
-    }
-    let md_path = INSTRUCTIONS_DIR.join(format!("{name}.md"));
-    if !md_path.is_file() {
-        anyhow::bail!("Instructions file not found: {}", md_path.display());
-    }
-    print!("{}", fs::read_to_string(md_path)?);
+    let content = match name {
+        "init" => INSTRUCTION_INIT,
+        "search" => INSTRUCTION_SEARCH,
+        "mine" => INSTRUCTION_MINE,
+        "help" => INSTRUCTION_HELP,
+        "status" => INSTRUCTION_STATUS,
+        _ => anyhow::bail!(
+            "Unknown instructions: {name}. Available: init, search, mine, help, status"
+        ),
+    };
+    print!("{content}");
     Ok(())
 }
 
@@ -2049,8 +2057,9 @@ mod tests {
         detect_mining_mode, hook_precompact_response, hook_session_start_response,
         hook_stop_response, merge_detected_into_registry, parse_harness_input, run_instructions,
         save_detected_entities, scan_and_detect_entities, Cli, Commands, DetectedEntities,
-        HookAction, InstructionName, MiningMode, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL,
-        STOP_BLOCK_REASON,
+        HookAction, InstructionName, MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT,
+        INSTRUCTION_MINE, INSTRUCTION_SEARCH, INSTRUCTION_STATUS, PRECOMPACT_BLOCK_REASON,
+        SAVE_INTERVAL, STOP_BLOCK_REASON,
     };
     use crate::config::Config;
     use crate::entity_detector::{PersonEntity, ProjectEntity};
@@ -2403,6 +2412,28 @@ mod tests {
             .to_string();
         assert!(err.contains("Unknown instructions: nonexistent"));
         assert!(err.contains("Available:"));
+    }
+
+    #[test]
+    fn test_instruction_content_is_embedded_not_runtime_path() {
+        // Regression: the released binary previously embedded the build
+        // machine's `CARGO_MANIFEST_DIR` as a runtime path, so packaged
+        // binaries failed with "Instructions file not found:
+        // /home/runner/work/mempalace_rust/...". After the fix all five
+        // instruction bodies are baked into the binary via include_str!.
+        for name in ["init", "search", "mine", "help", "status"] {
+            assert!(
+                !INSTRUCTION_INIT.is_empty()
+                    && !INSTRUCTION_SEARCH.is_empty()
+                    && !INSTRUCTION_MINE.is_empty()
+                    && !INSTRUCTION_HELP.is_empty()
+                    && !INSTRUCTION_STATUS.is_empty(),
+                "all embedded instructions must have content"
+            );
+            run_instructions(name).unwrap_or_else(|e| {
+                panic!("instructions for `{name}` should succeed but errored: {e}")
+            });
+        }
     }
 
     #[test]

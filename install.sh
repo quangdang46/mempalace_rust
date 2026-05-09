@@ -541,32 +541,37 @@ install_hook_wrappers() {
   hooks_dir=$(hook_install_dir)
   mkdir -p "$hooks_dir"
 
+  # The hook wrappers are runtime scripts whose `$HARNESS`, `$1`, and
+  # `MEMPALACE_HOOK_HARNESS` references must be preserved verbatim. Escape
+  # them in the heredoc so the outer install.sh (running with `set -u`)
+  # does not try to expand them at generation time. `${bin_path}` is the
+  # only value we want substituted now.
   cat > "$hooks_dir/mempal_save_hook.sh" <<EOF
 #!/bin/bash
 set -euo pipefail
-HARNESS="${1:-${MEMPALACE_HOOK_HARNESS:-claude-code}}"
-case "$HARNESS" in
+HARNESS="\${1:-\${MEMPALACE_HOOK_HARNESS:-claude-code}}"
+case "\$HARNESS" in
   claude-code|codex) ;;
   *)
-    echo "Unsupported harness: $HARNESS" >&2
+    echo "Unsupported harness: \$HARNESS" >&2
     exit 1
     ;;
 esac
-exec "${bin_path}" hook run --hook stop --harness "$HARNESS"
+exec "${bin_path}" hook run --hook stop --harness "\$HARNESS"
 EOF
 
   cat > "$hooks_dir/mempal_precompact_hook.sh" <<EOF
 #!/bin/bash
 set -euo pipefail
-HARNESS="${1:-${MEMPALACE_HOOK_HARNESS:-claude-code}}"
-case "$HARNESS" in
+HARNESS="\${1:-\${MEMPALACE_HOOK_HARNESS:-claude-code}}"
+case "\$HARNESS" in
   claude-code|codex) ;;
   *)
-    echo "Unsupported harness: $HARNESS" >&2
+    echo "Unsupported harness: \$HARNESS" >&2
     exit 1
     ;;
 esac
-exec "${bin_path}" hook run --hook precompact --harness "$HARNESS"
+exec "${bin_path}" hook run --hook precompact --harness "\$HARNESS"
 EOF
 
   chmod 755 "$hooks_dir/mempal_save_hook.sh" "$hooks_dir/mempal_precompact_hook.sh"
