@@ -116,7 +116,20 @@ static SKIP_FILES: &[&str] = &[
     "mempal.yml",
     ".gitignore",
     "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
 ];
+
+/// Cap on chunks produced from a single file.
+///
+/// A file producing more than this is almost always a generated artifact
+/// (CSV/JSON dump, lockfile not in `SKIP_FILES`, etc.). Embedding
+/// thousands of chunks from one file in one batch has triggered ONNX
+/// runtime `bad allocation` errors on Windows (upstream mempalace
+/// `5488e7b`, #1296). The cap is conservative: a 500-chunk file at
+/// `CHUNK_SIZE` (800 chars) is ~400 KB of source, which covers most
+/// legitimate hand-written content while bounding the worst-case batch.
+const MAX_CHUNKS_PER_FILE: usize = 500;
 
 #[derive(Debug, Clone)]
 struct GitignoreRule {
@@ -709,6 +722,24 @@ impl Miner {
             return Ok(0);
         }
 
+        if chunks.len() > MAX_CHUNKS_PER_FILE {
+            // Catches the broader class of generated artifacts (CSV/JSON
+            // dumps, build outputs, lockfiles not yet in `SKIP_FILES`)
+            // that the named-file list will never fully cover.
+            let display = filepath
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| source_file.clone());
+            let truncated: String = display.chars().take(50).collect();
+            println!(
+                "  ! [skip] {:<50} produced {} chunks (> {}); add to SKIP_FILES or .gitignore",
+                truncated,
+                chunks.len(),
+                MAX_CHUNKS_PER_FILE
+            );
+            return Ok(0);
+        }
+
         let chunks_added = chunks.len();
 
         // Batch insert all chunks for this file in a single call
@@ -1282,5 +1313,65 @@ mod tests {
         assert!(metadata.get("chunk_index").is_some());
         assert!(metadata.get("filed_at").is_some());
         assert!(metadata.get("source_mtime").is_some());
+    }
+
+    #[test]
+    fn test_skip_files_includes_lockfiles() {
+        // Mirrors upstream mempalace 5488e7b: pnpm/yarn lockfiles
+        // should be skipped just like package-lock.json.
+        for name in ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"] {
+            assert!(
+                SKIP_FILES.contains(&name),
+                "expected SKIP_FILES to include {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mine_file_skips_when_chunks_exceed_cap() {
+        // A file that would produce > MAX_CHUNKS_PER_FILE chunks should be
+        // skipped with a warning instead of triggering a worst-case batch
+        // through the embedder. Mirrors upstream mempalace 5488e7b (#1296).
+        let temp = tempfile::TempDir::new().unwrap();
+        let palace = temp.path().join("palace");
+        let file = temp.path().join("generated.csv");
+
+        // Build a payload with enough non-overlapping chunks to exceed the
+        // cap. Each chunk needs >= MIN_CHUNK_SIZE chars and the chunker
+        // splits on `\n\n`, so we emit (MAX_CHUNKS_PER_FILE + 50) blocks
+        // separated by blank lines.
+        let block = "lorem ipsum dolor sit amet consectetur adipiscing elit ";
+        let mut payload = String::new();
+        for _ in 0..(MAX_CHUNKS_PER_FILE + 50) {
+            payload.push_str(&block.repeat(20));
+            payload.push_str("\n\n");
+        }
+        std::fs::write(&file, &payload).unwrap();
+
+        let rooms = vec![RoomMapping {
+            name: "general".to_string(),
+            description: "General".to_string(),
+            keywords: vec![],
+        }];
+        let mut miner = Miner::new(&palace, "wing", rooms).unwrap();
+
+        // Sanity: the chunker really would emit > MAX_CHUNKS_PER_FILE
+        // before the cap kicks in.
+        let raw_chunks = miner.chunk_text(payload.trim(), "generated.csv");
+        assert!(
+            raw_chunks.len() > MAX_CHUNKS_PER_FILE,
+            "fixture should exceed cap; produced {}",
+            raw_chunks.len()
+        );
+
+        let added = miner.mine_file(&file).await.unwrap();
+        assert_eq!(
+            added, 0,
+            "files exceeding chunk cap should not be filed (got {added})"
+        );
+
+        // No drawers should have been added to the palace.
+        miner.palace_db.flush().unwrap();
+        assert_eq!(miner.palace_db.count(), 0);
     }
 }

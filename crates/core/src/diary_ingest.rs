@@ -45,6 +45,11 @@ pub fn ingest_diaries(
     let mut palace_db = PalaceDb::open(palace_path)?;
     let mut days_updated = 0usize;
     let mut closets_created = 0usize;
+    // Track legacy-state backfills (content_hash filled in for entries that
+    // previously had only the size). These don't update `days_updated`
+    // because no drawer is rewritten — but the state file still needs to
+    // be persisted so the strict hash check sticks across runs.
+    let mut state_dirty = false;
 
     // Find all .md files
     let diary_files: Vec<PathBuf> = WalkDir::new(&diary_dir)
@@ -84,14 +89,25 @@ pub fn ingest_diaries(
         let curr_size = text.len();
         let curr_hash = format!("{:x}", Sha256::digest(text.as_bytes()));
         if !force {
-            if let Some(prev) = state.get(&state_key) {
+            if let Some(prev) = state.get(&state_key).cloned() {
                 if let Some(prev_hash) = prev.content_hash.as_ref() {
                     if prev_hash == &curr_hash {
                         continue;
                     }
                 } else if prev.size > 0 && prev.size == curr_size {
-                    // Legacy state without content_hash: keep size-based skip so a
-                    // post-upgrade run doesn't re-ingest every untouched diary.
+                    // Legacy state without content_hash: keep size-based skip but
+                    // backfill the hash so future runs use the strict check
+                    // (mirrors upstream mempalace `2ff6283`). Without this, a
+                    // pre-Fix-#3 state file would stay on the size-only path
+                    // forever and re-introduce the same-size-edit blind spot.
+                    state.insert(
+                        state_key.clone(),
+                        StateEntry {
+                            content_hash: Some(curr_hash.clone()),
+                            ..prev
+                        },
+                    );
+                    state_dirty = true;
                     continue;
                 }
             }
@@ -143,13 +159,18 @@ pub fn ingest_diaries(
 
     palace_db.flush()?;
 
-    // Save state
-    if days_updated > 0 {
+    // Save state when any drawer was rewritten OR when legacy entries
+    // were backfilled with their content_hash. The latter is silent (no
+    // banner) because no drawer changed — but persisting it is what
+    // makes the strict hash check stick on the next run.
+    if days_updated > 0 || state_dirty {
         fs::write(&state_file, serde_json::to_string_pretty(&state)?)?;
-        println!(
-            "Diary: {} days updated, {} new closets",
-            days_updated, closets_created
-        );
+        if days_updated > 0 {
+            println!(
+                "Diary: {} days updated, {} new closets",
+                days_updated, closets_created
+            );
+        }
     }
 
     Ok(DiaryIngestStats {
@@ -387,6 +408,90 @@ mod tests {
         assert_eq!(
             stats.days_updated, 1,
             "same-size edit must be detected via content hash"
+        );
+
+        match prev_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn test_ingest_diaries_backfills_content_hash_on_legacy_state() {
+        // Regression for upstream mempalace 2ff6283 (follow-up to #925).
+        //
+        // A pre-Fix-#3 state file has `size` set but no `content_hash`. The
+        // size-skip path correctly avoids re-ingesting an untouched diary,
+        // but it must also write the missing hash back so subsequent runs
+        // use the strict hash check — otherwise a same-size edit done after
+        // the upgrade would still slip through the legacy code path
+        // forever.
+        let _guard = crate::test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp = tempfile::TempDir::new().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", temp.path());
+
+        let palace_path = temp.path().join("palace");
+        let diary_dir = temp.path().join("diaries");
+        std::fs::create_dir_all(&diary_dir).unwrap();
+
+        let diary_file = diary_dir.join("2024-01-15.md");
+        let original = "## Notes\n\nteh quick brown fox jumps over the lazy dog and again here.\n";
+        std::fs::write(&diary_file, original).unwrap();
+
+        // First ingest establishes baseline state (with content_hash).
+        let stats = ingest_diaries(&diary_dir, Some(&palace_path), "diary", false).unwrap();
+        assert_eq!(stats.days_updated, 1);
+
+        // ingest_diaries canonicalizes diary_dir internally (`resolve_path`).
+        // On macOS `/tmp` symlinks to `/private/tmp`, which changes the
+        // hashed state-file key — look up the state file via the same
+        // canonical form ingest_diaries actually used.
+        let canonical_diary_dir = diary_dir
+            .canonicalize()
+            .unwrap_or_else(|_| diary_dir.clone());
+
+        // Simulate a legacy state file: load, strip content_hash, rewrite.
+        let state_path = state_file_for(&palace_path, &canonical_diary_dir).unwrap();
+        let mut raw_state: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        for entry in raw_state.values_mut() {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.remove("content_hash");
+            }
+        }
+        std::fs::write(
+            &state_path,
+            serde_json::to_string_pretty(&raw_state).unwrap(),
+        )
+        .unwrap();
+
+        // Re-ingest with unchanged content: legacy size-skip path triggers,
+        // but the backfill must persist content_hash to disk.
+        let stats = ingest_diaries(&diary_dir, Some(&palace_path), "diary", false).unwrap();
+        assert_eq!(
+            stats.days_updated, 0,
+            "legacy size-skip path should still skip unchanged content"
+        );
+
+        let after: HashMap<String, StateEntry> =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        let entry = after.values().next().expect("state should have one entry");
+        assert!(
+            entry.content_hash.is_some(),
+            "backfill must populate content_hash so future runs use the strict check"
+        );
+
+        // Now a same-size edit must be detected via the freshly-backfilled hash.
+        let edited = original.replace("teh", "the");
+        assert_eq!(edited.len(), original.len());
+        std::fs::write(&diary_file, &edited).unwrap();
+        let stats = ingest_diaries(&diary_dir, Some(&palace_path), "diary", false).unwrap();
+        assert_eq!(
+            stats.days_updated, 1,
+            "post-backfill: same-size edit must be detected via content hash"
         );
 
         match prev_home {
