@@ -445,8 +445,16 @@ mod tests {
         let stats = ingest_diaries(&diary_dir, Some(&palace_path), "diary", false).unwrap();
         assert_eq!(stats.days_updated, 1);
 
+        // ingest_diaries canonicalizes diary_dir internally (`resolve_path`).
+        // On macOS `/tmp` symlinks to `/private/tmp`, which changes the
+        // hashed state-file key — look up the state file via the same
+        // canonical form ingest_diaries actually used.
+        let canonical_diary_dir = diary_dir
+            .canonicalize()
+            .unwrap_or_else(|_| diary_dir.clone());
+
         // Simulate a legacy state file: load, strip content_hash, rewrite.
-        let state_path = state_file_for(&palace_path, &diary_dir).unwrap();
+        let state_path = state_file_for(&palace_path, &canonical_diary_dir).unwrap();
         let mut raw_state: HashMap<String, serde_json::Value> =
             serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
         for entry in raw_state.values_mut() {
