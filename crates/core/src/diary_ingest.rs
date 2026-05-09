@@ -74,15 +74,27 @@ pub fn ingest_diaries(
             })
             .unwrap_or("unknown");
 
-        // Skip if content hasn't changed
+        // Skip if content hasn't changed. Hash-based — size alone false-negatives
+        // on same-length edits (e.g. "teh" → "the"), silently dropping real edits.
         let state_key = format!(
             "{}|{}",
             wing,
             diary_path.file_name().unwrap_or_default().to_string_lossy()
         );
         let curr_size = text.len();
-        if state.get(&state_key).map(|s| s.size) == Some(curr_size) && !force {
-            continue;
+        let curr_hash = format!("{:x}", Sha256::digest(text.as_bytes()));
+        if !force {
+            if let Some(prev) = state.get(&state_key) {
+                if let Some(prev_hash) = prev.content_hash.as_ref() {
+                    if prev_hash == &curr_hash {
+                        continue;
+                    }
+                } else if prev.size > 0 && prev.size == curr_size {
+                    // Legacy state without content_hash: keep size-based skip so a
+                    // post-upgrade run doesn't re-ingest every untouched diary.
+                    continue;
+                }
+            }
         }
 
         let now_iso = chrono_now_iso();
@@ -121,6 +133,7 @@ pub fn ingest_diaries(
             state_key,
             StateEntry {
                 size: curr_size,
+                content_hash: Some(curr_hash),
                 entry_count: entries.len(),
                 ingested_at: now_iso,
             },
@@ -148,6 +161,11 @@ pub fn ingest_diaries(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct StateEntry {
     size: usize,
+    /// sha256 hex digest of the diary file's text content. `None` is the
+    /// legacy schema (size-only); kept optional so a post-upgrade run does
+    /// not re-ingest every untouched diary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_hash: Option<String>,
     entry_count: usize,
     ingested_at: String,
 }
@@ -293,5 +311,87 @@ mod tests {
     fn test_diary_drawer_id() {
         let id = diary_drawer_id("diary", "2024-01-15");
         assert!(id.starts_with("drawer_diary_"));
+    }
+
+    #[test]
+    fn test_state_entry_legacy_format_deserializes_without_content_hash() {
+        // Regression for upstream mempalace 0d1c1fb: legacy state files
+        // written before the content_hash field existed must still load.
+        let legacy = r#"{"size": 42, "entry_count": 3, "ingested_at": "2024-01-01T00:00:00"}"#;
+        let parsed: StateEntry = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.size, 42);
+        assert_eq!(parsed.entry_count, 3);
+        assert!(parsed.content_hash.is_none());
+    }
+
+    #[test]
+    fn test_state_entry_round_trips_with_content_hash() {
+        let entry = StateEntry {
+            size: 10,
+            content_hash: Some("deadbeef".to_string()),
+            entry_count: 1,
+            ingested_at: "2024-01-01T00:00:00".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("content_hash"));
+        let parsed: StateEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content_hash.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn test_ingest_diaries_detects_same_size_edit() {
+        // Regression for upstream mempalace 0d1c1fb (#925): an in-place edit
+        // that preserves byte length (e.g. "teh" -> "the") was silently
+        // dropped under the old size-only gate. Switch to content_hash.
+        let _guard = crate::test_env_lock()
+            .lock()
+            .expect("test env lock should be available");
+        let temp = tempfile::TempDir::new().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        // diary_ingest::state_file_for uses $HOME/.mempalace/state — point it
+        // at the tempdir so the test does not pollute real home.
+        std::env::set_var("HOME", temp.path());
+
+        let palace_path = temp.path().join("palace");
+        let diary_dir = temp.path().join("diaries");
+        std::fs::create_dir_all(&diary_dir).unwrap();
+
+        // Write a diary file with enough content to clear the >50-byte filter.
+        let diary_file = diary_dir.join("2024-01-15.md");
+        let original = "## Notes\n\nteh quick brown fox jumps over the lazy dog and again here.\n";
+        std::fs::write(&diary_file, original).unwrap();
+
+        let stats = ingest_diaries(&diary_dir, Some(&palace_path), "diary", false).unwrap();
+        assert_eq!(
+            stats.days_updated, 1,
+            "first ingest should record the diary"
+        );
+
+        // Second ingest with no change: must skip.
+        let stats = ingest_diaries(&diary_dir, Some(&palace_path), "diary", false).unwrap();
+        assert_eq!(
+            stats.days_updated, 0,
+            "second ingest with unchanged content should skip"
+        );
+
+        // Same-size edit: "teh" -> "the". Old gate would silently drop this.
+        let edited = original.replace("teh", "the");
+        assert_eq!(
+            edited.len(),
+            original.len(),
+            "test fixture must preserve length"
+        );
+        std::fs::write(&diary_file, &edited).unwrap();
+
+        let stats = ingest_diaries(&diary_dir, Some(&palace_path), "diary", false).unwrap();
+        assert_eq!(
+            stats.days_updated, 1,
+            "same-size edit must be detected via content hash"
+        );
+
+        match prev_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
     }
 }

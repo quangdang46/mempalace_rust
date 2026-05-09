@@ -158,10 +158,18 @@ pub fn regenerate_closets(
 }
 
 fn regenerate_entry(content: &str, endpoint: &str) -> Result<String, RegenerateError> {
+    regenerate_entry_with_delay(content, endpoint, INITIAL_DELAY_MS)
+}
+
+fn regenerate_entry_with_delay(
+    content: &str,
+    endpoint: &str,
+    initial_delay_ms: u64,
+) -> Result<String, RegenerateError> {
     let prompt = REGENERATE_PROMPT.replace("{context}", content);
 
     let client = reqwest::blocking::Client::new();
-    let mut delay_ms = INITIAL_DELAY_MS;
+    let mut delay_ms = initial_delay_ms;
 
     for attempt in 0..MAX_RETRIES {
         let response = client
@@ -178,11 +186,38 @@ fn regenerate_entry(content: &str, endpoint: &str) -> Result<String, RegenerateE
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
-                    let parsed: LlmResponse = resp.json().map_err(RegenerateError::Http)?;
-                    if parsed.response.trim().is_empty() {
-                        return Err(RegenerateError::Empty);
+                    // Read the body as text first so we can retry malformed
+                    // JSON (truncated streams / partial chunks under load on
+                    // local LLM runtimes). Mirrors upstream mempalace 2a0ed0c
+                    // (#1155) which moved JSONDecodeError onto the same
+                    // exponential-backoff path as 429/503.
+                    let body = match resp.text() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            if attempt < MAX_RETRIES - 1 {
+                                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                                delay_ms *= 2;
+                                continue;
+                            }
+                            return Err(RegenerateError::Http(e));
+                        }
+                    };
+                    match serde_json::from_str::<LlmResponse>(&body) {
+                        Ok(parsed) => {
+                            if parsed.response.trim().is_empty() {
+                                return Err(RegenerateError::Empty);
+                            }
+                            return Ok(parsed.response.trim().to_string());
+                        }
+                        Err(e) => {
+                            if attempt < MAX_RETRIES - 1 {
+                                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                                delay_ms *= 2;
+                                continue;
+                            }
+                            return Err(RegenerateError::InvalidJson(e));
+                        }
                     }
-                    return Ok(parsed.response.trim().to_string());
                 }
 
                 if status.as_u16() == 429 || status.as_u16() == 503 && attempt < MAX_RETRIES - 1 {
@@ -230,5 +265,80 @@ mod tests {
         };
         let debug = format!("{:?}", stats);
         assert!(debug.contains("2"));
+    }
+
+    /// Minimal mock HTTP/1.1 server used by the retry tests below.
+    ///
+    /// `responses` is consumed in order: each connection gets the next body.
+    /// The first byte of every body is treated as a 200-OK payload (since
+    /// upstream's bug only fires on the success branch).
+    fn spawn_mock_server(responses: Vec<String>) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{}/", addr);
+
+        let handle = std::thread::spawn(move || {
+            for body in responses {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(pair) => pair,
+                    Err(_) => return,
+                };
+                // Read the request (and discard it).
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        (url, handle)
+    }
+
+    #[test]
+    fn test_regenerate_entry_retries_on_invalid_json() {
+        // Regression for upstream mempalace 2a0ed0c (#1155): the first
+        // attempt returning malformed JSON must be retried, not bailed.
+        // Two malformed bodies, then a valid one — must succeed on attempt 3.
+        let (url, handle) = spawn_mock_server(vec![
+            "not-json{".to_string(),
+            "{\"response\":".to_string(),
+            "{\"response\": \"OK\"}".to_string(),
+        ]);
+
+        // Use a small initial delay so the test does not wait the
+        // production 1s+2s+... backoff schedule.
+        let result = regenerate_entry_with_delay("hello", &url, 1);
+        assert!(
+            result.is_ok(),
+            "expected retry to succeed, got {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), "OK");
+
+        let _ = handle.join();
+    }
+
+    #[test]
+    fn test_regenerate_entry_returns_invalid_json_after_all_retries_fail() {
+        // If every attempt returns malformed JSON, the final error must be
+        // surfaced as InvalidJson (not Empty / not Http).
+        let (url, handle) = spawn_mock_server(vec!["not-json".to_string(); MAX_RETRIES as usize]);
+
+        let result = regenerate_entry_with_delay("hello", &url, 1);
+        match result {
+            Err(RegenerateError::InvalidJson(_)) => {}
+            other => panic!("expected InvalidJson, got {:?}", other),
+        }
+
+        let _ = handle.join();
     }
 }
