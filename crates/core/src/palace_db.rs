@@ -115,7 +115,7 @@ impl PalaceDb {
                         return None;
                     }
                 }
-                
+
                 // Apply custom metadata filter if provided
                 if let Some(filter) = metadata_filter {
                     for (key, expected_value) in filter {
@@ -129,7 +129,7 @@ impl PalaceDb {
                         }
                     }
                 }
-                
+
                 let similarity = naive_similarity(&query_lower, &entry.content.to_lowercase());
                 if similarity > 0.05 {
                     Some((id.clone(), similarity, entry))

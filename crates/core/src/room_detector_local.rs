@@ -7,6 +7,7 @@ use std::path::Path;
 pub struct RoomMapping {
     pub name: String,
     pub description: String,
+    #[serde(default)]
     pub keywords: Vec<String>,
 }
 

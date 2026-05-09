@@ -51,7 +51,7 @@ pub fn detect_script(text: &str) -> ScriptType {
 
     // Find the dominant script (at least 50% threshold)
     let threshold = total / 2;
-    
+
     if latin_count > threshold {
         ScriptType::Latin
     } else if cyrillic_count > threshold {
@@ -62,7 +62,11 @@ pub fn detect_script(text: &str) -> ScriptType {
         ScriptType::Arabic
     } else {
         // Fallback to the highest count even if below threshold
-        let max = latin_count.max(cyrillic_count).max(cjk_count).max(arabic_count).max(other_count);
+        let max = latin_count
+            .max(cyrillic_count)
+            .max(cjk_count)
+            .max(arabic_count)
+            .max(other_count);
         if max == latin_count {
             ScriptType::Latin
         } else if max == cyrillic_count {
@@ -100,14 +104,12 @@ pub fn get_char_class_pattern(script_type: ScriptType) -> &'static str {
 }
 
 /// Unicode-aware word boundary regex for Latin scripts.
-static LATIN_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b[A-Za-z]+(?:'[A-Za-z]+)?\b").unwrap()
-});
+static LATIN_WORD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[A-Za-z]+(?:'[A-Za-z]+)?\b").unwrap());
 
 /// Unicode-aware word boundary regex for Cyrillic scripts.
-static CYRILLIC_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)?\b").unwrap()
-});
+static CYRILLIC_WORD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[А-Яа-яЁё]+(?:-[А-Яа-яЁё]+)?\b").unwrap());
 
 /// Unicode-aware word boundary regex for CJK scripts (character-based).
 static CJK_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -121,9 +123,7 @@ static ARABIC_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Generic Unicode word regex (fallback for other scripts).
-static GENERIC_WORD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b\w+\b").unwrap()
-});
+static GENERIC_WORD_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\w+\b").unwrap());
 
 /// Get appropriate word regex for the detected script.
 pub fn get_word_regex(script_type: ScriptType) -> &'static Regex {
@@ -140,7 +140,7 @@ pub fn get_word_regex(script_type: ScriptType) -> &'static Regex {
 pub fn split_into_words(text: &str) -> Vec<String> {
     let script_type = detect_script(text);
     let regex = get_word_regex(script_type);
-    
+
     regex
         .find_iter(text)
         .map(|m| m.as_str().to_string())
@@ -164,7 +164,7 @@ pub fn is_word_boundary(c: char, script_type: ScriptType) -> bool {
 /// Normalize text for comparison across scripts.
 pub fn normalize_for_script(text: &str) -> String {
     let script_type = detect_script(text);
-    
+
     match script_type {
         ScriptType::Latin => {
             // Lowercase and normalize
@@ -189,7 +189,7 @@ pub fn normalize_for_script(text: &str) -> String {
 /// Build a case-insensitive regex pattern for a word, respecting script.
 pub fn build_word_pattern(word: &str, script_type: ScriptType) -> Regex {
     let escaped = regex::escape(word);
-    
+
     let pattern = match script_type {
         ScriptType::Latin | ScriptType::Cyrillic | ScriptType::Arabic => {
             format!(r"(?i)\b{}\b", escaped)
@@ -202,7 +202,7 @@ pub fn build_word_pattern(word: &str, script_type: ScriptType) -> Regex {
             format!(r"(?i)\b{}\b", escaped)
         }
     };
-    
+
     RegexBuilder::new(&pattern)
         .build()
         .unwrap_or_else(|_| Regex::new(&escaped).unwrap())
@@ -221,7 +221,7 @@ pub fn is_script_only(text: &str, script_type: ScriptType) -> bool {
             ScriptType::Arabic => c.script() == Script::Arabic,
             ScriptType::Other => true,
         };
-        
+
         if !char_script && !c.is_whitespace() && !c.is_ascii_punctuation() {
             return false;
         }

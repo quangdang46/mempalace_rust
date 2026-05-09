@@ -1,5 +1,5 @@
+use crate::bm25::{Bm25Params, Bm25Scorer};
 use crate::palace_db::{PalaceDb, QueryResult};
-use crate::bm25::{Bm25Scorer, Bm25Params};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
@@ -99,7 +99,16 @@ pub async fn search_memories(
     n_results: usize,
     _embedding_model: Option<&str>,
 ) -> anyhow::Result<SearchResponse> {
-    search_memories_with_rerank(query, palace_path, wing, room, n_results, _embedding_model, false).await
+    search_memories_with_rerank(
+        query,
+        palace_path,
+        wing,
+        room,
+        n_results,
+        _embedding_model,
+        false,
+    )
+    .await
 }
 
 /// Search with optional BM25 reranking.
@@ -128,24 +137,26 @@ pub async fn search_memories_with_rerank(
         .await
         .map_err(|e| SearchError::Query(e.to_string()))?;
 
-    let mut search_results: Vec<SearchResult> = results.into_iter().map(SearchResult::from).collect();
+    let mut search_results: Vec<SearchResult> =
+        results.into_iter().map(SearchResult::from).collect();
 
     if use_bm25 && !search_results.is_empty() {
         // Extract documents for BM25 scoring
         let documents: Vec<String> = search_results.iter().map(|r| r.text.clone()).collect();
-        
+
         // Create BM25 scorer
         let scorer = Bm25Scorer::new(&documents, Bm25Params::default());
-        
+
         // Calculate BM25 scores for each result
         for result in &mut search_results {
             let bm25_score = scorer.score(&result.text, &sanitized.clean_query);
             result.bm25_score = Some(bm25_score);
-            
+
             // Combine scores: 70% similarity, 30% BM25 (weighted combination)
-            result.combined_score = Some(0.7 * result.similarity + 0.3 * (bm25_score / (bm25_score + 1.0)));
+            result.combined_score =
+                Some(0.7 * result.similarity + 0.3 * (bm25_score / (bm25_score + 1.0)));
         }
-        
+
         // Sort by combined score
         search_results.sort_by(|a, b| {
             b.combined_score
@@ -153,7 +164,7 @@ pub async fn search_memories_with_rerank(
                 .partial_cmp(&a.combined_score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         // Truncate to requested count
         search_results.truncate(n_results);
     }
@@ -195,13 +206,17 @@ pub async fn search(
             }
         };
 
+    Ok(print_search_response(&response))
+}
+
+pub fn print_search_response(response: &SearchResponse) -> i32 {
     if response.results.is_empty() {
-        println!("\n  No results found for: \"{}\"", query);
-        return Ok(1);
+        println!("\n  No results found for: \"{}\"", response.query);
+        return 1;
     }
 
     println!("\n{}", "=".repeat(60));
-    println!("  Results for: \"{}\"", query);
+    println!("  Results for: \"{}\"", response.query);
     if let Some(ref w) = response.filters.wing {
         println!("  Wing: {}", w);
     }
@@ -225,7 +240,7 @@ pub async fn search(
     }
 
     println!();
-    Ok(0)
+    0
 }
 
 pub async fn check_duplicate(

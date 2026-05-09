@@ -18,10 +18,7 @@ pub struct Bm25Params {
 
 impl Default for Bm25Params {
     fn default() -> Self {
-        Self {
-            k1: 1.2,
-            b: 0.75,
-        }
+        Self { k1: 1.2, b: 0.75 }
     }
 }
 
@@ -44,12 +41,13 @@ impl Bm25Scorer {
 
         for doc in documents {
             let terms = Self::tokenize(doc);
-            let unique_terms: std::collections::HashSet<&str> = terms.iter().map(|s| s.as_str()).collect();
-            
+            let unique_terms: std::collections::HashSet<&str> =
+                terms.iter().map(|s| s.as_str()).collect();
+
             for term in unique_terms {
                 *doc_freqs.entry(term.to_string()).or_insert(0) += 1;
             }
-            
+
             total_length += terms.len() as f64;
         }
 
@@ -106,8 +104,11 @@ impl Bm25Scorer {
             let idf = ((self.total_docs as f64 - df + 0.5) / (df + 0.5) + 1.0).ln();
 
             // TF normalization
-            let tf_normalized = (tf * (self.params.k1 + 1.0)) 
-                / (tf + self.params.k1 * (1.0 - self.params.b + self.params.b * (doc_length / self.avg_doc_length)));
+            let tf_normalized = (tf * (self.params.k1 + 1.0))
+                / (tf
+                    + self.params.k1
+                        * (1.0 - self.params.b
+                            + self.params.b * (doc_length / self.avg_doc_length)));
 
             score += idf * tf_normalized;
         }
@@ -157,7 +158,7 @@ mod tests {
     fn test_bm25_tokenization() {
         let text = "The Quick Brown FOX";
         let terms = Bm25Scorer::tokenize(text);
-        
+
         assert_eq!(terms, vec!["the", "quick", "brown", "fox"]);
     }
 
@@ -165,19 +166,17 @@ mod tests {
     fn test_bm25_empty_corpus() {
         let documents: Vec<String> = vec![];
         let scorer = Bm25Scorer::new(&documents, Bm25Params::default());
-        
+
         let score = scorer.score("test document", "test query");
         assert_eq!(score, 0.0);
     }
 
     #[test]
     fn test_bm25_no_match() {
-        let documents = vec![
-            "the quick brown fox".to_string(),
-        ];
-        
+        let documents = vec!["the quick brown fox".to_string()];
+
         let scorer = Bm25Scorer::new(&documents, Bm25Params::default());
-        
+
         // Query with no matching terms
         let score = scorer.score("the quick brown fox", "xyz abc");
         assert_eq!(score, 0.0);
