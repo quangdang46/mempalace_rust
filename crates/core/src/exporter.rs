@@ -18,6 +18,26 @@ fn safe_path_component(name: &str) -> String {
     }
 }
 
+/// Refuse to write into a path that is itself a symlink.
+///
+/// Defense-in-depth: a pre-placed symlink at the export target would
+/// redirect writes to wherever it points (e.g., system directories).
+/// Mirrors the miner's input-side caution.
+fn reject_symlink(path: &Path, label: &str) -> anyhow::Result<()> {
+    if std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!(
+            "refusing to export: {} is a symbolic link ({}). \
+             Remove the symlink or choose a different output path.",
+            label,
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 pub struct ExportStats {
     pub wings: usize,
     pub rooms: usize,
@@ -39,6 +59,7 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
         });
     }
 
+    reject_symlink(output_dir, "output_dir")?;
     std::fs::create_dir_all(output_dir)?;
     #[cfg(unix)]
     {
@@ -82,8 +103,10 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
                 .and_then(|v| v.as_str())
                 .unwrap_or("general");
 
-            let wing_dir = output_dir.join(safe_path_component(wing));
+            let safe_wing = safe_path_component(wing);
+            let wing_dir = output_dir.join(&safe_wing);
             if !created_wing_dirs.contains_key(wing) {
+                reject_symlink(&wing_dir, &format!("wing directory '{}'", safe_wing))?;
                 std::fs::create_dir_all(&wing_dir)?;
                 created_wing_dirs.insert(wing.to_string(), true);
             }
@@ -212,4 +235,40 @@ fn chrono_now_date() -> String {
     }
     let day = remaining + 1;
     format!("{:04}-{:02}-{:02}", y, month, day)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reject_symlink_allows_regular_path() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let regular = temp.path().join("regular");
+        std::fs::create_dir_all(&regular).unwrap();
+        assert!(reject_symlink(&regular, "output_dir").is_ok());
+    }
+
+    #[test]
+    fn test_reject_symlink_allows_missing_path() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let missing = temp.path().join("missing");
+        // A path that does not exist is fine — `create_dir_all` will create it.
+        assert!(reject_symlink(&missing, "output_dir").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_reject_symlink_blocks_symlinked_dir() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let target = temp.path().join("real");
+        std::fs::create_dir_all(&target).unwrap();
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = reject_symlink(&link, "output_dir").unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("symbolic link"), "unexpected error: {msg}");
+        assert!(msg.contains("output_dir"), "unexpected error: {msg}");
+    }
 }

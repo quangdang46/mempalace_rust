@@ -265,6 +265,31 @@ impl GitignoreMatcher {
     }
 }
 
+/// Split `value` into lowercased tokens bounded by `-`, `_`, `.` or `/`.
+fn tokens(value: &str) -> HashSet<String> {
+    value
+        .to_lowercase()
+        .split(['-', '_', '.', '/'])
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// Return true when `a` and `b` match as equal strings or as
+/// separator-bounded tokens of each other.
+///
+/// Prevents incidental substring collisions (e.g., `"views" in "interviews"`)
+/// that a raw `contains` check would produce, while preserving the intended
+/// match for real tokens (e.g., `"frontend"` in `"frontend-app"`).
+fn name_matches(a: &str, b: &str) -> bool {
+    let a_lower = a.to_lowercase();
+    let b_lower = b.to_lowercase();
+    if a_lower == b_lower {
+        return true;
+    }
+    tokens(&a_lower).contains(&b_lower) || tokens(&b_lower).contains(&a_lower)
+}
+
 fn glob_matches(pattern: &str, candidate: &str) -> bool {
     let mut regex = String::from("^");
     for ch in pattern.chars() {
@@ -541,9 +566,10 @@ impl Miner {
             for room in &self.rooms {
                 let mut candidates = vec![room.name.to_lowercase()];
                 candidates.extend(room.keywords.iter().map(|keyword| keyword.to_lowercase()));
-                if candidates.iter().any(|candidate| {
-                    part == *candidate || candidate.contains(&part) || part.contains(candidate)
-                }) {
+                if candidates
+                    .iter()
+                    .any(|candidate| name_matches(&part, candidate))
+                {
                     return room.name.clone();
                 }
             }
@@ -551,7 +577,7 @@ impl Miner {
 
         for room in &self.rooms {
             let room_name_lower = room.name.to_lowercase();
-            if room_name_lower.contains(&filename) || filename.contains(&room_name_lower) {
+            if name_matches(&filename, &room_name_lower) {
                 return room.name.clone();
             }
         }
@@ -964,6 +990,56 @@ mod tests {
             "JWT authentication uses bearer tokens",
         );
         assert_eq!(room, "backend");
+    }
+
+    #[test]
+    fn test_name_matches_token_boundary() {
+        // exact match
+        assert!(name_matches("backend", "backend"));
+        // case-insensitive equality
+        assert!(name_matches("Backend", "BACKEND"));
+        // separator-bounded token match
+        assert!(name_matches("frontend-app", "frontend"));
+        assert!(name_matches("auth_service", "auth"));
+        assert!(name_matches("api.v1", "api"));
+        // negative: substring without token boundary must NOT match
+        assert!(!name_matches("interviews", "views"));
+        assert!(!name_matches("background", "back"));
+        assert!(!name_matches("authenticate", "auth"));
+    }
+
+    #[test]
+    fn test_detect_room_does_not_misroute_substring() {
+        // Regression for upstream mempalace ead2c5d: "views" ⊂ "interviews"
+        // must not route every interviews/* file to a "views" room.
+        let rooms = vec![RoomMapping {
+            name: "views".to_string(),
+            description: "View templates".to_string(),
+            keywords: vec![],
+        }];
+        let miner = Miner::new(std::path::Path::new("/tmp"), "test", rooms).unwrap();
+
+        let room = miner.detect_room(
+            std::path::Path::new("/tmp/project/interviews/q1.py"),
+            "interview question",
+        );
+        assert_eq!(room, "general");
+    }
+
+    #[test]
+    fn test_detect_room_matches_separator_bounded_token() {
+        let rooms = vec![RoomMapping {
+            name: "frontend".to_string(),
+            description: "Frontend code".to_string(),
+            keywords: vec![],
+        }];
+        let miner = Miner::new(std::path::Path::new("/tmp"), "test", rooms).unwrap();
+
+        let room = miner.detect_room(
+            std::path::Path::new("/tmp/project/frontend-app/index.tsx"),
+            "import React",
+        );
+        assert_eq!(room, "frontend");
     }
 
     #[test]
