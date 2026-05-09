@@ -163,7 +163,7 @@ pub fn cleanup_pid(palace_path: Option<&Path>) -> anyhow::Result<()> {
     // Read the PID file to show information
     let content = fs::read_to_string(&pid_file)?;
     let lines: Vec<&str> = content.lines().collect();
-    
+
     if lines.len() >= 2 {
         let pid = lines[0].trim();
         let timestamp = lines[1].trim();

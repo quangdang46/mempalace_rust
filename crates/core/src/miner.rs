@@ -109,6 +109,7 @@ static SKIP_DIRS: &[&str] = &[
 
 static SKIP_FILES: &[&str] = &[
     "entities.json",
+    "mempalace.json",
     "mempalace.yaml",
     "mempalace.yml",
     "mempal.yaml",
@@ -1149,6 +1150,27 @@ mod tests {
             })
             .collect();
         assert_eq!(rel, vec!["main.py"]);
+    }
+
+    #[test]
+    fn test_scan_project_skips_mempalace_config() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
+        std::fs::write(root.join("mempalace.json"), "{}\n").unwrap();
+        std::fs::write(root.join("main.rs"), "fn main() {}\n".repeat(20)).unwrap();
+
+        let files = scan_project(root, false, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["main.rs"]);
     }
 
     #[tokio::test]

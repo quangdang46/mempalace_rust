@@ -33,10 +33,9 @@ pub fn setup_signal_handler() -> SignalGuard {
         let handle = signals.handle();
 
         let thread = std::thread::spawn(move || {
-            for _ in signals.forever() {
+            if signals.forever().next().is_some() {
                 eprintln!("\n  Shutdown requested (Ctrl-C)...");
                 request_shutdown();
-                break;
             }
         });
 
@@ -112,10 +111,10 @@ mod tests {
     fn test_shutdown_flag() {
         reset_shutdown();
         assert!(!is_shutdown_requested());
-        
+
         request_shutdown();
         assert!(is_shutdown_requested());
-        
+
         reset_shutdown();
         assert!(!is_shutdown_requested());
     }
@@ -124,10 +123,10 @@ mod tests {
     fn test_check_shutdown() {
         reset_shutdown();
         assert!(check_shutdown().is_ok());
-        
+
         request_shutdown();
         assert!(check_shutdown().is_err());
-        
+
         reset_shutdown();
     }
 }

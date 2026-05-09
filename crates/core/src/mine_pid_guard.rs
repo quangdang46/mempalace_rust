@@ -15,13 +15,13 @@ use thiserror::Error;
 pub enum PidGuardError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Mine operation already in progress by PID {pid} (started at {timestamp})")]
     AlreadyRunning { pid: u32, timestamp: String },
-    
+
     #[error("Failed to parse PID file: {0}")]
     ParseError(String),
-    
+
     #[error("PID file is stale (process {pid} no longer running)")]
     StalePid { pid: u32 },
 }
@@ -49,19 +49,16 @@ impl MinePidGuard {
         if let Some(parent) = self.pid_file_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         // Check if PID file exists
         if self.pid_file_path.exists() {
             // Read the existing PID file
             let content = fs::read_to_string(&self.pid_file_path)?;
             let (pid, timestamp) = self.parse_pid_file(&content)?;
-            
+
             // Check if the process is still running
             if self.is_process_running(pid) {
-                return Err(PidGuardError::AlreadyRunning {
-                    pid,
-                    timestamp,
-                });
+                return Err(PidGuardError::AlreadyRunning { pid, timestamp });
             } else {
                 // Process is not running, clean up stale PID file
                 fs::remove_file(&self.pid_file_path)?;
@@ -72,10 +69,10 @@ impl MinePidGuard {
         let current_pid = process::id();
         let timestamp = chrono::Utc::now().to_rfc3339();
         let content = format!("{}\n{}", current_pid, timestamp);
-        
+
         let mut file = File::create(&self.pid_file_path)?;
         file.write_all(content.as_bytes())?;
-        
+
         self.acquired = true;
         Ok(())
     }
@@ -91,10 +88,10 @@ impl MinePidGuard {
     /// Parse PID file content.
     fn parse_pid_file(&self, content: &str) -> Result<(u32, String), PidGuardError> {
         let lines: Vec<&str> = content.lines().collect();
-        
+
         if lines.len() < 2 {
             return Err(PidGuardError::ParseError(
-                "PID file must contain at least 2 lines".to_string()
+                "PID file must contain at least 2 lines".to_string(),
             ));
         }
 
@@ -102,9 +99,9 @@ impl MinePidGuard {
             .trim()
             .parse::<u32>()
             .map_err(|e: std::num::ParseIntError| PidGuardError::ParseError(e.to_string()))?;
-        
+
         let timestamp = lines[1].trim().to_string();
-        
+
         Ok((pid, timestamp))
     }
 
@@ -121,12 +118,12 @@ impl MinePidGuard {
     #[cfg(windows)]
     fn is_process_running(&self, pid: u32) -> bool {
         use std::process::Command;
-        
+
         // On Windows, use tasklist to check if process exists
         let output = Command::new("tasklist")
             .args(["/FI", &format!("PID eq {}", pid)])
             .output();
-        
+
         match output {
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -202,12 +199,12 @@ mod tests {
     fn test_acquire_release() {
         let temp_dir = TempDir::new().unwrap();
         let mut guard = MinePidGuard::new(temp_dir.path());
-        
+
         // Acquire the lock
         guard.acquire().unwrap();
         assert!(guard.is_acquired());
         assert!(guard.pid_file_path().exists());
-        
+
         // Release the lock
         guard.release();
         assert!(!guard.is_acquired());
@@ -219,17 +216,17 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut guard1 = MinePidGuard::new(temp_dir.path());
         let mut guard2 = MinePidGuard::new(temp_dir.path());
-        
+
         // First guard should acquire successfully
         guard1.acquire().unwrap();
-        
+
         // Second guard should fail
         let result = guard2.acquire();
         assert!(result.is_err());
-        
+
         // Release first guard
         guard1.release();
-        
+
         // Now second guard should succeed
         guard2.acquire().unwrap();
         guard2.release();
@@ -250,10 +247,10 @@ mod tests {
     fn test_force_cleanup() {
         let temp_dir = TempDir::new().unwrap();
         let mut guard = MinePidGuard::new(temp_dir.path());
-        
+
         guard.acquire().unwrap();
         assert!(guard.pid_file_path().exists());
-        
+
         // Force cleanup
         guard.force_cleanup().unwrap();
         assert!(!guard.pid_file_path().exists());

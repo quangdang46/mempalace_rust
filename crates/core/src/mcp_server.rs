@@ -625,7 +625,7 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     }
     let input: Input = parse_args_with_integer_coercion(args, &["limit"])?;
     let sanitized = crate::query_sanitizer::sanitize_query(&input.query);
-    
+
     // Convert where_filter to metadata filter if provided
     let metadata_filter = if let Some(filter) = input.where_filter {
         if let Some(obj) = filter.as_object() {
@@ -642,7 +642,7 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     } else {
         None
     };
-    
+
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
     let query_results = db
@@ -765,7 +765,7 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
             serde_json::json!({ "success": true, "reason": "already_exists", "drawer_id": drawer_id }),
         );
     }
-    
+
     // Build standard metadata
     let mut standard_metadata = vec![
         ("wing", input.wing.as_str()),
@@ -774,7 +774,7 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         ("added_by", input.added_by.as_deref().unwrap_or("mcp")),
         ("chunk_index", "0"),
     ];
-    
+
     // Add custom metadata if provided
     if let Some(custom_meta) = &input.custom_metadata {
         if let Some(obj) = custom_meta.as_object() {
@@ -785,12 +785,9 @@ fn tool_add_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResult,
             }
         }
     }
-    
-    db.add(
-        &[(&drawer_id, &input.content)],
-        &[&standard_metadata],
-    )
-    .map_err(|e| internal_error_safe(&e))?;
+
+    db.add(&[(&drawer_id, &input.content)], &[&standard_metadata])
+        .map_err(|e| internal_error_safe(&e))?;
     db.flush().map_err(|e| internal_error_safe(&e))?;
     crate::palace_graph::invalidate_cache();
     ok_json(

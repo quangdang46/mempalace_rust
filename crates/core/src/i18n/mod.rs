@@ -115,10 +115,10 @@ impl LocaleManager {
     /// Create a new locale manager, loading all available locales from the i18n directory.
     pub fn new() -> Result<Self, LocaleError> {
         let mut locales = HashMap::new();
-        
+
         // Load built-in locales
         Self::load_builtin_locales(&mut locales)?;
-        
+
         Ok(Self {
             locales,
             default_locale: "en".to_string(),
@@ -129,21 +129,21 @@ impl LocaleManager {
     fn load_builtin_locales(locales: &mut HashMap<String, Locale>) -> Result<(), LocaleError> {
         // Try to load from embedded assets or filesystem
         let locale_files = vec!["en.json", "pt-br.json", "ru.json"];
-        
+
         for file_name in locale_files {
             // For now, we'll use the embedded JSON we created
             // In a real implementation, this would load from the filesystem or embedded assets
-            if let Ok(content) = Self::load_locale_content(&file_name) {
+            if let Ok(content) = Self::load_locale_content(file_name) {
                 let locale: Locale = serde_json::from_str(&content)
                     .map_err(|e| LocaleError::ParseError(file_name.to_string(), e))?;
-                
+
                 // Store with both exact code and case-insensitive variant
                 let code_lower = locale.code.to_lowercase();
                 locales.insert(locale.code.clone(), locale.clone());
                 locales.insert(code_lower, locale);
             }
         }
-        
+
         Ok(())
     }
 
@@ -285,12 +285,12 @@ impl LocaleManager {
     /// Handles case-insensitivity and partial matches (e.g., "pt" → "pt-BR").
     pub fn resolve_locale(&self, code: &str) -> &Locale {
         let code_lower = code.to_lowercase();
-        
+
         // Exact match
         if let Some(locale) = self.get_locale(&code_lower) {
             return locale;
         }
-        
+
         // Try primary language subtag (e.g., "pt" from "pt-BR")
         if let Some(primary) = code_lower.split('-').next() {
             // Find any locale starting with this primary language
@@ -302,7 +302,7 @@ impl LocaleManager {
                 }
             }
         }
-        
+
         // Fallback to default
         self.get_default()
     }
@@ -319,10 +319,10 @@ impl Default for LocaleManager {
 pub enum LocaleError {
     #[error("Locale not found: {0}")]
     NotFound(String),
-    
+
     #[error("Failed to parse locale '{0}': {1}")]
     ParseError(String, serde_json::Error),
-    
+
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -340,17 +340,17 @@ mod tests {
     #[test]
     fn test_get_locale() {
         let manager = LocaleManager::new().unwrap();
-        
+
         // Test exact match
         assert!(manager.get_locale("en").is_some());
         assert!(manager.get_locale("pt-BR").is_some());
         assert!(manager.get_locale("ru").is_some());
-        
+
         // Test case-insensitive
         assert!(manager.get_locale("EN").is_some());
         assert!(manager.get_locale("pt-br").is_some());
         assert!(manager.get_locale("RU").is_some());
-        
+
         // Test non-existent
         assert!(manager.get_locale("de").is_none());
     }
@@ -358,19 +358,19 @@ mod tests {
     #[test]
     fn test_resolve_locale() {
         let manager = LocaleManager::new().unwrap();
-        
+
         // Exact match
         let locale = manager.resolve_locale("en");
         assert_eq!(locale.code, "en");
-        
+
         // Case-insensitive
         let locale = manager.resolve_locale("PT-BR");
         assert_eq!(locale.code, "pt-BR");
-        
+
         // Partial match (primary language)
         let locale = manager.resolve_locale("pt");
         assert!(locale.code.starts_with("pt"));
-        
+
         // Fallback to default
         let locale = manager.resolve_locale("de");
         assert_eq!(locale.code, "en");
@@ -380,7 +380,7 @@ mod tests {
     fn test_entity_patterns() {
         let manager = LocaleManager::new().unwrap();
         let locale = manager.get_locale("en").unwrap();
-        
+
         assert!(!locale.entity.person_verbs.is_empty());
         assert!(!locale.entity.project_verbs.is_empty());
         assert!(!locale.entity.pronouns.is_empty());
@@ -391,7 +391,7 @@ mod tests {
     fn test_cli_strings() {
         let manager = LocaleManager::new().unwrap();
         let locale = manager.get_locale("en").unwrap();
-        
+
         assert!(!locale.cli.init_complete.is_empty());
         assert!(!locale.cli.mine_complete.is_empty());
         assert!(!locale.cli.search_no_results.is_empty());

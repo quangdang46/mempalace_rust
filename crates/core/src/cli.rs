@@ -29,7 +29,7 @@ use crate::layers::MemoryStack;
 use crate::mine_palace_lock::{self, MineAlreadyRunning};
 use crate::miner::{self, MiningResult};
 use crate::palace_db::PalaceDb;
-use crate::room_detector_local::detect_rooms_from_folders;
+use crate::room_detector_local::{detect_rooms_from_folders, RoomMapping};
 use crate::searcher;
 use crate::split_mega_files::split_file_with_options;
 use crate::sweeper::{sweep, sweep_directory};
@@ -377,7 +377,7 @@ fn scan_and_detect_entities(dir: &Path) -> DetectedEntities {
     } else {
         None
     };
-    
+
     // For now, we still use the project_scanner which doesn't support locale patterns yet
     // TODO: Integrate locale patterns into project_scanner
     crate::project_scanner::discover_entities(dir, 10)
@@ -405,6 +405,20 @@ fn merge_detected_into_registry(detected: &DetectedEntities) -> Result<PathBuf> 
     Ok(registry_path)
 }
 
+fn save_project_config(
+    project_dir: &Path,
+    project_name: &str,
+    rooms: &[RoomMapping],
+) -> Result<PathBuf> {
+    let config_path = project_dir.join("mempalace.json");
+    let config = json!({
+        "wing": project_name,
+        "rooms": rooms,
+    });
+    fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+    Ok(config_path)
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers
 // ---------------------------------------------------------------------------
@@ -428,24 +442,28 @@ fn cmd_init(
     println!("{}", "=".repeat(55));
 
     let mut config = Config::load()?;
-    
+
     // Canonicalize the target directory for comparison
     let target_dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
-    
+
     // Idempotency check: if palace already exists at target dir, handle gracefully
-    let existing_palace_path = std::fs::canonicalize(&config.palace_path).unwrap_or_else(|_| config.palace_path.clone());
-    
+    let existing_palace_path =
+        std::fs::canonicalize(&config.palace_path).unwrap_or_else(|_| config.palace_path.clone());
+
     // Check if target is the same as existing palace
     if target_dir == existing_palace_path {
         // Check if it's a valid palace
-        let palace_db_path = target_dir.join(format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME));
+        let palace_db_path = target_dir.join(format!(
+            "{}.json",
+            crate::palace_db::DEFAULT_COLLECTION_NAME
+        ));
         let is_valid_palace = palace_db_path.exists();
-        
+
         if is_valid_palace {
             println!();
             println!("  Palace already exists at: {}", target_dir.display());
             println!();
-            
+
             if yes {
                 // In non-interactive mode, skip re-initialization
                 println!("  Skipping re-initialization (--yes set).");
@@ -454,7 +472,7 @@ fn cmd_init(
                 println!("{}", "=".repeat(55));
                 return Ok(());
             }
-            
+
             println!("  This palace contains existing data.");
             println!("  Options:");
             println!("    1. Keep existing palace and exit (recommended)");
@@ -462,27 +480,29 @@ fn cmd_init(
             println!("    3. Force re-initialization (WARNING: may affect configuration)");
             println!();
             println!("  Your choice [1]: ");
-            
+
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             let choice = input.trim();
-            
+
             match choice {
                 "2" => {
                     println!("  Re-scanning entities only...");
                     // Continue with entity detection but skip full init
                     let config_path = config.init()?;
-                    
+
                     if let Some(lang_val) = _lang {
-                        let languages: Vec<String> = lang_val.split(',').map(|s| s.trim().to_string()).collect();
+                        let languages: Vec<String> =
+                            lang_val.split(',').map(|s| s.trim().to_string()).collect();
                         let mut config = Config::load()?;
                         config.languages = languages;
                         config.save()?;
                     }
-                    
+
                     let _config_dir = config_path.parent().unwrap_or(&config_path);
                     let detected = scan_and_detect_entities(dir);
-                    let total = detected.people.len() + detected.projects.len() + detected.uncertain.len();
+                    let total =
+                        detected.people.len() + detected.projects.len() + detected.uncertain.len();
                     if total > 0 {
                         println!("  Found {} entities", total);
                         let confirmed = confirm_entities(&detected, yes);
@@ -498,7 +518,9 @@ fn cmd_init(
                     return Ok(());
                 }
                 "3" => {
-                    println!("  WARNING: Force re-initialization may affect existing configuration.");
+                    println!(
+                        "  WARNING: Force re-initialization may affect existing configuration."
+                    );
                     println!("  Existing drawers will NOT be deleted, but config may change.");
                     println!();
                     if !yes {
@@ -524,11 +546,11 @@ fn cmd_init(
             }
         }
     }
-    
+
     // Set the palace path to the target directory
     config.palace_path = target_dir.clone();
     config.save()?;
-    
+
     let config_path = config.init()?;
 
     if let Some(lang_val) = _lang {
@@ -600,13 +622,22 @@ fn cmd_init(
     println!();
     println!("  Estimating mining scope...");
     let scope_estimate = estimate_mining_scope(dir)?;
-    println!("  ~{} files (~{} MB) would be mined into this palace.", 
-             scope_estimate.file_count, scope_estimate.size_mb);
+    println!(
+        "  ~{} files (~{} MB) would be mined into this palace.",
+        scope_estimate.file_count, scope_estimate.size_mb
+    );
+
+    let project_name = target_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase().replace([' ', '-'], "_"))
+        .unwrap_or_else(|| "project".to_string());
+    let project_config_path = save_project_config(dir, &project_name, &rooms)?;
 
     // Pass 3: initialize config
     println!();
-    println!("  Config saved: {:?}", config_path);
-    
+    println!("  Project config saved: {:?}", project_config_path);
+    println!("  Global config saved: {:?}", config_path);
+
     if !yes && !_auto_mine {
         println!();
         println!("  Mine this directory now? [Y/n]");
@@ -620,7 +651,7 @@ fn cmd_init(
             return Ok(());
         }
     }
-    
+
     println!();
     println!("  Next step:");
     println!("    mpr mine {:?}", dir);
@@ -883,7 +914,7 @@ fn cmd_search(
     palace_arg: Option<&str>,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    runtime().block_on(searcher::search_memories_with_rerank(
+    let response = runtime().block_on(searcher::search_memories_with_rerank(
         query,
         &palace_path,
         wing,
@@ -892,6 +923,7 @@ fn cmd_search(
         None,
         bm25,
     ))?;
+    searcher::print_search_response(&response);
     Ok(())
 }
 
@@ -1187,26 +1219,16 @@ fn cmd_repair(cmd: &RepairCommands, palace_arg: Option<&str>) -> Result<()> {
 
     match cmd {
         RepairCommands::Scan { wing } => {
-            crate::repair::scan_palace(
-                Some(palace_path.as_path()),
-                wing.as_deref(),
-            )?;
+            crate::repair::scan_palace(Some(palace_path.as_path()), wing.as_deref())?;
         }
         RepairCommands::Prune { confirm } => {
-            crate::repair::prune_corrupt(
-                Some(palace_path.as_path()),
-                *confirm,
-            )?;
+            crate::repair::prune_corrupt(Some(palace_path.as_path()), *confirm)?;
         }
         RepairCommands::Rebuild => {
-            crate::repair::rebuild_index(
-                Some(palace_path.as_path()),
-            )?;
+            crate::repair::rebuild_index(Some(palace_path.as_path()))?;
         }
         RepairCommands::CleanupPid => {
-            crate::repair::cleanup_pid(
-                Some(palace_path.as_path()),
-            )?;
+            crate::repair::cleanup_pid(Some(palace_path.as_path()))?;
         }
     }
 
@@ -1224,29 +1246,19 @@ fn cmd_mcp(palace_arg: Option<&str>) {
         } else {
             PathBuf::from(palace)
         };
+        let custom_server_cmd = format!("mpr --palace {} serve", resolved_palace.display());
         println!("MemPalace MCP quick setup:");
-        println!(
-            "  claude mcp add mpr -- {} --palace {}",
-            base_server_cmd,
-            resolved_palace.display()
-        );
+        println!("  claude mcp add mpr -- {}", custom_server_cmd);
         println!("\nRun the server directly:");
-        println!(
-            "  {} --palace {}",
-            base_server_cmd,
-            resolved_palace.display()
-        );
+        println!("  {}", custom_server_cmd);
     } else {
         println!("MemPalace MCP quick setup:");
         println!("  claude mcp add mpr -- {}", base_server_cmd);
         println!("\nRun the server directly:");
         println!("  {}", base_server_cmd);
         println!("\nOptional custom palace:");
-        println!(
-            "  claude mcp add mpr -- {} --palace /path/to/palace",
-            base_server_cmd
-        );
-        println!("  {} --palace /path/to/palace", base_server_cmd);
+        println!("  claude mcp add mpr -- mpr --palace /path/to/palace serve");
+        println!("  mpr --palace /path/to/palace serve");
     }
 }
 
@@ -1360,8 +1372,8 @@ fn cmd_compress(
         return Ok(());
     }
 
-    let total_original = docs.iter().map(|s| s.len()).sum::<usize>();
-    let mut total_compressed = 0;
+    let mut total_original_tokens = 0;
+    let mut total_compressed_tokens = 0;
     let mut compressed_entries: Vec<(
         String,
         String,
@@ -1376,7 +1388,8 @@ fn cmd_compress(
 
         let compressed = dialect::compress_with_metadata(doc, &people_map, Some(meta));
         let stats = dialect::compression_stats(doc, &compressed);
-        total_compressed += stats.summary_chars;
+        total_original_tokens += stats.original_tokens_est;
+        total_compressed_tokens += stats.summary_tokens_est;
 
         if dry_run {
             let wing_name = meta
@@ -1442,12 +1455,10 @@ fn cmd_compress(
     }
 
     // Summary
-    let ratio = total_original as f64 / total_compressed.max(1) as f64;
-    let orig_tokens = dialect::count_tokens(&"x".repeat(total_original));
-    let comp_tokens = dialect::count_tokens(&"x".repeat(total_compressed));
+    let ratio = total_original_tokens as f64 / total_compressed_tokens.max(1) as f64;
     println!(
         "  Total: {}t -> {}t ({:.1}x compression)",
-        orig_tokens, comp_tokens, ratio
+        total_original_tokens, total_compressed_tokens, ratio
     );
     if dry_run {
         println!("  (dry run -- nothing stored)");
@@ -1953,54 +1964,78 @@ struct MiningScopeEstimate {
 
 fn estimate_mining_scope(dir: &PathBuf) -> Result<MiningScopeEstimate> {
     use walkdir::WalkDir;
-    
+
     let mut file_count = 0;
     let mut total_bytes = 0u64;
-    
+
     const SKIP_DIRS: &[&str] = &[
-        ".git", "node_modules", "__pycache__", ".venv", "venv", "env",
-        "dist", "build", ".next", "coverage", ".terraform", "vendor",
-        "target", ".mempalace", ".cache", ".pytest_cache", ".ruff_cache",
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "env",
+        "dist",
+        "build",
+        ".next",
+        "coverage",
+        ".terraform",
+        "vendor",
+        "target",
+        ".mempalace",
+        ".cache",
+        ".pytest_cache",
+        ".ruff_cache",
     ];
-    
-    for entry in WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+
+    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
-        
+
         // Skip directories
         if path.is_dir() {
-            let dir_name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if SKIP_DIRS.contains(&dir_name) {
                 continue;
             }
         }
-        
+
         // Only count readable files
         if path.is_file() {
             // Skip common non-content files
             if let Some(ext) = path.extension() {
                 let ext_str = ext.to_string_lossy().to_lowercase();
-                if matches!(ext_str.as_str(), 
-                    "lock" | "pyc" | "pyo" | "dll" | "so" | "dylib" | "exe" | "bin" 
-                    | "class" | "jar" | "war" | "zip" | "tar" | "gz" | "rar" | "7z"
+                if matches!(
+                    ext_str.as_str(),
+                    "lock"
+                        | "pyc"
+                        | "pyo"
+                        | "dll"
+                        | "so"
+                        | "dylib"
+                        | "exe"
+                        | "bin"
+                        | "class"
+                        | "jar"
+                        | "war"
+                        | "zip"
+                        | "tar"
+                        | "gz"
+                        | "rar"
+                        | "7z"
                 ) {
                     continue;
                 }
             }
-            
+
             if let Ok(metadata) = path.metadata() {
                 file_count += 1;
                 total_bytes += metadata.len();
             }
         }
     }
-    
+
     let size_mb = total_bytes as f64 / (1024.0 * 1024.0);
-    
+
     Ok(MiningScopeEstimate {
         file_count,
         size_mb,
@@ -2010,9 +2045,9 @@ fn estimate_mining_scope(dir: &PathBuf) -> Result<MiningScopeEstimate> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cmd_compress, cmd_mine, confirm_entities, count_human_messages, detect_mining_mode,
-        hook_precompact_response, hook_session_start_response, hook_stop_response,
-        merge_detected_into_registry, parse_harness_input, run_instructions,
+        cmd_compress, cmd_init, cmd_mine, confirm_entities, count_human_messages,
+        detect_mining_mode, hook_precompact_response, hook_session_start_response,
+        hook_stop_response, merge_detected_into_registry, parse_harness_input, run_instructions,
         save_detected_entities, scan_and_detect_entities, Cli, Commands, DetectedEntities,
         HookAction, InstructionName, MiningMode, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL,
         STOP_BLOCK_REASON,
@@ -2129,6 +2164,41 @@ mod tests {
         let (dir, yes) = expect_init(args);
         assert_eq!(dir, PathBuf::from("/tmp/test"));
         assert!(yes);
+    }
+
+    #[test]
+    fn test_cmd_init_writes_project_config_for_mining() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should not be poisoned");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir.path().join("Sample Project");
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::create_dir_all(temp_dir.path().join("xdg")).unwrap();
+
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().join("xdg"));
+        cmd_init(
+            &project_dir,
+            true,
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        std::env::remove_var("XDG_CONFIG_HOME");
+
+        let config_path = project_dir.join("mempalace.json");
+        assert!(config_path.exists());
+        let (wing, rooms) = crate::miner::load_config(&project_dir).unwrap();
+        assert_eq!(wing, "sample_project");
+        assert!(rooms.iter().any(|room| room.name == "src"));
     }
 
     #[test]

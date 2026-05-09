@@ -31,12 +31,12 @@ pub struct LocalePatterns {
 /// Load locale patterns from the i18n system for a given locale code
 pub fn load_locale_patterns(locale_code: &str) -> Option<LocalePatterns> {
     use crate::i18n::LocaleManager;
-    
+
     let manager = LocaleManager::new().ok()?;
     let locale = manager.get_locale(locale_code)?;
-    
+
     let entity_data = &locale.entity;
-    
+
     Some(LocalePatterns {
         person_verbs: entity_data.person_verbs.clone(),
         project_verbs: entity_data.project_verbs.clone(),
@@ -51,7 +51,7 @@ pub fn load_locale_patterns(locale_code: &str) -> Option<LocalePatterns> {
 /// Get localized CLI string for a given key and locale code
 pub fn get_localized_string(key: &str, locale_code: &str) -> String {
     use crate::i18n::LocaleManager;
-    
+
     if let Ok(manager) = LocaleManager::new() {
         if let Some(locale) = manager.get_locale(locale_code) {
             // Simple key lookup based on the i18n structure
@@ -145,38 +145,55 @@ static PRONOUN_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 /// Build all patterns for a specific candidate name, with name escaped.
 fn build_name_patterns(name: &str, locale: Option<&LocalePatterns>) -> CompiledNamePatterns {
     let n = regex::escape(name);
-    
+
     // Use locale-specific patterns if available, otherwise fall back to defaults
     let person_verbs: Vec<&str> = locale
-        .and_then(|l| if l.person_verbs.is_empty() { None } else { Some(l.person_verbs.iter().map(|s| s.as_str()).collect()) })
+        .and_then(|l| {
+            if l.person_verbs.is_empty() {
+                None
+            } else {
+                Some(l.person_verbs.iter().map(|s| s.as_str()).collect())
+            }
+        })
         .unwrap_or_else(|| PERSON_VERB_TEMPLATES.to_vec());
-    
+
     let project_verbs: Vec<&str> = locale
-        .and_then(|l| if l.project_verbs.is_empty() { None } else { Some(l.project_verbs.iter().map(|s| s.as_str()).collect()) })
+        .and_then(|l| {
+            if l.project_verbs.is_empty() {
+                None
+            } else {
+                Some(l.project_verbs.iter().map(|s| s.as_str()).collect())
+            }
+        })
         .unwrap_or_else(|| PROJECT_VERB_TEMPLATES.to_vec());
-    
+
     // Build verb patterns from locale verbs
     let person_verb_patterns: Vec<String> = person_verbs
         .iter()
         .map(|verb| format!(r"\b{name}\s+{}\b", verb))
         .collect();
-    
+
     let project_verb_patterns: Vec<String> = project_verbs
         .iter()
-        .map(|verb| format!(r"\b(?:building|built|shipping|launching|deploying|installing)?\s+{}\b", verb))
+        .map(|verb| {
+            format!(
+                r"\b(?:building|built|shipping|launching|deploying|installing)?\s+{}\b",
+                verb
+            )
+        })
         .collect();
-    
+
     // Combine locale patterns with default patterns
     let combined_person_verbs: Vec<String> = person_verb_patterns
         .into_iter()
         .chain(PERSON_VERB_TEMPLATES.iter().map(|&s| s.to_string()))
         .collect();
-    
+
     let combined_project_verbs: Vec<String> = project_verb_patterns
         .into_iter()
         .chain(PROJECT_VERB_TEMPLATES.iter().map(|&s| s.to_string()))
         .collect();
-    
+
     CompiledNamePatterns {
         // Dialogue patterns need multiline mode for ^ anchor
         dialogue: DIALOGUE_TEMPLATES
@@ -861,45 +878,50 @@ enum EntityType {
 /// Returns a map of name -> frequency for names appearing 3+ times.
 /// Filters out stopwords and common first names (requires strong signals for those).
 /// If locale_patterns is provided, use locale-specific stopwords.
-fn extract_candidates_with_script(text: &str, locale_patterns: Option<&LocalePatterns>) -> HashMap<String, usize> {
+fn extract_candidates_with_script(
+    text: &str,
+    locale_patterns: Option<&LocalePatterns>,
+) -> HashMap<String, usize> {
     use crate::script_aware::{detect_script, get_word_regex, ScriptType};
-    
+
     let mut counts: HashMap<String, usize> = HashMap::new();
-    
+
     // Detect the dominant script in the text
     let script_type = detect_script(text);
-    
+
     // Get the appropriate word regex for this script
     let word_regex = get_word_regex(script_type);
-    
+
     // Get stopwords from locale or use default
     let stopwords: std::collections::HashSet<&str> = locale_patterns
         .map(|lp| lp.stopwords.iter().map(|s| s.as_str()).collect())
         .unwrap_or_else(|| STOPWORDS.iter().copied().collect());
-    
+
     // Extract words using script-aware regex
     for cap in word_regex.captures_iter(text) {
         if let Some(word) = cap.get(0).map(|m| m.as_str()) {
             let lower = word.to_lowercase();
-            
+
             // Filter out stopwords and short words
             if !stopwords.contains(lower.as_str()) && word.len() > 1 {
                 // For Latin/Cyrillic/Arabic, require starting with uppercase
                 // For CJK and Other, allow any word (since CJK doesn't have case)
                 let is_valid_candidate = match script_type {
-                    ScriptType::Latin | ScriptType::Cyrillic | ScriptType::Arabic => {
-                        word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-                    }
+                    ScriptType::Latin | ScriptType::Cyrillic | ScriptType::Arabic => word
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false),
                     ScriptType::Cjk | ScriptType::Other => true,
                 };
-                
+
                 if is_valid_candidate {
                     *counts.entry(word.to_string()).or_insert(0) += 1;
                 }
             }
         }
     }
-    
+
     // Also try to extract multi-word phrases for Latin/Cyrillic scripts
     if matches!(script_type, ScriptType::Latin | ScriptType::Cyrillic) {
         for cap in MULTI_WORD_RE.captures_iter(text) {
@@ -912,7 +934,7 @@ fn extract_candidates_with_script(text: &str, locale_patterns: Option<&LocalePat
                 }
             }
         }
-        
+
         // Extract versioned/suffixed names
         for cap in VERSIONED_CANDIDATE_RE.captures_iter(text) {
             if let Some(word) = cap.get(1).map(|m| m.as_str()) {
@@ -923,7 +945,7 @@ fn extract_candidates_with_script(text: &str, locale_patterns: Option<&LocalePat
             }
         }
     }
-    
+
     // Filter: must appear at least 3 times
     counts.retain(|_, count| *count >= 3);
     counts
@@ -938,7 +960,12 @@ fn is_common_name(name: &str) -> bool {
 // SIGNAL SCORING
 // =============================================================================
 
-fn score_entity(name: &str, text: &str, lines: &[&str], locale: Option<&LocalePatterns>) -> ScoredEntity {
+fn score_entity(
+    name: &str,
+    text: &str,
+    lines: &[&str],
+    locale: Option<&LocalePatterns>,
+) -> ScoredEntity {
     let patterns = build_name_patterns(name, locale);
     let mut person_score: i32 = 0;
     let mut project_score: i32 = 0;
@@ -1329,7 +1356,11 @@ pub fn scan_for_detection(project_dir: &Path, max_files: usize) -> Vec<PathBuf> 
     files.into_iter().take(max_files).collect()
 }
 
-pub fn detect_entities(file_paths: &[PathBuf], max_files: usize, locale: Option<&LocalePatterns>) -> DetectionResult {
+pub fn detect_entities(
+    file_paths: &[PathBuf],
+    max_files: usize,
+    locale: Option<&LocalePatterns>,
+) -> DetectionResult {
     let mut all_text = Vec::new();
     let mut all_lines = Vec::new();
     let mut files_read = 0usize;
@@ -1938,20 +1969,32 @@ mod tests {
         // Test that we can load locale patterns from the i18n system
         let en_patterns = load_locale_patterns("en");
         assert!(en_patterns.is_some(), "Should load English patterns");
-        
+
         let patterns = en_patterns.unwrap();
-        assert!(!patterns.person_verbs.is_empty(), "Should have person verbs");
-        assert!(!patterns.project_verbs.is_empty(), "Should have project verbs");
+        assert!(
+            !patterns.person_verbs.is_empty(),
+            "Should have person verbs"
+        );
+        assert!(
+            !patterns.project_verbs.is_empty(),
+            "Should have project verbs"
+        );
         assert!(!patterns.pronouns.is_empty(), "Should have pronouns");
         assert!(!patterns.stopwords.is_empty(), "Should have stopwords");
-        
+
         // Test case-insensitive locale code
         let en_patterns_lower = load_locale_patterns("EN");
-        assert!(en_patterns_lower.is_some(), "Should load English patterns with lowercase code");
-        
+        assert!(
+            en_patterns_lower.is_some(),
+            "Should load English patterns with lowercase code"
+        );
+
         // Test invalid locale code
         let invalid_patterns = load_locale_patterns("invalid-locale");
-        assert!(invalid_patterns.is_none(), "Should return None for invalid locale");
+        assert!(
+            invalid_patterns.is_none(),
+            "Should return None for invalid locale"
+        );
     }
 
     #[test]
@@ -1959,14 +2002,20 @@ mod tests {
         // Test that we can get localized CLI strings
         let init_complete = get_localized_string("init_complete", "en");
         assert!(!init_complete.is_empty(), "Should return localized string");
-        
+
         // Test fallback for unknown key
         let unknown = get_localized_string("unknown_key", "en");
-        assert_eq!(unknown, "unknown_key", "Should fallback to key for unknown strings");
-        
+        assert_eq!(
+            unknown, "unknown_key",
+            "Should fallback to key for unknown strings"
+        );
+
         // Test fallback for invalid locale
         let invalid_locale = get_localized_string("init_complete", "invalid-locale");
-        assert_eq!(invalid_locale, "init_complete", "Should fallback to key for invalid locale");
+        assert_eq!(
+            invalid_locale, "init_complete",
+            "Should fallback to key for invalid locale"
+        );
     }
 
     #[test]
@@ -1976,11 +2025,14 @@ mod tests {
         let text = "Alice said hello. Alice said hello. Alice said hello. Alice said hello. 
                      Bob replied. Bob replied. Bob replied. Bob replied. Alice wrote code. Bob tested it.";
         let result = detect_from_content(text, None);
-        
+
         // Alice and Bob should be detected as they appear multiple times
         let names: Vec<&str> = result.people.iter().map(|p| p.name.as_str()).collect();
-        assert!(names.contains(&"Alice") || names.contains(&"Bob"), 
-                "Should detect Latin names with script-aware extraction, got: {:?}", names);
+        assert!(
+            names.contains(&"Alice") || names.contains(&"Bob"),
+            "Should detect Latin names with script-aware extraction, got: {:?}",
+            names
+        );
     }
 
     #[test]
@@ -1989,25 +2041,31 @@ mod tests {
         // Use more occurrences to meet the frequency threshold
         let text = "Иван сказал привет. Иван сказал привет. Иван сказал привет. Иван сказал привет.
                      Иван написал код. Иван написал код. Иван написал код. Иван написал код.";
-        
+
         // Test that candidates can be extracted with script-aware boundaries
         let patterns = load_locale_patterns("ru").expect("Should load Russian patterns");
         let candidates = extract_candidates_with_script(text, Some(&patterns));
-        
+
         // At least Иван should be extracted as a candidate
-        assert!(candidates.contains_key("Иван") || !candidates.is_empty(),
-                "Should extract Cyrillic candidates with script-aware extraction, got: {:?}", candidates);
+        assert!(
+            candidates.contains_key("Иван") || !candidates.is_empty(),
+            "Should extract Cyrillic candidates with script-aware extraction, got: {:?}",
+            candidates
+        );
     }
 
     #[test]
     fn test_script_aware_with_locale_stopwords() {
         // Test that locale-specific stopwords are used
         let patterns = load_locale_patterns("en").expect("Should load English patterns");
-        
+
         let text = "The quick brown fox jumps over the lazy dog. The The The";
         let candidates = extract_candidates_with_script(text, Some(&patterns));
-        
+
         // "The" should not be in candidates because it's a stopword
-        assert!(!candidates.contains_key("The"), "Should filter out locale stopwords");
+        assert!(
+            !candidates.contains_key("The"),
+            "Should filter out locale stopwords"
+        );
     }
 }
