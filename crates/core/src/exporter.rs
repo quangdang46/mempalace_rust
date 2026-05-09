@@ -38,6 +38,58 @@ fn reject_symlink(path: &Path, label: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Open a file for writing, refusing to follow a symlink at the target
+/// path.
+///
+/// Mirrors upstream mempalace `7545238` (Copilot review on #1156): the
+/// directory-level `reject_symlink` check leaves a TOCTOU window where a
+/// symlink swapped in between create-dir and file-open would still
+/// redirect writes. On POSIX we close that window with `O_NOFOLLOW`,
+/// which fails the open itself if `path` is a symlink. On Windows we
+/// fall back to a `symlink_metadata` pre-check (narrower than no check
+/// at all).
+fn safe_open_for_write(path: &Path, append: bool) -> anyhow::Result<std::fs::File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true);
+        if append {
+            opts.append(true);
+        } else {
+            opts.truncate(true);
+        }
+        opts.custom_flags(libc::O_NOFOLLOW);
+        match opts.open(path) {
+            Ok(f) => Ok(f),
+            Err(e) => {
+                // ELOOP: the target was a symlink (O_NOFOLLOW).
+                if e.raw_os_error() == Some(libc::ELOOP) {
+                    anyhow::bail!("refusing to write: {} is a symbolic link.", path.display());
+                }
+                Err(e.into())
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            anyhow::bail!("refusing to write: {} is a symbolic link.", path.display());
+        }
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true);
+        if append {
+            opts.append(true);
+        } else {
+            opts.truncate(true);
+        }
+        Ok(opts.open(path)?)
+    }
+}
+
 pub struct ExportStats {
     pub wings: usize,
     pub rooms: usize,
@@ -115,10 +167,7 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
             let key = format!("{}|{}", wing, room);
             let is_new = !opened_rooms.contains_key(&key);
 
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&room_file)?;
+            let mut file = safe_open_for_write(&room_file, true)?;
             use std::io::Write;
             if is_new {
                 writeln!(file, "# {} / {}\n", wing, room)?;
@@ -185,7 +234,11 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
         ));
     }
 
-    std::fs::write(&index_path, index_lines.join("\n"))?;
+    {
+        use std::io::Write;
+        let mut f = safe_open_for_write(&index_path, false)?;
+        f.write_all(index_lines.join("\n").as_bytes())?;
+    }
 
     println!(
         "\n  Exported {} drawers across {} wings, {} rooms",
@@ -270,5 +323,61 @@ mod tests {
         let msg = format!("{}", err);
         assert!(msg.contains("symbolic link"), "unexpected error: {msg}");
         assert!(msg.contains("output_dir"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn test_safe_open_for_write_allows_regular_file() {
+        // Sanity: a plain (non-existent) path opens fine.
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("regular.md");
+        let mut f = safe_open_for_write(&path, false).expect("regular path should open");
+        use std::io::Write;
+        f.write_all(b"hello").unwrap();
+        drop(f);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_safe_open_for_write_blocks_symlinked_file() {
+        // Mirrors upstream mempalace 7545238: the per-file open must refuse
+        // to follow a symlink at the target path, closing the TOCTOU window
+        // that the directory-level reject_symlink check leaves open.
+        let temp = tempfile::TempDir::new().unwrap();
+        let real_target = temp.path().join("real_target.md");
+        // The target need not exist — O_NOFOLLOW fails on the symlink
+        // itself before resolution.
+        let link = temp.path().join("link.md");
+        std::os::unix::fs::symlink(&real_target, &link).unwrap();
+
+        let err = safe_open_for_write(&link, false)
+            .expect_err("safe_open_for_write must refuse a symlinked target");
+        let msg = format!("{}", err);
+        assert!(msg.contains("symbolic link"), "unexpected error: {msg}");
+
+        // The symlink target must not have been created behind us.
+        assert!(
+            !real_target.exists(),
+            "symlink target should not have been created"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_safe_open_for_write_appends_to_regular_file() {
+        // The append=true variant used for room files preserves prior
+        // content (each drawer in a room writes a new section).
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("room.md");
+        std::fs::write(&path, "original\n").unwrap();
+        {
+            let mut f = safe_open_for_write(&path, true).expect("append open should succeed");
+            use std::io::Write;
+            f.write_all(b"appended\n").unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "original\nappended\n"
+        );
     }
 }
