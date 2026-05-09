@@ -109,10 +109,8 @@ impl MinePidGuard {
     #[cfg(unix)]
     fn is_process_running(&self, pid: u32) -> bool {
         // On Unix, use kill with signal 0 to check if process exists
-        unsafe {
-            let result = libc::kill(pid as libc::pid_t, 0);
-            result == 0 || (result == -1 && *libc::__errno_location() == libc::EPERM)
-        }
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 
     #[cfg(windows)]

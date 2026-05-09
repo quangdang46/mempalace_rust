@@ -51,10 +51,14 @@ pub fn setup_signal_handler() -> SignalGuard {
         use winapi::um::consoleapi::SetConsoleCtrlHandler;
         use winapi::um::wincon::CTRL_C_EVENT;
 
-        extern "system" fn ctrl_handler(_: u32) -> i32 {
-            eprintln!("\n  Shutdown requested (Ctrl-C)...");
-            request_shutdown();
-            1
+        extern "system" fn ctrl_handler(ctrl_type: u32) -> i32 {
+            if ctrl_type == CTRL_C_EVENT {
+                eprintln!("\n  Shutdown requested (Ctrl-C)...");
+                request_shutdown();
+                1
+            } else {
+                0
+            }
         }
 
         unsafe {
