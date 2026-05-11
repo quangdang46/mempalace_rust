@@ -93,3 +93,93 @@ These remaining gaps map onto the existing parity program:
 - `mr-nrt.20` — docs sync and final parity acceptance
 
 This file is the current gap ledger for the `94f1689` reference state.
+
+
+Sync update — upstream HEAD `68319dc` (2026-05-11)
+==================================================
+
+Followed `.devin/skills/sync-upstream-mempalace/SKILL.md`. Diffed upstream
+`94f1689..68319dc` (335 commits) and ported the high-priority correctness
+fixes below. Schema-changing and feature-flag work is deferred and listed in
+the updated "Remaining gaps" section.
+
+Ported in this session
+----------------------
+
+1. `mempalace/mcp_server.py` `e9222b4` (#1243) — `tool_diary_write` /
+   `tool_diary_read` now lowercase `agent_name` so reads are
+   case-insensitive ("Claude" / "claude" / "CLAUDE" all resolve to the
+   same agent identity).
+   - Rust: `crates/core/src/mcp_server.rs::tool_diary_write` and
+     `::tool_diary_read`, regression test
+     `mcp_server::tests::test_diary_read_case_insensitive_agent`.
+
+2. `mempalace/knowledge_graph.py` `0b8c2c1` (#1214) — reject inverted
+   intervals (`valid_to < valid_from`) at write time; they would otherwise
+   be invisible to every KG query.
+   - Rust: `crates/core/src/knowledge_graph.rs::add_triple`, regression
+     tests `test_add_triple_rejects_inverted_interval` and
+     `test_add_triple_allows_point_in_time_and_open_intervals`.
+
+3. `mempalace/entity_registry.py` `4f36145` + `2e441d1` (#1215) — atomic
+   save: write to sibling `.tmp`, fsync, rename over target, fsync the
+   parent directory on Unix for ext4-class durability.
+   - Rust: `crates/core/src/entity_registry.rs::save`, regression tests
+     `test_save_leaves_no_temp_file_on_success`,
+     `test_save_overwrites_previous_content_atomically`,
+     `test_save_sets_owner_only_permissions`.
+
+4. `mempalace/config.py` + `mempalace/mcp_server.py` `4d98b05` (#1164) —
+   validate ISO-8601 date / canonical UTC datetime at the MCP boundary
+   for `as_of`, `valid_from`, `valid_to`, and `ended`. Malformed dates now
+   produce a clear MCP error instead of silently returning empty result
+   sets.
+   - Rust: new `config::sanitize_iso_temporal`, used by `tool_kg_query`,
+     `tool_kg_add`, and `tool_kg_invalidate`. Tests in `config::tests`
+     (`test_sanitize_iso_temporal_*`) plus MCP-level
+     `test_kg_add_rejects_invalid_iso_date` and
+     `test_kg_query_rejects_invalid_iso_date`.
+
+5. `mempalace/mcp_server.py` `e4e25ed` (#1314) — `tool_kg_add` forwards
+   `valid_to` and `source_file` (so callers can backfill an already-ended
+   historical fact in a single call and preserve adapter provenance);
+   `tool_kg_invalidate` resolves an omitted `ended` to today's date in
+   the response instead of returning the literal sentinel `"today"`.
+   - Rust: `crates/core/src/mcp_server.rs::tool_kg_add` (schema +
+     handler), `tool_kg_invalidate` (handler), regression tests
+     `test_kg_add_forwards_valid_to` and
+     `test_kg_invalidate_resolves_default_ended_to_today`.
+   - Note: `source_drawer_id` from upstream is **not** ported here because
+     it requires a `triples` table migration. See "Remaining gaps".
+
+Remaining gaps after this sync
+------------------------------
+
+1. KG `source_drawer_id` provenance (`e4e25ed` partial)
+   - Python column / kwarg: `source_drawer_id`
+   - Rust status: SQLite `triples` schema has `source_closet` and
+     `source_file` only. Adding `source_drawer_id` needs an ALTER TABLE
+     migration; defer to a dedicated PR.
+
+2. Gitignore-aware drawer prune (`1d3eecb` feat(sync))
+   - Python added `mempalace/sync.py` to remove drawers whose source
+     files are deleted or `.gitignore`-d.
+   - Rust status: no equivalent module; opportunity for a follow-up PR.
+
+3. (Carried forward) LLM-assisted init/entity refinement
+   - Python: `mempalace/llm_client.py`, `mempalace/llm_refine.py`
+   - Rust status: no `mpr init --llm`, no provider abstraction, no refine
+     pass.
+
+4. (Carried forward) CLI surface for LLM init flags
+   - Python: `--llm`, `--llm-provider`, `--llm-model`, `--llm-endpoint`,
+     `--llm-api-key`.
+   - Rust status: absent.
+
+5. (Carried forward) Palace graph cache invalidation
+   - Python: TTL cache + invalidation hooks in `palace_graph.py`.
+   - Rust status: graph rebuilt from DB each time; no cache layer.
+
+6. (Carried forward) Hook/doc sync, i18n/doc site sync.
+
+This file is the current gap ledger for the `68319dc` reference state.

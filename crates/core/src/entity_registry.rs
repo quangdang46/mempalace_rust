@@ -2,6 +2,7 @@ use crate::entity_detector::detect_from_content;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 const EMPTY_REJECTED: &[String] = &[];
@@ -241,7 +242,52 @@ impl EntityRegistry {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(&self.data)?;
-        std::fs::write(&self.path, content)?;
+
+        // Atomic write (#1215): serialize to a sibling .tmp in the same dir
+        // (so rename stays on one filesystem), fsync, then rename over the
+        // target. A crash mid-write leaves the previous registry intact
+        // instead of a truncated or empty file.
+        let parent = self
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
+        let file_name = self
+            .path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("entity_registry.json");
+        let tmp_path = parent.join(format!("{file_name}.tmp"));
+        {
+            let mut tmp = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp_path)?;
+            tmp.write_all(content.as_bytes())?;
+            tmp.flush()?;
+            tmp.sync_all()?;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
+        }
+        std::fs::rename(&tmp_path, &self.path)?;
+
+        // fsync the parent directory so the rename is durable across crashes
+        // on ext4 and similar filesystems (#1215 follow-up 2e441d1). Without
+        // this, the kernel can ack the rename and a crash can revert to a
+        // state where the temp file is present and the target is at the old
+        // version. Windows and some special filesystems reject directory fds
+        // — they have different durability semantics on rename anyway, so
+        // ignore failures here.
+        #[cfg(unix)]
+        {
+            if let Ok(dir) = std::fs::File::open(&parent) {
+                let _ = dir.sync_all();
+            }
+        }
         Ok(())
     }
 
@@ -1164,5 +1210,81 @@ mod tests {
         assert!(!learned.is_empty());
         assert!(registry.people().contains_key("Riley"));
         assert_eq!(registry.people().get("Riley").unwrap().source, "learned");
+    }
+
+    #[test]
+    fn test_save_leaves_no_temp_file_on_success() {
+        // #1215: atomic write must rename the .tmp into place; if the .tmp
+        // sticks around the next save round can race with itself.
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+        registry
+            .data
+            .people
+            .insert("Alice".to_string(), test_entity_entry());
+        registry.save().unwrap();
+
+        let tmp_path = temp_dir.path().join("registry.json.tmp");
+        assert!(
+            !tmp_path.exists(),
+            "atomic save must clean up the sibling .tmp file"
+        );
+        assert!(path.exists(), "the target registry.json must exist");
+
+        let loaded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(
+            loaded.get("people").and_then(|v| v.get("Alice")).is_some(),
+            "saved registry must contain the entity we inserted"
+        );
+    }
+
+    #[test]
+    fn test_save_overwrites_previous_content_atomically() {
+        // #1215: rerunning save on the same path must publish the new content
+        // and leave no orphaned temp file behind.
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let mut registry = EntityRegistry::load(&path).unwrap();
+        registry.save().unwrap();
+        registry
+            .data
+            .people
+            .insert("Bob".to_string(), test_entity_entry());
+        registry.save().unwrap();
+
+        let tmp_path = temp_dir.path().join("registry.json.tmp");
+        assert!(!tmp_path.exists());
+        let loaded: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(loaded.get("people").and_then(|v| v.get("Bob")).is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_sets_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let registry = EntityRegistry::load(&path).unwrap();
+        registry.save().unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "atomic save should preserve 0o600 permissions on the final file"
+        );
+    }
+
+    fn test_entity_entry() -> EntityEntry {
+        EntityEntry {
+            source: "test".to_string(),
+            contexts: vec![],
+            aliases: vec![],
+            relationship: String::new(),
+            confidence: 0.9,
+            canonical: None,
+            seen_count: Some(1),
+        }
     }
 }

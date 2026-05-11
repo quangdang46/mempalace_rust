@@ -142,6 +142,17 @@ impl KnowledgeGraph {
         source_closet: Option<&str>,
         source_file: Option<&str>,
     ) -> anyhow::Result<String> {
+        // Reject inverted intervals (#1214): a triple with valid_to < valid_from
+        // would never satisfy `valid_from <= as_of AND valid_to >= as_of`, so it
+        // would be invisible to every query — silently corrupt. Open intervals
+        // and point-in-time facts (valid_from == valid_to) remain accepted.
+        if let (Some(vf), Some(vt)) = (valid_from, valid_to) {
+            if vt < vf {
+                anyhow::bail!(
+                    "valid_to={vt:?} is before valid_from={vf:?}; an inverted interval would be invisible to every KG query"
+                );
+            }
+        }
         let sub_id = Self::entity_id(subject);
         let obj_id = Self::entity_id(object);
         let pred = predicate.to_lowercase().replace(' ', "_");
@@ -817,5 +828,61 @@ mod tests {
         assert!(results
             .iter()
             .any(|triple| triple.object == "NewCo" && triple.current));
+    }
+
+    #[test]
+    fn test_add_triple_rejects_inverted_interval() {
+        // #1214: a triple with valid_to < valid_from never satisfies the
+        // temporal filter, so the row would be invisible to every query.
+        // add_triple must reject it at write time instead of silently
+        // accepting an unqueryable fact.
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let err = kg
+            .add_triple(
+                "Alice",
+                "works_at",
+                "Acme",
+                Some("2026-12-31"),
+                Some("2026-01-01"),
+                None,
+                None,
+                None,
+            )
+            .expect_err("inverted interval must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("inverted interval"),
+            "error message should mention inverted interval, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_add_triple_allows_point_in_time_and_open_intervals() {
+        // #1214: open intervals (only valid_from OR only valid_to) and
+        // same-value point-in-time facts must remain accepted; only strict
+        // inversion is rejected.
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        kg.add_triple(
+            "Alice",
+            "born_on",
+            "Earth",
+            Some("2026-05-11"),
+            Some("2026-05-11"),
+            None,
+            None,
+            None,
+        )
+        .expect("point-in-time facts must be accepted");
+        kg.add_triple(
+            "Bob",
+            "joined",
+            "Cohort A",
+            Some("2026-01-01"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("open-ended intervals must be accepted");
     }
 }

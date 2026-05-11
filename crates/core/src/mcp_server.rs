@@ -307,8 +307,8 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
         tool(
             "mempalace_kg_add",
             "KG Add",
-            "Add a fact to the knowledge graph. Subject → predicate → object with optional time window. E.g. ('Max', 'started_school', 'Year 7', valid_from='2026-09-01').",
-            serde_json::json!({ "type": "object", "properties": { "subject": { "type": "string", "description": "The entity doing/being something" }, "predicate": { "type": "string", "description": "The relationship type (e.g. 'loves', 'works_on', 'daughter_of')" }, "object": { "type": "string", "description": "The entity being connected to" }, "valid_from": { "type": "string", "description": "When this became true (YYYY-MM-DD, optional)" }, "source_closet": { "type": "string", "description": "Closet ID where this fact appears (optional)" } }, "required": ["subject", "predicate", "object"] }),
+            "Add a fact to the knowledge graph. Subject → predicate → object with optional time window. E.g. ('Max', 'started_school', 'Year 7', valid_from='2026-09-01'). Use valid_to to backfill an already-ended historical fact.",
+            serde_json::json!({ "type": "object", "properties": { "subject": { "type": "string", "description": "The entity doing/being something" }, "predicate": { "type": "string", "description": "The relationship type (e.g. 'loves', 'works_on', 'daughter_of')" }, "object": { "type": "string", "description": "The entity being connected to" }, "valid_from": { "type": "string", "description": "When this became true (YYYY-MM-DD, optional)" }, "valid_to": { "type": "string", "description": "When this stopped being true (YYYY-MM-DD, optional). Use this to backfill an already-ended fact in one call." }, "source_closet": { "type": "string", "description": "Closet ID where this fact appears (optional)" }, "source_file": { "type": "string", "description": "Source file path where this fact was extracted (optional)" } }, "required": ["subject", "predicate", "object"] }),
         ),
         tool(
             "mempalace_kg_invalidate",
@@ -828,17 +828,21 @@ fn tool_kg_query(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
         direction: Option<String>,
     }
     let input: Input = parse_args(args)?;
+    // Validate ISO-8601 date at MCP boundary (#1164): malformed dates would
+    // silently produce empty result sets, indistinguishable from "no facts".
+    let as_of = crate::config::sanitize_iso_temporal(input.as_of.as_deref(), "as_of")
+        .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
     let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
         .map_err(|e| internal_error_safe(&e))?;
     let facts = kg
         .query_entity(
             &input.entity,
-            input.as_of.as_deref(),
+            as_of.as_deref(),
             input.direction.as_deref().unwrap_or("both"),
         )
         .map_err(|e| internal_error_safe(&e))?;
     ok_json(
-        serde_json::json!({ "entity": input.entity, "as_of": input.as_of, "facts": facts, "count": facts.len() }),
+        serde_json::json!({ "entity": input.entity, "as_of": as_of, "facts": facts, "count": facts.len() }),
     )
 }
 
@@ -850,9 +854,21 @@ fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
         predicate: String,
         object: String,
         valid_from: Option<String>,
+        // Forwarded to the KG layer (#1314): callers need `valid_to` to
+        // backfill already-ended historical facts in a single call instead
+        // of doing add+invalidate, and `source_file` for adapter provenance.
+        valid_to: Option<String>,
         source_closet: Option<String>,
+        source_file: Option<String>,
     }
     let input: Input = parse_args(args)?;
+    // Validate ISO-8601 dates at MCP boundary (#1164) so malformed dates fail
+    // fast with a clear error instead of producing silently-invisible triples.
+    let valid_from =
+        crate::config::sanitize_iso_temporal(input.valid_from.as_deref(), "valid_from")
+            .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+    let valid_to = crate::config::sanitize_iso_temporal(input.valid_to.as_deref(), "valid_to")
+        .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
     let mut kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
         .map_err(|e| internal_error_safe(&e))?;
     let triple_id = kg
@@ -860,11 +876,11 @@ fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
             &input.subject,
             &input.predicate,
             &input.object,
-            input.valid_from.as_deref(),
-            None,
+            valid_from.as_deref(),
+            valid_to.as_deref(),
             None,
             input.source_closet.as_deref(),
-            None,
+            input.source_file.as_deref(),
         )
         .map_err(|e| internal_error_safe(&e))?;
     ok_json(
@@ -882,17 +898,28 @@ fn tool_kg_invalidate(state: &AppState, args: JsonObject) -> Result<CallToolResu
         ended: Option<String>,
     }
     let input: Input = parse_args(args)?;
+    // Validate ISO-8601 date at MCP boundary (#1164) before forwarding to KG.
+    let ended = crate::config::sanitize_iso_temporal(input.ended.as_deref(), "ended")
+        .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+    // Resolve omitted/empty `ended` to today's date at the MCP layer so the
+    // response reports the actual value persisted, not the literal sentinel
+    // string "today" (#1314).
+    let resolved_ended = ended
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
     let mut kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
         .map_err(|e| internal_error_safe(&e))?;
     kg.invalidate(
         &input.subject,
         &input.predicate,
         &input.object,
-        input.ended.as_deref(),
+        Some(resolved_ended.as_str()),
     )
     .map_err(|e| internal_error_safe(&e))?;
     ok_json(
-        serde_json::json!({ "success": true, "fact": format!("{} → {} → {}", input.subject, input.predicate, input.object), "ended": input.ended.unwrap_or_else(|| "today".to_string()) }),
+        serde_json::json!({ "success": true, "fact": format!("{} → {} → {}", input.subject, input.predicate, input.object), "ended": resolved_ended }),
     )
 }
 
@@ -1032,6 +1059,9 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         wing: Option<String>,
     }
     let input: Input = parse_args_with_integer_coercion(args, &["last_n"])?;
+    // Case-insensitive agent name lookup (#1243): diary_write stores the
+    // lowercased agent name, so reads must match against the same canonical form.
+    let agent_name = input.agent_name.to_lowercase();
     let wing = input
         .wing
         .as_deref()
@@ -1050,7 +1080,8 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
                     .metadatas
                     .first()
                     .and_then(|meta| meta.get("agent"))
-                    .map(|agent| agent == &input.agent_name)
+                    .and_then(|agent| agent.as_str())
+                    .map(|agent| agent.eq_ignore_ascii_case(&agent_name))
                     .unwrap_or(false)
             })
             .collect()
@@ -1075,13 +1106,13 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     let showing = items.len().min(input.last_n.unwrap_or(10));
     if items.is_empty() {
         return ok_json(serde_json::json!({
-            "agent": input.agent_name,
+            "agent": agent_name,
             "entries": [],
             "message": "No diary entries yet.",
         }));
     }
     ok_json(serde_json::json!({
-        "agent": input.agent_name,
+        "agent": agent_name,
         "entries": items.into_iter().take(input.last_n.unwrap_or(10)).collect::<Vec<_>>(),
         "total": entries.len(),
         "showing": showing,
@@ -1098,6 +1129,9 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
         wing: Option<String>,
     }
     let input: Input = parse_args(args)?;
+    // Normalize agent name to lowercase so reads are case-insensitive (#1243):
+    // writing as "Claude" and reading as "claude" must resolve to the same agent.
+    let agent_name = input.agent_name.to_lowercase();
     let now = chrono::Local::now();
     let wing = input
         .wing
@@ -1105,7 +1139,7 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
         .map(str::trim)
         .filter(|wing| !wing.is_empty())
         .map(ToString::to_string)
-        .unwrap_or_else(|| format!("wing_{}", input.agent_name.to_lowercase().replace(' ', "_")));
+        .unwrap_or_else(|| format!("wing_{}", agent_name.replace(' ', "_")));
     let topic = input.topic.unwrap_or_else(|| "general".to_string());
     let id = format!(
         "diary_{}_{}_{}",
@@ -1125,7 +1159,7 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
             ("hall", "hall_diary"),
             ("topic", &topic),
             ("type", "diary_entry"),
-            ("agent", &input.agent_name),
+            ("agent", &agent_name),
             ("filed_at", &filed_at),
             ("date", &date),
         ]],
@@ -1135,7 +1169,7 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
     ok_json(serde_json::json!({
         "success": true,
         "entry_id": id,
-        "agent": input.agent_name,
+        "agent": agent_name,
         "topic": topic,
         "timestamp": filed_at,
     }))
@@ -1481,6 +1515,145 @@ mod tests {
     }
 
     #[test]
+    fn test_kg_add_forwards_valid_to() {
+        // #1314: tool_kg_add must forward valid_to so callers can backfill
+        // an already-ended historical fact in a single call. Previously
+        // valid_to was silently dropped at the MCP boundary, collapsing
+        // every historical add to "still current".
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_kg_add",
+            json!({
+                "subject": "Alice",
+                "predicate": "works_at",
+                "object": "Acme",
+                "valid_from": "2020-01-01",
+                "valid_to": "2022-12-31",
+            }),
+        )
+        .expect("kg_add with valid_to should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+
+        // Querying with as_of inside the closed window must see it.
+        let query_in = dispatch(
+            &state,
+            "mempalace_kg_query",
+            json!({ "entity": "Alice", "as_of": "2021-06-01" }),
+        )
+        .expect("kg_query in-window should succeed");
+        let in_text = serde_json::to_value(&query_in.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let in_parsed: Value = serde_json::from_str(&in_text).unwrap();
+        assert_eq!(
+            in_parsed.get("count").and_then(|v| v.as_u64()),
+            Some(1),
+            "fact must be visible inside its closed validity window"
+        );
+
+        // Querying past the end date must NOT see it.
+        let query_out = dispatch(
+            &state,
+            "mempalace_kg_query",
+            json!({ "entity": "Alice", "as_of": "2025-01-01" }),
+        )
+        .expect("kg_query past-end should succeed");
+        let out_text = serde_json::to_value(&query_out.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let out_parsed: Value = serde_json::from_str(&out_text).unwrap();
+        assert_eq!(
+            out_parsed.get("count").and_then(|v| v.as_u64()),
+            Some(0),
+            "fact must NOT be visible past its valid_to"
+        );
+    }
+
+    #[test]
+    fn test_kg_add_rejects_invalid_iso_date() {
+        // #1164: malformed dates must fail fast at MCP boundary instead of
+        // producing silently-invisible triples.
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_kg_add",
+            json!({
+                "subject": "Alice",
+                "predicate": "likes",
+                "object": "coffee",
+                "valid_from": "March 2026",
+            }),
+        );
+        assert!(result.is_err(), "invalid date must produce an MCP error");
+    }
+
+    #[test]
+    fn test_kg_query_rejects_invalid_iso_date() {
+        // #1164: malformed `as_of` must fail with a clear error rather than
+        // silently returning empty results indistinguishable from "no facts".
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_kg_query",
+            json!({ "entity": "Alice", "as_of": "not-a-date" }),
+        );
+        assert!(result.is_err(), "invalid as_of must produce an MCP error");
+    }
+
+    #[test]
+    fn test_kg_invalidate_resolves_default_ended_to_today() {
+        // #1314: omitting `ended` must resolve to today's date in the response
+        // so callers can see the actual value persisted, not the sentinel
+        // string "today" returned by the previous Rust implementation.
+        let state = test_state();
+        dispatch(
+            &state,
+            "mempalace_kg_add",
+            json!({ "subject": "Alice", "predicate": "lives_at", "object": "Old Address" }),
+        )
+        .expect("seed kg_add");
+        let invalidate = dispatch(
+            &state,
+            "mempalace_kg_invalidate",
+            json!({ "subject": "Alice", "predicate": "lives_at", "object": "Old Address" }),
+        )
+        .expect("kg_invalidate without ended should succeed");
+        let text = serde_json::to_value(&invalidate.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let ended = parsed
+            .get("ended")
+            .and_then(|v| v.as_str())
+            .expect("ended field must be a string");
+        assert_ne!(
+            ended, "today",
+            "ended must be a resolved YYYY-MM-DD date, not the sentinel string"
+        );
+        // Shape check: 10 chars, YYYY-MM-DD
+        assert_eq!(ended.len(), 10, "ended must be a YYYY-MM-DD date: {ended}");
+        assert_eq!(&ended[4..5], "-");
+        assert_eq!(&ended[7..8], "-");
+    }
+
+    #[test]
     fn test_read_only_blocks_kg_add() {
         let state = {
             let temp_dir = tempfile::tempdir().unwrap();
@@ -1603,6 +1776,63 @@ mod tests {
             json!({ "agent_name": "TestAgent" }),
         );
         assert!(read_result.is_ok(), "diary read failed: {:?}", read_result);
+    }
+
+    #[test]
+    fn test_diary_read_case_insensitive_agent() {
+        // #1243: diary_write must lowercase the agent name so a diary
+        // written as "Claude" remains findable when the caller reads as
+        // "claude" or "CLAUDE". Without this, mixed-case names silently
+        // return zero rows.
+        let state = test_state();
+        let write_result = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({ "agent_name": "Claude", "entry": "Mixed-case write" }),
+        )
+        .expect("diary write should succeed");
+        let write_text = serde_json::to_value(&write_result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let write_json: Value = serde_json::from_str(&write_text).unwrap();
+        assert_eq!(
+            write_json.get("agent").and_then(|v| v.as_str()),
+            Some("claude"),
+            "agent name must be normalized to lowercase on write"
+        );
+
+        for read_name in ["claude", "Claude", "CLAUDE"] {
+            let read_result = dispatch(
+                &state,
+                "mempalace_diary_read",
+                json!({ "agent_name": read_name }),
+            )
+            .expect("diary read should succeed");
+            let text = serde_json::to_value(&read_result.content[0])
+                .unwrap()
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap()
+                .to_string();
+            let parsed: Value = serde_json::from_str(&text).unwrap();
+            let entries = parsed
+                .get("entries")
+                .and_then(|v| v.as_array())
+                .expect("entries field present");
+            assert_eq!(
+                entries.len(),
+                1,
+                "read as {read_name:?} must find the mixed-case entry"
+            );
+            assert_eq!(
+                parsed.get("agent").and_then(|v| v.as_str()),
+                Some("claude"),
+                "agent name in read response must be the lowercased form"
+            );
+        }
     }
 
     #[test]

@@ -7,6 +7,77 @@ use std::path::PathBuf;
 
 const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
 
+/// Validate an ISO-8601 date or canonical UTC datetime string at MCP boundary
+/// (#1164 / `4d98b05`).
+///
+/// Accepts `None` and empty strings as pass-through.
+///
+/// Non-empty inputs must match one of these canonical forms:
+/// * `YYYY-MM-DD`
+/// * `YYYY-MM-DDTHH:MM:SSZ`
+/// * `YYYY-MM-DDTHH:MM:SS+00:00` (normalized to `...Z` on return)
+///
+/// Partial dates (e.g. `2026`, `2026-01`) and non-UTC datetimes are rejected
+/// because KG queries compare temporal values as TEXT — mixed forms silently
+/// return wrong results.
+pub fn sanitize_iso_temporal(
+    value: Option<&str>,
+    field_name: &str,
+) -> anyhow::Result<Option<String>> {
+    let raw = match value {
+        None => return Ok(None),
+        Some("") => return Ok(Some(String::new())),
+        Some(s) => s.trim().to_string(),
+    };
+
+    fn is_valid_date(value: &str) -> bool {
+        if value.len() != 10 {
+            return false;
+        }
+        let bytes = value.as_bytes();
+        if bytes[4] != b'-' || bytes[7] != b'-' {
+            return false;
+        }
+        let year: i32 = match value[0..4].parse() {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let month: u32 = match value[5..7].parse() {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let day: u32 = match value[8..10].parse() {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        chrono::NaiveDate::from_ymd_opt(year, month, day).is_some()
+    }
+
+    fn parse_canonical_utc(value: &str) -> Option<String> {
+        let normalized = if let Some(stripped) = value.strip_suffix("+00:00") {
+            format!("{stripped}Z")
+        } else {
+            value.to_string()
+        };
+        if normalized.len() != 20 || !normalized.ends_with('Z') {
+            return None;
+        }
+        let body = &normalized[..normalized.len() - 1];
+        let dt = chrono::NaiveDateTime::parse_from_str(body, "%Y-%m-%dT%H:%M:%S").ok()?;
+        Some(format!("{}Z", dt.format("%Y-%m-%dT%H:%M:%S")))
+    }
+
+    if is_valid_date(&raw) {
+        return Ok(Some(raw));
+    }
+    if let Some(canonical) = parse_canonical_utc(&raw) {
+        return Ok(Some(canonical));
+    }
+    anyhow::bail!(
+        "{field_name}={raw:?} is not a valid ISO-8601 date or UTC datetime (expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)"
+    )
+}
+
 fn expand_path(path: &str) -> PathBuf {
     if path.starts_with("~/") {
         if let Ok(home) = std::env::var("HOME") {
@@ -646,5 +717,59 @@ mod tests {
         assert_eq!(mode, 0o600);
 
         std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    // #1164: ISO-8601 validation at MCP boundary so malformed dates fail fast
+    // instead of silently producing empty KG query results.
+    #[test]
+    fn test_sanitize_iso_temporal_accepts_valid_date() {
+        let out = super::sanitize_iso_temporal(Some("2026-05-11"), "valid_from").unwrap();
+        assert_eq!(out.as_deref(), Some("2026-05-11"));
+    }
+
+    #[test]
+    fn test_sanitize_iso_temporal_accepts_canonical_utc_datetime() {
+        let out = super::sanitize_iso_temporal(Some("2026-05-11T12:30:45Z"), "valid_from").unwrap();
+        assert_eq!(out.as_deref(), Some("2026-05-11T12:30:45Z"));
+    }
+
+    #[test]
+    fn test_sanitize_iso_temporal_normalizes_plus_offset() {
+        let out = super::sanitize_iso_temporal(Some("2026-05-11T00:00:00+00:00"), "ended").unwrap();
+        assert_eq!(out.as_deref(), Some("2026-05-11T00:00:00Z"));
+    }
+
+    #[test]
+    fn test_sanitize_iso_temporal_passes_through_none_and_empty() {
+        assert_eq!(super::sanitize_iso_temporal(None, "as_of").unwrap(), None);
+        assert_eq!(
+            super::sanitize_iso_temporal(Some(""), "as_of")
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn test_sanitize_iso_temporal_rejects_partial_date() {
+        assert!(super::sanitize_iso_temporal(Some("2026"), "valid_from").is_err());
+        assert!(super::sanitize_iso_temporal(Some("2026-05"), "valid_from").is_err());
+    }
+
+    #[test]
+    fn test_sanitize_iso_temporal_rejects_garbage() {
+        let err = super::sanitize_iso_temporal(Some("March 2026"), "as_of").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("as_of="), "error must name the field: {msg}");
+        assert!(
+            msg.contains("not a valid ISO-8601"),
+            "error must explain: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_iso_temporal_rejects_impossible_calendar_day() {
+        assert!(super::sanitize_iso_temporal(Some("2026-02-30"), "valid_from").is_err());
+        assert!(super::sanitize_iso_temporal(Some("2026-13-01"), "valid_from").is_err());
     }
 }
