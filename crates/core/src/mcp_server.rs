@@ -308,7 +308,7 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "mempalace_kg_add",
             "KG Add",
             "Add a fact to the knowledge graph. Subject → predicate → object with optional time window. E.g. ('Max', 'started_school', 'Year 7', valid_from='2026-09-01'). Use valid_to to backfill an already-ended historical fact.",
-            serde_json::json!({ "type": "object", "properties": { "subject": { "type": "string", "description": "The entity doing/being something" }, "predicate": { "type": "string", "description": "The relationship type (e.g. 'loves', 'works_on', 'daughter_of')" }, "object": { "type": "string", "description": "The entity being connected to" }, "valid_from": { "type": "string", "description": "When this became true (YYYY-MM-DD, optional)" }, "valid_to": { "type": "string", "description": "When this stopped being true (YYYY-MM-DD, optional). Use this to backfill an already-ended fact in one call." }, "source_closet": { "type": "string", "description": "Closet ID where this fact appears (optional)" }, "source_file": { "type": "string", "description": "Source file path where this fact was extracted (optional)" } }, "required": ["subject", "predicate", "object"] }),
+            serde_json::json!({ "type": "object", "properties": { "subject": { "type": "string", "description": "The entity doing/being something" }, "predicate": { "type": "string", "description": "The relationship type (e.g. 'loves', 'works_on', 'daughter_of')" }, "object": { "type": "string", "description": "The entity being connected to" }, "valid_from": { "type": "string", "description": "When this became true (YYYY-MM-DD, optional)" }, "valid_to": { "type": "string", "description": "When this stopped being true (YYYY-MM-DD, optional). Use this to backfill an already-ended fact in one call." }, "source_closet": { "type": "string", "description": "Closet ID where this fact appears (optional)" }, "source_file": { "type": "string", "description": "Source file path where this fact was extracted (optional)" }, "source_drawer_id": { "type": "string", "description": "Drawer ID where this fact was extracted, for adapter provenance (RFC 002 §5.5, optional)" } }, "required": ["subject", "predicate", "object"] }),
         ),
         tool(
             "mempalace_kg_invalidate",
@@ -856,10 +856,12 @@ fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
         valid_from: Option<String>,
         // Forwarded to the KG layer (#1314): callers need `valid_to` to
         // backfill already-ended historical facts in a single call instead
-        // of doing add+invalidate, and `source_file` for adapter provenance.
+        // of doing add+invalidate, and `source_file` /
+        // `source_drawer_id` for adapter provenance (RFC 002 §5.5).
         valid_to: Option<String>,
         source_closet: Option<String>,
         source_file: Option<String>,
+        source_drawer_id: Option<String>,
     }
     let input: Input = parse_args(args)?;
     // Validate ISO-8601 dates at MCP boundary (#1164) so malformed dates fail
@@ -881,6 +883,8 @@ fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
             None,
             input.source_closet.as_deref(),
             input.source_file.as_deref(),
+            input.source_drawer_id.as_deref(),
+            None,
         )
         .map_err(|e| internal_error_safe(&e))?;
     ok_json(
@@ -1581,6 +1585,55 @@ mod tests {
             Some(0),
             "fact must NOT be visible past its valid_to"
         );
+    }
+
+    #[test]
+    fn test_kg_add_forwards_source_drawer_id() {
+        // #1314 / RFC 002 §5.5: tool_kg_add must forward source_drawer_id so
+        // adapter provenance reaches the SQLite layer. Without this, the
+        // drawer pointer is silently dropped at the MCP boundary.
+        let state = test_state();
+        let add = dispatch(
+            &state,
+            "mempalace_kg_add",
+            json!({
+                "subject": "operating-verb",
+                "predicate": "candidate",
+                "object": "husbandry",
+                "valid_from": "2026-04-28",
+                "source_closet": "closet-42",
+                "source_file": "docs/decisions.md",
+                "source_drawer_id": "drawer_abc123",
+            }),
+        )
+        .expect("kg_add with provenance should succeed");
+        let text = serde_json::to_value(&add.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let triple_id = parsed
+            .get("triple_id")
+            .and_then(|v| v.as_str())
+            .expect("triple_id present");
+
+        // Read the row directly: source_drawer_id must persist alongside the
+        // other provenance fields. Open a raw SQLite connection so we don't
+        // depend on KG-level abstractions hiding columns.
+        let conn = rusqlite::Connection::open(kg_path(&state)).unwrap();
+        let (closet, file, drawer): (Option<String>, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT source_closet, source_file, source_drawer_id \
+                 FROM triples WHERE id = ?1",
+                rusqlite::params![triple_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(closet.as_deref(), Some("closet-42"));
+        assert_eq!(file.as_deref(), Some("docs/decisions.md"));
+        assert_eq!(drawer.as_deref(), Some("drawer_abc123"));
     }
 
     #[test]

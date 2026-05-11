@@ -16,6 +16,13 @@ pub struct Triple {
     pub confidence: Option<f64>,
     pub source_closet: Option<String>,
     pub source_file: Option<String>,
+    // RFC 002 §5.5 provenance (#1314): adapter-supplied drawer pointer and
+    // adapter identifier. Both default to None for callers that don't carry
+    // adapter context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_drawer_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_name: Option<String>,
     pub current: bool,
 }
 
@@ -46,6 +53,10 @@ pub struct EntityQueryResult {
     pub valid_to: Option<String>,
     pub confidence: Option<f64>,
     pub source_closet: Option<String>,
+    pub source_file: Option<String>,
+    // RFC 002 §5.5 provenance (#1314): see Triple::source_drawer_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_drawer_id: Option<String>,
     pub current: bool,
 }
 
@@ -83,6 +94,8 @@ impl KnowledgeGraph {
                 confidence REAL DEFAULT 1.0,
                 source_closet TEXT,
                 source_file TEXT,
+                source_drawer_id TEXT,
+                adapter_name TEXT,
                 extracted_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (subject) REFERENCES entities(id),
                 FOREIGN KEY (object) REFERENCES entities(id)
@@ -105,6 +118,29 @@ impl KnowledgeGraph {
             CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome);
             ",
         )?;
+        self.migrate_schema()?;
+        Ok(())
+    }
+
+    /// Backwards-compatible schema migration for older `triples` tables
+    /// (#1314 RFC 002 §5.5). Fresh palaces already have `source_drawer_id`
+    /// and `adapter_name` from the `CREATE TABLE` above, so this is a no-op.
+    /// Palaces created before those columns were added must be migrated in
+    /// place — SQLite has no `ADD COLUMN IF NOT EXISTS`, so we introspect
+    /// the schema and only issue the ALTER when the column is missing.
+    fn migrate_schema(&self) -> anyhow::Result<()> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(triples)")?;
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if !names.iter().any(|n| n == "source_drawer_id") {
+            self.conn
+                .execute("ALTER TABLE triples ADD COLUMN source_drawer_id TEXT", [])?;
+        }
+        if !names.iter().any(|n| n == "adapter_name") {
+            self.conn
+                .execute("ALTER TABLE triples ADD COLUMN adapter_name TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -141,6 +177,11 @@ impl KnowledgeGraph {
         confidence: Option<f64>,
         source_closet: Option<&str>,
         source_file: Option<&str>,
+        // RFC 002 §5.5 provenance (#1314): adapter-supplied drawer pointer
+        // and adapter identifier. Both default to `None` so existing callers
+        // stay source-compatible.
+        source_drawer_id: Option<&str>,
+        adapter_name: Option<&str>,
     ) -> anyhow::Result<String> {
         // Reject inverted intervals (#1214): a triple with valid_to < valid_from
         // would never satisfy `valid_from <= as_of AND valid_to >= as_of`, so it
@@ -207,8 +248,8 @@ impl KnowledgeGraph {
         let triple_id = format!("t_{}_{}_{}_{}", sub_id, pred, obj_id, &now[..8]);
 
         self.conn.execute(
-            "INSERT INTO triples (id, subject, predicate, object, valid_from, valid_to, confidence, source_closet, source_file)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO triples (id, subject, predicate, object, valid_from, valid_to, confidence, source_closet, source_file, source_drawer_id, adapter_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 triple_id,
                 sub_id,
@@ -218,7 +259,9 @@ impl KnowledgeGraph {
                 valid_to,
                 confidence.unwrap_or(1.0),
                 source_closet,
-                source_file
+                source_file,
+                source_drawer_id,
+                adapter_name
             ],
         )?;
 
@@ -347,6 +390,8 @@ impl KnowledgeGraph {
             valid_to: valid_to.clone(),
             confidence: row.get("confidence")?,
             source_closet: row.get("source_closet")?,
+            source_file: row.get("source_file")?,
+            source_drawer_id: row.get("source_drawer_id")?,
             current: valid_to.is_none(),
         })
     }
@@ -367,6 +412,8 @@ impl KnowledgeGraph {
             valid_to: valid_to.clone(),
             confidence: row.get("confidence")?,
             source_closet: row.get("source_closet")?,
+            source_file: row.get("source_file")?,
+            source_drawer_id: row.get("source_drawer_id")?,
             current: valid_to.is_none(),
         })
     }
@@ -413,6 +460,8 @@ impl KnowledgeGraph {
             confidence: row.get("confidence")?,
             source_closet: row.get("source_closet")?,
             source_file: row.get("source_file")?,
+            source_drawer_id: row.get("source_drawer_id")?,
+            adapter_name: row.get("adapter_name")?,
             current: valid_to.is_none(),
         })
     }
@@ -435,6 +484,8 @@ impl KnowledgeGraph {
                     confidence: row.get("confidence")?,
                     source_closet: row.get("source_closet")?,
                     source_file: row.get("source_file")?,
+                    source_drawer_id: row.get("source_drawer_id")?,
+                    adapter_name: row.get("adapter_name")?,
                     current: row.get::<_, Option<String>>("valid_to")?.is_none(),
                 })
             })?;
@@ -455,6 +506,8 @@ impl KnowledgeGraph {
                     confidence: row.get("confidence")?,
                     source_closet: row.get("source_closet")?,
                     source_file: row.get("source_file")?,
+                    source_drawer_id: row.get("source_drawer_id")?,
+                    adapter_name: row.get("adapter_name")?,
                     current: row.get::<_, Option<String>>("valid_to")?.is_none(),
                 })
             })?;
@@ -570,6 +623,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .unwrap();
         assert!(triple_id.starts_with("t_"));
@@ -594,6 +649,8 @@ mod tests {
             "does",
             "swimming",
             Some("2025-01-01"),
+            None,
+            None,
             None,
             None,
             None,
@@ -639,6 +696,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         kg.add_triple(
@@ -647,6 +706,8 @@ mod tests {
             "Max injury",
             Some("2026-01"),
             Some("2026-02"),
+            None,
+            None,
             None,
             None,
             None,
@@ -682,6 +743,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         kg.add_triple(
@@ -689,6 +752,8 @@ mod tests {
             "does",
             "swimming",
             Some("2025-01-01"),
+            None,
+            None,
             None,
             None,
             None,
@@ -744,6 +809,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
 
@@ -759,6 +826,8 @@ mod tests {
             "works_at",
             "NewCo",
             Some("2023-01-01"),
+            None,
+            None,
             None,
             None,
             None,
@@ -806,6 +875,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
         kg.add_triple(
@@ -813,6 +884,8 @@ mod tests {
             "works_at",
             "NewCo",
             Some("2023-01-01"),
+            None,
+            None,
             None,
             None,
             None,
@@ -847,6 +920,8 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
             )
             .expect_err("inverted interval must be rejected");
         let msg = err.to_string();
@@ -871,6 +946,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .expect("point-in-time facts must be accepted");
         kg.add_triple(
@@ -882,7 +959,161 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         )
         .expect("open-ended intervals must be accepted");
+    }
+
+    #[test]
+    fn test_add_triple_persists_source_drawer_and_adapter() {
+        // #1314 / RFC 002 §5.5: adapter-supplied provenance (source_drawer_id +
+        // adapter_name) must round-trip into the triples row, not get silently
+        // dropped at the storage layer.
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let triple_id = kg
+            .add_triple(
+                "operating-verb",
+                "candidate",
+                "husbandry",
+                Some("2026-04-28"),
+                None,
+                None,
+                Some("closet-42"),
+                Some("docs/decisions.md"),
+                Some("drawer_abc123"),
+                Some("text-adapter"),
+            )
+            .expect("add_triple with provenance should succeed");
+        let (closet, file, drawer, adapter): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = kg
+            .conn
+            .query_row(
+                "SELECT source_closet, source_file, source_drawer_id, adapter_name \
+                 FROM triples WHERE id = ?1",
+                params![triple_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(closet.as_deref(), Some("closet-42"));
+        assert_eq!(file.as_deref(), Some("docs/decisions.md"));
+        assert_eq!(drawer.as_deref(), Some("drawer_abc123"));
+        assert_eq!(adapter.as_deref(), Some("text-adapter"));
+    }
+
+    #[test]
+    fn test_query_entity_exposes_source_drawer_id() {
+        // #1314: callers reading from the KG (timeline / query_entity) must
+        // see the source_drawer_id so they can navigate back to the drawer
+        // that produced the triple.
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        kg.add_triple(
+            "Alice",
+            "wrote",
+            "design-doc",
+            Some("2026-04-28"),
+            None,
+            None,
+            None,
+            None,
+            Some("drawer_xyz"),
+            None,
+        )
+        .unwrap();
+        let outgoing = kg.query_entity("Alice", None, "outgoing").unwrap();
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].source_drawer_id.as_deref(), Some("drawer_xyz"));
+
+        let timeline = kg.timeline(Some("Alice")).unwrap();
+        assert_eq!(timeline.len(), 1);
+        assert_eq!(timeline[0].source_drawer_id.as_deref(), Some("drawer_xyz"));
+        assert_eq!(timeline[0].adapter_name, None);
+    }
+
+    #[test]
+    fn test_migrate_schema_adds_missing_provenance_columns() {
+        // #1314: legacy palaces created before source_drawer_id/adapter_name
+        // existed must be migrated in-place on open() so add_triple keeps
+        // working. We simulate "legacy" by creating a pre-migration triples
+        // table directly and then opening it via KnowledgeGraph::open.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let db_path = tmp.path().to_path_buf();
+        {
+            let legacy = rusqlite::Connection::open(&db_path).unwrap();
+            legacy
+                .execute_batch(
+                    "
+                    CREATE TABLE entities (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        entity_type TEXT DEFAULT 'unknown',
+                        properties TEXT DEFAULT '{}',
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE TABLE triples (
+                        id TEXT PRIMARY KEY,
+                        subject TEXT NOT NULL,
+                        predicate TEXT NOT NULL,
+                        object TEXT NOT NULL,
+                        valid_from TEXT,
+                        valid_to TEXT,
+                        confidence REAL DEFAULT 1.0,
+                        source_closet TEXT,
+                        source_file TEXT,
+                        extracted_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
+                    ",
+                )
+                .unwrap();
+        }
+
+        // Opening through KnowledgeGraph must run the in-place migration and
+        // expose the new columns to add_triple without re-creating the table.
+        let mut kg = KnowledgeGraph::open(&db_path).unwrap();
+        let names: Vec<String> = {
+            let mut stmt = kg.conn.prepare("PRAGMA table_info(triples)").unwrap();
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert!(
+            names.contains(&"source_drawer_id".to_string()),
+            "migration must add source_drawer_id, got columns: {names:?}"
+        );
+        assert!(
+            names.contains(&"adapter_name".to_string()),
+            "migration must add adapter_name, got columns: {names:?}"
+        );
+
+        // And add_triple must still write the new columns end-to-end.
+        let triple_id = kg
+            .add_triple(
+                "Migrated",
+                "has",
+                "drawer",
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("drawer_migrated"),
+                Some("legacy-adapter"),
+            )
+            .unwrap();
+        let (drawer, adapter): (Option<String>, Option<String>) = kg
+            .conn
+            .query_row(
+                "SELECT source_drawer_id, adapter_name FROM triples WHERE id = ?1",
+                params![triple_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(drawer.as_deref(), Some("drawer_migrated"));
+        assert_eq!(adapter.as_deref(), Some("legacy-adapter"));
     }
 }
