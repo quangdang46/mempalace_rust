@@ -864,8 +864,9 @@ fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     let input: Input = parse_args(args)?;
     // Validate ISO-8601 dates at MCP boundary (#1164) so malformed dates fail
     // fast with a clear error instead of producing silently-invisible triples.
-    let valid_from = crate::config::sanitize_iso_temporal(input.valid_from.as_deref(), "valid_from")
-        .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+    let valid_from =
+        crate::config::sanitize_iso_temporal(input.valid_from.as_deref(), "valid_from")
+            .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
     let valid_to = crate::config::sanitize_iso_temporal(input.valid_to.as_deref(), "valid_to")
         .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
     let mut kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))

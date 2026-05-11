@@ -729,15 +729,13 @@ mod tests {
 
     #[test]
     fn test_sanitize_iso_temporal_accepts_canonical_utc_datetime() {
-        let out =
-            super::sanitize_iso_temporal(Some("2026-05-11T12:30:45Z"), "valid_from").unwrap();
+        let out = super::sanitize_iso_temporal(Some("2026-05-11T12:30:45Z"), "valid_from").unwrap();
         assert_eq!(out.as_deref(), Some("2026-05-11T12:30:45Z"));
     }
 
     #[test]
     fn test_sanitize_iso_temporal_normalizes_plus_offset() {
-        let out =
-            super::sanitize_iso_temporal(Some("2026-05-11T00:00:00+00:00"), "ended").unwrap();
+        let out = super::sanitize_iso_temporal(Some("2026-05-11T00:00:00+00:00"), "ended").unwrap();
         assert_eq!(out.as_deref(), Some("2026-05-11T00:00:00Z"));
     }
 
@@ -745,7 +743,9 @@ mod tests {
     fn test_sanitize_iso_temporal_passes_through_none_and_empty() {
         assert_eq!(super::sanitize_iso_temporal(None, "as_of").unwrap(), None);
         assert_eq!(
-            super::sanitize_iso_temporal(Some(""), "as_of").unwrap().as_deref(),
+            super::sanitize_iso_temporal(Some(""), "as_of")
+                .unwrap()
+                .as_deref(),
             Some("")
         );
     }
@@ -761,7 +761,10 @@ mod tests {
         let err = super::sanitize_iso_temporal(Some("March 2026"), "as_of").unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("as_of="), "error must name the field: {msg}");
-        assert!(msg.contains("not a valid ISO-8601"), "error must explain: {msg}");
+        assert!(
+            msg.contains("not a valid ISO-8601"),
+            "error must explain: {msg}"
+        );
     }
 
     #[test]
