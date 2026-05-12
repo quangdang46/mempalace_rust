@@ -155,31 +155,62 @@ Ported in this session
 Remaining gaps after this sync
 ------------------------------
 
-1. KG `source_drawer_id` provenance (`e4e25ed` partial)
-   - Python column / kwarg: `source_drawer_id`
-   - Rust status: SQLite `triples` schema has `source_closet` and
-     `source_file` only. Adding `source_drawer_id` needs an ALTER TABLE
-     migration; defer to a dedicated PR.
-
-2. Gitignore-aware drawer prune (`1d3eecb` feat(sync))
+1. Gitignore-aware drawer prune (`1d3eecb` feat(sync))
    - Python added `mempalace/sync.py` to remove drawers whose source
      files are deleted or `.gitignore`-d.
    - Rust status: no equivalent module; opportunity for a follow-up PR.
 
-3. (Carried forward) LLM-assisted init/entity refinement
+2. (Carried forward) LLM-assisted init/entity refinement
    - Python: `mempalace/llm_client.py`, `mempalace/llm_refine.py`
    - Rust status: no `mpr init --llm`, no provider abstraction, no refine
      pass.
 
-4. (Carried forward) CLI surface for LLM init flags
+3. (Carried forward) CLI surface for LLM init flags
    - Python: `--llm`, `--llm-provider`, `--llm-model`, `--llm-endpoint`,
      `--llm-api-key`.
    - Rust status: absent.
 
-5. (Carried forward) Palace graph cache invalidation
+4. (Carried forward) Palace graph cache invalidation
    - Python: TTL cache + invalidation hooks in `palace_graph.py`.
    - Rust status: graph rebuilt from DB each time; no cache layer.
 
-6. (Carried forward) Hook/doc sync, i18n/doc site sync.
+5. (Carried forward) Hook/doc sync, i18n/doc site sync.
+
+Sync update — upstream develop `68319dc` (2026-05-11, follow-up)
+----------------------------------------------------------------
+
+Follow-up PR to PR #5. Ports the schema-changing `source_drawer_id`
+provenance from upstream `e4e25ed` (#1314 / RFC 002 §5.5) that was
+explicitly deferred in the previous sync.
+
+Ported in this session
+----------------------
+
+1. `mempalace/knowledge_graph.py` schema + `mempalace/mcp_server.py`
+   `e4e25ed` (#1314, RFC 002 §5.5) — add adapter provenance columns and
+   wire them through the MCP boundary.
+   - Schema: `triples` table now declares `source_drawer_id TEXT` and
+     `adapter_name TEXT` directly in the canonical `CREATE TABLE`. Legacy
+     palaces are migrated in-place by a new `KnowledgeGraph::migrate_schema`
+     that introspects `PRAGMA table_info(triples)` and only issues the
+     `ALTER TABLE ADD COLUMN` when the column is missing — mirrors the
+     upstream `_migrate_schema` no-op-on-new-installs contract.
+   - API: `KnowledgeGraph::add_triple` gains `source_drawer_id` and
+     `adapter_name` Option<&str> kwargs (defaulting to None for source
+     compatibility); `Triple` and `EntityQueryResult` expose
+     `source_drawer_id` (and `Triple` exposes `adapter_name`) so callers
+     can navigate back to the drawer that produced the fact.
+   - MCP: `tool_kg_add` accepts a `source_drawer_id` input and forwards
+     it to the KG layer; the tool schema advertises the new property.
+     `adapter_name` is intentionally not exposed at the MCP boundary,
+     matching upstream (only adapters set it).
+   - Tests: `knowledge_graph::tests::test_add_triple_persists_source_drawer_and_adapter`,
+     `test_query_entity_exposes_source_drawer_id`,
+     `test_migrate_schema_adds_missing_provenance_columns`, and
+     `mcp_server::tests::test_kg_add_forwards_source_drawer_id`.
+
+Remaining gaps after this sync remain unchanged (gitignore-aware drawer
+prune, LLM init, palace-graph cache, hook/doc/i18n sync). No new gaps
+were introduced by this PR.
 
 This file is the current gap ledger for the `68319dc` reference state.
