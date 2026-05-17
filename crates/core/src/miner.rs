@@ -680,7 +680,11 @@ impl Miner {
         let mut chunk_index = 0;
 
         while start < content.len() {
-            let end = std::cmp::min(start + CHUNK_SIZE, content.len());
+            let mut end = std::cmp::min(start + CHUNK_SIZE, content.len());
+            // Snap end to a valid UTF-8 char boundary
+            while end > start && !content.is_char_boundary(end) {
+                end -= 1;
+            }
 
             if end < content.len() {
                 let slice = &content[start..end];
@@ -693,7 +697,11 @@ impl Miner {
                             chunks.push((chunk.to_string(), chunk_index));
                             chunk_index += 1;
                         }
-                        start = actual_end.saturating_sub(CHUNK_OVERLAP);
+                        let mut new_start = actual_end.saturating_sub(CHUNK_OVERLAP);
+                        while new_start < actual_end && !content.is_char_boundary(new_start) {
+                            new_start += 1;
+                        }
+                        start = new_start;
                         continue;
                     }
                 }
@@ -706,7 +714,11 @@ impl Miner {
                             chunks.push((chunk.to_string(), chunk_index));
                             chunk_index += 1;
                         }
-                        start = actual_end.saturating_sub(CHUNK_OVERLAP);
+                        let mut new_start = actual_end.saturating_sub(CHUNK_OVERLAP);
+                        while new_start < actual_end && !content.is_char_boundary(new_start) {
+                            new_start += 1;
+                        }
+                        start = new_start;
                         continue;
                     }
                 }
@@ -719,7 +731,11 @@ impl Miner {
             }
 
             if end < content.len() {
-                start = end.saturating_sub(CHUNK_OVERLAP);
+                let mut new_start = end.saturating_sub(CHUNK_OVERLAP);
+                while new_start < end && !content.is_char_boundary(new_start) {
+                    new_start += 1;
+                }
+                start = new_start;
             } else {
                 break;
             }
@@ -1537,5 +1553,21 @@ mod tests {
         // No drawers should have been added to the palace.
         miner.palace_db.flush().unwrap();
         assert_eq!(miner.palace_db.count(), 0);
+    }
+
+    #[test]
+    fn test_chunk_text_multibyte_utf8_boundary() {
+        let miner = Miner::new(std::path::Path::new("/tmp"), "test", vec![]).unwrap();
+
+        let prefix = "a".repeat(CHUNK_SIZE - 1);
+        let text = format!("{}this continues after the boundary", prefix);
+
+        let chunks = miner.chunk_text(&text, "test.txt");
+        assert!(!chunks.is_empty(), "should produce at least one chunk");
+
+        for (chunk, _idx) in &chunks {
+            assert!(chunk.is_char_boundary(0));
+            assert!(chunk.is_char_boundary(chunk.len()));
+        }
     }
 }
