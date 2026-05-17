@@ -572,7 +572,17 @@ fn cmd_init(
 
     if !yes {
         let _registry = crate::onboarding::run_onboarding(dir, config_dir, true)?;
-        println!("  Config saved: {:?}", config_path);
+
+        // Detect rooms from folder structure so `mpr mine` has something to read.
+        let rooms = detect_rooms_from_folders(dir);
+        let project_name = target_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase().replace([' ', '-'], "_"))
+            .unwrap_or_else(|| "project".to_string());
+        let project_config_path = save_project_config(dir, &project_name, &rooms)?;
+
+        println!("  Project config saved: {:?}", project_config_path);
+        println!("  Global config saved: {:?}", config_path);
         println!();
         println!("  Next step:");
         println!("    mpr mine {:?}", dir);
@@ -2207,6 +2217,46 @@ mod tests {
         assert!(config_path.exists());
         let (wing, rooms) = crate::miner::load_config(&project_dir).unwrap();
         assert_eq!(wing, "sample_project");
+        assert!(rooms.iter().any(|room| room.name == "src"));
+    }
+
+    #[test]
+    fn test_cmd_init_interactive_writes_project_config() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should not be poisoned");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir.path().join("Interactive Project");
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::create_dir_all(temp_dir.path().join("xdg")).unwrap();
+
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().join("xdg"));
+        std::env::set_var("MEMPALACE_NONINTERACTIVE", "1");
+        let result = cmd_init(
+            &project_dir,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            None,
+        );
+        std::env::remove_var("MEMPALACE_NONINTERACTIVE");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        result.unwrap();
+
+        let config_path = project_dir.join("mempalace.json");
+        assert!(
+            config_path.exists(),
+            "interactive init should still write mempalace.json so `mpr mine` works"
+        );
+        let (wing, rooms) = crate::miner::load_config(&project_dir).unwrap();
+        assert_eq!(wing, "interactive_project");
         assert!(rooms.iter().any(|room| room.name == "src"));
     }
 
