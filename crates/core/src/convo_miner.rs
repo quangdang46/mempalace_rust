@@ -434,6 +434,13 @@ fn generate_drawer_id(wing: &str, room: &str, source_file: &str, chunk_index: us
 /// `stderr` with a `"  SKIP: <relative-path> (symlink)"` line so callers can
 /// tell why a directory looks empty after walking (#1462).
 fn scan_convos(convo_dir: &Path) -> Vec<PathBuf> {
+    scan_convos_with_log(convo_dir, &mut std::io::stderr())
+}
+
+/// Same as [`scan_convos`] but routes the skipped-symlink diagnostic to an
+/// arbitrary writer. Lets unit tests assert the log fires without having to
+/// fork a subprocess to capture stderr.
+fn scan_convos_with_log<W: Write>(convo_dir: &Path, skip_log: &mut W) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for entry in WalkDir::new(convo_dir)
         .follow_links(false)
@@ -444,7 +451,12 @@ fn scan_convos(convo_dir: &Path) -> Vec<PathBuf> {
         })
         .filter_map(|entry| entry.ok())
     {
-        if !entry.file_type().is_file() {
+        let ft = entry.file_type();
+        // Let regular files AND symlinks through. Walkdir's `is_file()`
+        // returns `false` for symlinks-to-files under `follow_links(false)`,
+        // so a bare `!is_file()` check would silently drop every symlink
+        // before the diagnostic branch below can fire.
+        if !ft.is_file() && !ft.is_symlink() {
             continue;
         }
         let path = entry.path();
@@ -455,24 +467,26 @@ fn scan_convos(convo_dir: &Path) -> Vec<PathBuf> {
         if name.ends_with(".meta.json") {
             continue;
         }
-        // Skip symlinks — prevents following recursive/bogus links. Log to
-        // stderr with the path relative to the scan root so the diagnostic
-        // is unambiguous and renders with forward slashes on every platform.
-        // Mirrors upstream Python `scan_convos` post-#1462. (#1462)
-        if path.is_symlink() {
-            let rel = path
-                .strip_prefix(convo_dir)
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|_| path.to_string_lossy().to_string());
-            let _ = writeln!(std::io::stderr(), "  SKIP: {rel} (symlink)");
-            continue;
-        }
         let extension = path
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or_default()
             .to_lowercase();
         if !CONVO_EXTENSIONS.contains(&extension.as_str()) {
+            continue;
+        }
+        // Skip symlinks — prevents following recursive/bogus links. Log to
+        // `skip_log` with the path relative to the scan root so the
+        // diagnostic is unambiguous and renders with forward slashes on
+        // every platform. Runs AFTER the extension filter to match upstream
+        // Python `scan_convos` ordering — a `.png` symlink is silently
+        // dropped at the extension gate rather than logged. (#1462)
+        if ft.is_symlink() {
+            let rel = path
+                .strip_prefix(convo_dir)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_string_lossy().to_string());
+            let _ = writeln!(skip_log, "  SKIP: {rel} (symlink)");
             continue;
         }
         let Ok(metadata) = path.metadata() else {
@@ -696,17 +710,26 @@ mod tests {
         // Regression for upstream #1462: scan_convos drops symlinked files
         // so the walker can't recurse into bogus link targets. The stderr
         // SKIP log surfaces the skip with a path relative to the scan root.
+        // Asserts the diagnostic actually fires — relying on result-set
+        // exclusion alone passes against dead-code symlink branches, which
+        // is how the initial port shipped.
         let temp = tempfile::TempDir::new().unwrap();
         let real = temp.path().join("real.md");
         std::fs::write(&real, "hello world").unwrap();
         std::os::unix::fs::symlink(&real, temp.path().join("link.md")).unwrap();
 
-        let files = scan_convos(temp.path());
+        let mut log = Vec::new();
+        let files = scan_convos_with_log(temp.path(), &mut log);
         let names: Vec<String> = files
             .iter()
             .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["real.md".to_string()]);
+        let log = String::from_utf8(log).unwrap();
+        assert!(
+            log.contains("  SKIP: link.md (symlink)\n"),
+            "expected SKIP diagnostic for link.md, got: {log:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -723,12 +746,43 @@ mod tests {
         )
         .unwrap();
 
-        let files = scan_convos(temp.path());
+        let mut log = Vec::new();
+        let files = scan_convos_with_log(temp.path(), &mut log);
         let names: Vec<String> = files
             .iter()
             .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert_eq!(names, vec!["real.md".to_string()]);
+        let log = String::from_utf8(log).unwrap();
+        assert!(
+            log.contains("  SKIP: dangling.md (symlink)\n"),
+            "expected SKIP diagnostic for dangling.md, got: {log:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_convos_does_not_log_extension_filtered_symlinks() {
+        // A symlink whose name doesn't match `CONVO_EXTENSIONS` is silently
+        // dropped at the extension gate — it must NOT surface in the SKIP
+        // log, matching upstream Python ordering (extension → symlink-log
+        // → size).
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("real.md"), "hello world").unwrap();
+        std::os::unix::fs::symlink("real.md", temp.path().join("link.png")).unwrap();
+
+        let mut log = Vec::new();
+        let files = scan_convos_with_log(temp.path(), &mut log);
+        let names: Vec<String> = files
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["real.md".to_string()]);
+        let log = String::from_utf8(log).unwrap();
+        assert!(
+            !log.contains("link.png"),
+            "extension-filtered symlink leaked into SKIP log: {log:?}"
+        );
     }
 
     #[test]
