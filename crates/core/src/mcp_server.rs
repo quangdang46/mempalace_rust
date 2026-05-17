@@ -318,9 +318,10 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_graph_stats" => tool_graph_stats(&state, args),
                 "mempalace_diary_read" => tool_diary_read(&state, args),
                 "mempalace_diary_write" => tool_diary_write(&state, args),
-                _ => Err(ErrorData::method_not_found::<
-                    rmcp::model::CallToolRequestMethod,
-                >()),
+                other => Err(ErrorData::invalid_params(
+                    format!("Unknown tool: {}", other),
+                    None,
+                )),
             }
         }) as DynResult
     }
@@ -1266,8 +1267,11 @@ fn kg_path(state: &AppState) -> std::path::PathBuf {
 // Run entry point
 // ---------------------------------------------------------------------------
 
-pub fn run_server(read_only: bool) -> anyhow::Result<()> {
-    let config = crate::Config::load()?;
+pub fn run_server(palace_override: Option<&str>, read_only: bool) -> anyhow::Result<()> {
+    let mut config = crate::Config::load()?;
+    if let Some(p) = palace_override {
+        config.palace_path = resolve_palace_override(p);
+    }
     let server = MempalaceServer::new(AppState::new(config, read_only)?);
     let (stdin, stdout) = stdio();
     let rt = Runtime::new()?;
@@ -1277,6 +1281,15 @@ pub fn run_server(read_only: bool) -> anyhow::Result<()> {
         Ok::<(), anyhow::Error>(())
     })?;
     Ok(())
+}
+
+fn resolve_palace_override(raw: &str) -> std::path::PathBuf {
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(home).join(rest);
+        }
+    }
+    std::path::PathBuf::from(raw)
 }
 
 // ---------------------------------------------------------------------------
@@ -2492,6 +2505,53 @@ mod tests {
             "wait_for_previous should pass through: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn test_unknown_tool_returns_invalid_params_with_tool_name() {
+        // Regression: previously this returned -32601 with message="tools/call",
+        // which echoed the JSON-RPC method instead of naming the bad tool.
+        // It should now be -32602 with message="Unknown tool: <name>".
+        let state = test_state();
+        let err = dispatch(&state, "definitely_not_a_real_tool", json!({}))
+            .expect_err("unknown tool name should error");
+        assert_eq!(err.code.0, -32602);
+        let message = err.message.as_ref();
+        assert!(
+            message.contains("Unknown tool"),
+            "message should mention 'Unknown tool', got: {message}"
+        );
+        assert!(
+            message.contains("definitely_not_a_real_tool"),
+            "message should name the bogus tool, got: {message}"
+        );
+        // Must not echo the JSON-RPC method name as the message.
+        assert!(
+            !message.starts_with("tools/call"),
+            "message should not echo the JSON-RPC method, got: {message}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_palace_override_expands_tilde_home() {
+        std::env::set_var("HOME", "/tmp/fake_home_42");
+        let resolved = resolve_palace_override("~/palace");
+        assert_eq!(
+            resolved,
+            std::path::PathBuf::from("/tmp/fake_home_42/palace")
+        );
+    }
+
+    #[test]
+    fn test_resolve_palace_override_absolute_path_passthrough() {
+        let resolved = resolve_palace_override("/var/lib/mp_palace");
+        assert_eq!(resolved, std::path::PathBuf::from("/var/lib/mp_palace"));
+    }
+
+    #[test]
+    fn test_resolve_palace_override_relative_path_passthrough() {
+        let resolved = resolve_palace_override("./relative/palace");
+        assert_eq!(resolved, std::path::PathBuf::from("./relative/palace"));
     }
 
     #[test]

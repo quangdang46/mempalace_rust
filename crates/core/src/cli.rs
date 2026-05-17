@@ -259,7 +259,9 @@ enum Commands {
         read_only: bool,
     },
 
+    /// Re-ingest a file or directory of mined drawers into the palace (idempotent).
     Sweep {
+        /// File or directory to sweep into the palace.
         target: PathBuf,
         #[arg(long)]
         palace: Option<String>,
@@ -1962,7 +1964,7 @@ pub fn run() -> Result<()> {
         }
         Commands::Mcp => cmd_mcp(palace_arg),
         Commands::Serve { read_only } => {
-            crate::mcp_server::run_server(*read_only)?;
+            crate::mcp_server::run_server(palace_arg, *read_only)?;
         }
         Commands::Sweep { target, palace } => cmd_sweep(target, palace.as_deref())?,
     }
