@@ -3,6 +3,7 @@ use crate::normalize::normalize;
 use crate::palace_db::PalaceDb;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -426,6 +427,12 @@ fn generate_drawer_id(wing: &str, room: &str, source_file: &str, chunk_index: us
     format!("drawer_{}_{}_{}", wing, room, &hex[..24])
 }
 
+/// Scan `convo_dir` for conversation files, returning paths to mine.
+///
+/// Skips symlinks (which could otherwise follow links to recursive structures
+/// or `/dev/urandom`) and oversized files. Each skipped symlink is logged to
+/// `stderr` with a `"  SKIP: <relative-path> (symlink)"` line so callers can
+/// tell why a directory looks empty after walking (#1462).
 fn scan_convos(convo_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for entry in WalkDir::new(convo_dir)
@@ -445,7 +452,19 @@ fn scan_convos(convo_dir: &Path) -> Vec<PathBuf> {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        if name.ends_with(".meta.json") || path.is_symlink() {
+        if name.ends_with(".meta.json") {
+            continue;
+        }
+        // Skip symlinks — prevents following recursive/bogus links. Log to
+        // stderr with the path relative to the scan root so the diagnostic
+        // is unambiguous and renders with forward slashes on every platform.
+        // Mirrors upstream Python `scan_convos` post-#1462. (#1462)
+        if path.is_symlink() {
+            let rel = path
+                .strip_prefix(convo_dir)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_string_lossy().to_string());
+            let _ = writeln!(std::io::stderr(), "  SKIP: {rel} (symlink)");
             continue;
         }
         let extension = path
@@ -669,6 +688,47 @@ mod tests {
         assert!(names.contains(&"notes.md".to_string()));
         assert!(!names.contains(&"chat.meta.json".to_string()));
         assert!(!names.contains(&"config.txt".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_convos_skips_symlinks() {
+        // Regression for upstream #1462: scan_convos drops symlinked files
+        // so the walker can't recurse into bogus link targets. The stderr
+        // SKIP log surfaces the skip with a path relative to the scan root.
+        let temp = tempfile::TempDir::new().unwrap();
+        let real = temp.path().join("real.md");
+        std::fs::write(&real, "hello world").unwrap();
+        std::os::unix::fs::symlink(&real, temp.path().join("link.md")).unwrap();
+
+        let files = scan_convos(temp.path());
+        let names: Vec<String> = files
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["real.md".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_convos_skips_dangling_symlinks() {
+        // A dangling symlink in the convo dir must not panic the walker nor
+        // surface in the result set. Mirrors upstream coverage for #1462's
+        // polished dangling-link path.
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("real.md"), "hello world").unwrap();
+        std::os::unix::fs::symlink(
+            temp.path().join("missing.md"),
+            temp.path().join("dangling.md"),
+        )
+        .unwrap();
+
+        let files = scan_convos(temp.path());
+        let names: Vec<String> = files
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["real.md".to_string()]);
     }
 
     #[test]

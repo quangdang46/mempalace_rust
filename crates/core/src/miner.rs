@@ -5,6 +5,7 @@ use chrono::Utc;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -414,6 +415,12 @@ fn is_force_included(path: &Path, project_path: &Path, include_paths: &HashSet<S
     })
 }
 
+/// Scan `project_dir` for readable files, returning paths to mine.
+///
+/// Skips symlinks (which could otherwise follow links to `/dev/urandom`,
+/// recursive structures, etc.) and oversized files. Each skipped symlink is
+/// logged to `stderr` with a `"  SKIP: <relative-path> (symlink)"` line so
+/// callers can tell why a directory looks empty after walking (#1462).
 pub fn scan_project(
     project_dir: &Path,
     respect_gitignore: bool,
@@ -497,7 +504,18 @@ pub fn scan_project(
             continue;
         }
 
+        // Skip symlinks — prevents following links to /dev/urandom, recursive
+        // structures, etc. Log to stderr with the path relative to the scan
+        // root so a nested symlink in a deep subdirectory is unambiguous and
+        // the log renders with forward slashes on every platform. stdout stays
+        // clean for "Files: N" / "Drawers filed: N" markers callers parse.
+        // Mirrors upstream Python `scan_project` post-#1462. (#1462)
         if path.is_symlink() {
+            let rel = path
+                .strip_prefix(&project_path)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_string_lossy().to_string());
+            let _ = writeln!(std::io::stderr(), "  SKIP: {rel} (symlink)");
             continue;
         }
 
@@ -1071,6 +1089,86 @@ mod tests {
             "import React",
         );
         assert_eq!(room, "frontend");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_project_skips_symlinks() {
+        // Regression for upstream #1462: symlinks are skipped so the walker
+        // never follows links to /dev/urandom, recursive directories, or
+        // resources outside the scan root. The "Files: 0" outcome surfaces
+        // as a stderr SKIP log so callers can distinguish "no files" from
+        // "all the files were symlinks".
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
+        let real = root.join("real.py");
+        std::fs::write(&real, "print('real')\n".repeat(20)).unwrap();
+        std::os::unix::fs::symlink(&real, root.join("link.py")).unwrap();
+
+        let files = scan_project(root, false, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["real.py"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_project_skips_nested_symlinks() {
+        // Nested symlinks (e.g. inside a subdirectory) are reported with the
+        // path relative to the scan root, not the leaf filename, so they can
+        // be located unambiguously. See upstream `d7d9604` polish to #1462.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        let real = root.join("a/b/real.py");
+        std::fs::write(&real, "print('real')\n".repeat(20)).unwrap();
+        std::os::unix::fs::symlink(&real, root.join("a/b/link.py")).unwrap();
+
+        let files = scan_project(root, false, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["a/b/real.py"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_project_skips_dangling_symlinks() {
+        // A dangling symlink (target does not exist) must not panic the
+        // walker nor surface in the result set. Mirrors upstream coverage
+        // for the polished #1462 case.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
+        std::fs::write(root.join("real.py"), "print('real')\n".repeat(20)).unwrap();
+        std::os::unix::fs::symlink(root.join("missing.py"), root.join("dangling.py")).unwrap();
+
+        let files = scan_project(root, false, None);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["real.py"]);
     }
 
     #[test]
