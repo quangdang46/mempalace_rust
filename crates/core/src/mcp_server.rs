@@ -3,12 +3,12 @@
 //! Exposes MemPalace functionality as MCP tools via stdio transport.
 //! Read-only mode restricts mutations (diary_write, config_write, people_write).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
@@ -209,7 +209,10 @@ where
         16,
     );
     log_tool_invocation(&tool_name, &args, None, &trace_id);
-    let result = dispatch(tool_name.clone(), args.clone()).await;
+    let result = match validate_known_params(&tool_name, &args) {
+        Err(err) => Err(err),
+        Ok(()) => dispatch(tool_name.clone(), args.clone()).await,
+    };
     log_tool_invocation(
         &tool_name,
         &args,
@@ -217,6 +220,78 @@ where
         &trace_id,
     );
     result
+}
+
+/// Tools whose Input struct accepts arbitrary extra fields (via
+/// `#[serde(flatten)] custom_metadata: Option<serde_json::Value>` or
+/// equivalent). These bypass the unknown-parameter check so callers can keep
+/// supplying custom metadata keys — mirrors Python's `accepts_var_keyword`
+/// gate on `**kwargs` handlers. (#1512)
+const TOOLS_ACCEPTING_EXTRAS: &[&str] = &["mempalace_add_drawer"];
+
+/// Keys that are internal transport metadata and live in no tool schema. They
+/// are stripped before dispatch elsewhere; flagging them as unknown here would
+/// surface a misleading error for legitimate transport-level options. (#1512)
+const TRANSPORT_RESERVED_KEYS: &[&str] = &["wait_for_previous"];
+
+/// Lazily-built lookup of `tool_name -> declared input-schema property names`.
+/// Source of truth is `make_tools()`'s JSON schema, so adding a property in
+/// one place automatically updates the unknown-parameter check.
+fn tool_schema_props() -> &'static HashMap<String, HashSet<String>> {
+    static SCHEMA_PROPS: OnceLock<HashMap<String, HashSet<String>>> = OnceLock::new();
+    SCHEMA_PROPS.get_or_init(|| {
+        let mut by_tool = HashMap::new();
+        for tool in make_tools() {
+            let value = serde_json::Value::Object((*tool.input_schema).clone());
+            let props = value
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .map(|obj| obj.keys().cloned().collect::<HashSet<_>>())
+                .unwrap_or_default();
+            by_tool.insert(tool.name.to_string(), props);
+        }
+        by_tool
+    })
+}
+
+/// Reject unknown parameter *names* with JSON-RPC -32602 instead of letting
+/// serde silently drop them and resurfacing the typo as a downstream
+/// "missing required" error. Skips tools whose Input struct uses
+/// `#[serde(flatten)]` extras (`TOOLS_ACCEPTING_EXTRAS`) and the
+/// `wait_for_previous` transport kwarg, matching upstream Python's
+/// `accepts_var_keyword` gate. (#1512)
+fn validate_known_params(tool_name: &str, args: &JsonObject) -> Result<(), ErrorData> {
+    if TOOLS_ACCEPTING_EXTRAS.contains(&tool_name) {
+        return Ok(());
+    }
+    let Some(allowed) = tool_schema_props().get(tool_name) else {
+        // Unknown tool — let dispatch surface method_not_found.
+        return Ok(());
+    };
+    let mut unknown: Vec<&str> = args
+        .keys()
+        .filter(|k| !allowed.contains(k.as_str()))
+        .filter(|k| !TRANSPORT_RESERVED_KEYS.contains(&k.as_str()))
+        .map(String::as_str)
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    unknown.sort_unstable();
+    let quoted = unknown
+        .iter()
+        .map(|k| format!("'{k}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let word = if unknown.len() == 1 {
+        "parameter"
+    } else {
+        "parameters"
+    };
+    Err(ErrorData::invalid_params(
+        format!("Unknown {word} {quoted} for tool {tool_name}"),
+        None,
+    ))
 }
 
 fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResult {
@@ -2349,5 +2424,97 @@ mod tests {
             json!({ "start_room": "unknown", "max_hops": 2.0 }),
         );
         assert!(result.is_ok(), "traverse failed: {:?}", result);
+    }
+
+    // ---------------------------------------------------------------------
+    // Unknown parameter name (#1512)
+    //
+    // A kwarg not in the tool schema (wrong parameter *name*, e.g. `text=`
+    // instead of `content=`) should surface as JSON-RPC -32602 naming the
+    // offending kwarg, instead of being silently dropped by serde and
+    // resurfacing indirectly as a later "Missing required 'X'". Symmetric
+    // with the missing-required-shape path. The internal `wait_for_previous`
+    // transport kwarg must never be flagged, and handlers whose Input struct
+    // uses `#[serde(flatten)]` extras (`mempalace_add_drawer`) must keep
+    // accepting unknown kwargs.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_unknown_param_returns_invalid_params_for_wrong_kwarg_name() {
+        let state = test_state();
+        let err = dispatch(
+            &state,
+            "mempalace_search",
+            json!({ "query": "hello", "txt": "oops" }),
+        )
+        .expect_err("unknown 'txt' should surface as an error");
+        assert_eq!(err.code.0, -32602);
+        let message = err.message.as_ref();
+        assert!(message.contains("'txt'"), "message: {message}");
+        assert!(message.contains("Unknown parameter"), "message: {message}");
+        assert!(message.contains("mempalace_search"), "message: {message}");
+        // Names the actual wrong kwarg, not the indirect missing-required symptom.
+        assert!(!message.contains("Missing required"), "message: {message}");
+    }
+
+    #[test]
+    fn test_two_unknown_params_list_both_names() {
+        let state = test_state();
+        let err = dispatch(
+            &state,
+            "mempalace_search",
+            json!({ "query": "hello", "txt": "a", "bogus": "b" }),
+        )
+        .expect_err("multiple unknown params should error");
+        assert_eq!(err.code.0, -32602);
+        let message = err.message.as_ref();
+        assert!(message.contains("parameters"), "message: {message}");
+        assert!(message.contains("'txt'"), "message: {message}");
+        assert!(message.contains("'bogus'"), "message: {message}");
+    }
+
+    #[test]
+    fn test_wait_for_previous_not_flagged_as_unknown() {
+        // `wait_for_previous` is an internal transport kwarg in no tool
+        // schema; it must not trip the unknown-param check.
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({
+                "agent_name": "x",
+                "entry": "y",
+                "wait_for_previous": true,
+            }),
+        );
+        assert!(
+            result.is_ok(),
+            "wait_for_previous should pass through: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_add_drawer_accepts_unknown_custom_metadata_keys() {
+        // `mempalace_add_drawer` uses `#[serde(flatten)] custom_metadata`,
+        // so callers may supply arbitrary string-valued metadata keys —
+        // those must not be rejected as unknown parameters.
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_add_drawer",
+            json!({
+                "wing": "test",
+                "room": "decisions",
+                "content": "we picked sqlite",
+                "priority": "high",
+                "status": "open",
+            }),
+        );
+        assert!(
+            result.is_ok(),
+            "add_drawer custom metadata should pass through: {:?}",
+            result
+        );
     }
 }

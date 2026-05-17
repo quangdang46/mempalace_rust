@@ -214,3 +214,70 @@ prune, LLM init, palace-graph cache, hook/doc/i18n sync). No new gaps
 were introduced by this PR.
 
 This file is the current gap ledger for the `68319dc` reference state.
+
+
+Sync update — upstream develop `bb31396` (2026-05-15)
+=====================================================
+
+Followed `.devin/skills/sync-upstream-mempalace/SKILL.md`. Diffed upstream
+`68319dc..bb31396` (11 non-merge commits touching `mempalace/`) and ported
+the two highest-priority upstream fixes: a CLI-ergonomics diagnostic for
+silently-skipped symlinks during mining and a structured MCP error for
+unknown parameter names. Chunk-size configuration plumbing (#1024, #1410,
+#1519, plus the `342cfa6`/`bea7cb1` follow-ups) is feature-flag work and
+is deferred to a follow-up sync.
+
+Ported in this session
+----------------------
+
+1. `mempalace/miner.py` `becf561` + `d7d9604` (#1462) — `mine_project` and
+   `mine_conversations` used to silently skip symlinks, so a directory full
+   of symlinked files surfaced only as a baffling `Files: 0` line with no
+   indication why. Emit a `  SKIP: <relative-path> (symlink)` diagnostic to
+   `stderr` (stdout stays clean for callers parsing the `Files:` /
+   `Drawers filed:` markers). The polished path uses the scan-root-relative
+   posix-style path so nested symlinks remain unambiguous.
+   - Rust: `crates/core/src/miner.rs::scan_project` and
+     `crates/core/src/convo_miner.rs::scan_convos`. Regression tests
+     `miner::tests::test_scan_project_skips_symlinks`,
+     `test_scan_project_skips_nested_symlinks`,
+     `test_scan_project_skips_dangling_symlinks`,
+     `convo_miner::tests::test_scan_convos_skips_symlinks`, and
+     `test_scan_convos_skips_dangling_symlinks` (`#[cfg(unix)]`-gated since
+     the Windows symlink API requires admin privileges).
+
+2. `mempalace/mcp_server.py` `51c03a0` (#1512) — unknown kwargs at the MCP
+   dispatch layer (a typo like `text=` instead of `content=`) used to be
+   silently dropped by the schema filter, only resurfacing indirectly as a
+   later "Missing required 'X'". Emit `-32602` naming the offending kwarg
+   instead, symmetric with the missing-required path. Gated by an
+   `accepts_var_keyword` equivalent (`TOOLS_ACCEPTING_EXTRAS` — currently
+   `mempalace_add_drawer`, whose Input uses `#[serde(flatten)]` for custom
+   metadata), and skips the internal `wait_for_previous` transport kwarg.
+   - Rust: `crates/core/src/mcp_server.rs::validate_known_params`, wired
+     into `invoke_with_wal`. Tool-name → allowed-property lookup is cached
+     once via `OnceLock` from `make_tools()`'s JSON schema so the schema
+     stays the single source of truth. Regression tests
+     `mcp_server::tests::test_unknown_param_returns_invalid_params_for_wrong_kwarg_name`,
+     `test_two_unknown_params_list_both_names`,
+     `test_wait_for_previous_not_flagged_as_unknown`, and
+     `test_add_drawer_accepts_unknown_custom_metadata_keys`.
+
+Remaining gaps after this sync
+------------------------------
+
+Carried forward unchanged: gitignore-aware drawer prune, LLM-assisted
+init / CLI flags, palace-graph cache invalidation, hook/doc/i18n sync,
+broader test parity for upstream-added modules.
+
+New deferred work (not ported here):
+
+1. Configurable chunk sizes (`1cc2876` feat (#1024), `b1d75b3` /
+   `fd63703` follow-ups (#1410, #1519), `bea7cb1` / `342cfa6` validation
+   fixes). Upstream wires `--chunk-size`/`--chunk-overlap` through CLI →
+   config → `miner` / `convo_miner`. Touches non-trivial config plumbing
+   and is not yet user-requested in the Rust port.
+
+2. CHANGELOG / docs polish around the same chunk-size feature (`68dc1bf`).
+
+This file is the current gap ledger for the `bb31396` reference state.

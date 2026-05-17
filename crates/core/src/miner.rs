@@ -5,6 +5,7 @@ use chrono::Utc;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -414,10 +415,37 @@ fn is_force_included(path: &Path, project_path: &Path, include_paths: &HashSet<S
     })
 }
 
+/// Scan `project_dir` for readable files, returning paths to mine.
+///
+/// Skips symlinks (which could otherwise follow links to `/dev/urandom`,
+/// recursive structures, etc.) and oversized files. Each skipped symlink is
+/// logged to `stderr` with a `"  SKIP: <relative-path> (symlink)"` line so
+/// callers can tell why a directory looks empty after walking (#1462).
+/// Walk `project_dir` and return readable file paths, logging each
+/// skipped symlink to `stderr` with a `"  SKIP: <relative-path> (symlink)"`
+/// line so callers can tell why a directory looks empty after walking.
+/// Mirrors upstream Python `scan_project` post-#1462. (#1462)
 pub fn scan_project(
     project_dir: &Path,
     respect_gitignore: bool,
     include_ignored: Option<&[String]>,
+) -> Vec<std::path::PathBuf> {
+    scan_project_with_log(
+        project_dir,
+        respect_gitignore,
+        include_ignored,
+        &mut std::io::stderr(),
+    )
+}
+
+/// Same as [`scan_project`] but routes the skipped-symlink diagnostic to an
+/// arbitrary writer. Lets unit tests assert the log fires without having to
+/// fork a subprocess to capture stderr.
+fn scan_project_with_log<W: Write>(
+    project_dir: &Path,
+    respect_gitignore: bool,
+    include_ignored: Option<&[String]>,
+    skip_log: &mut W,
 ) -> Vec<std::path::PathBuf> {
     let project_path = match project_dir.canonicalize() {
         Ok(path) => path,
@@ -435,8 +463,9 @@ pub fn scan_project(
         .filter_map(|e| e.ok())
     {
         let path = entry.path().to_path_buf();
+        let ft = entry.file_type();
 
-        if entry.file_type().is_dir() {
+        if ft.is_dir() {
             if respect_gitignore {
                 active_matchers.retain(|matcher| {
                     path == matcher.base_dir || path.starts_with(&matcher.base_dir)
@@ -448,7 +477,12 @@ pub fn scan_project(
             continue;
         }
 
-        if !entry.file_type().is_file() {
+        // Let regular files AND symlinks through. Walkdir's `is_file()`
+        // returns `false` for symlinks-to-files under `follow_links(false)`,
+        // so a bare `!is_file()` check would silently drop every symlink
+        // before the diagnostic branch below can fire — that was the bug in
+        // the initial port of upstream #1462.
+        if !ft.is_file() && !ft.is_symlink() {
             continue;
         }
 
@@ -497,7 +531,18 @@ pub fn scan_project(
             continue;
         }
 
-        if path.is_symlink() {
+        // Skip symlinks — prevents following links to /dev/urandom, recursive
+        // structures, etc. Log to `skip_log` with the path relative to the
+        // scan root so a nested symlink in a deep subdirectory is unambiguous
+        // and the log renders with forward slashes on every platform. stdout
+        // stays clean for "Files: N" / "Drawers filed: N" markers callers
+        // parse. Mirrors upstream Python `scan_project` post-#1462. (#1462)
+        if ft.is_symlink() {
+            let rel = path
+                .strip_prefix(&project_path)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_string_lossy().to_string());
+            let _ = writeln!(skip_log, "  SKIP: {rel} (symlink)");
             continue;
         }
 
@@ -1071,6 +1116,125 @@ mod tests {
             "import React",
         );
         assert_eq!(room, "frontend");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_project_skips_symlinks() {
+        // Regression for upstream #1462: symlinks are skipped so the walker
+        // never follows links to /dev/urandom, recursive directories, or
+        // resources outside the scan root. The "Files: 0" outcome surfaces
+        // as a stderr SKIP log so callers can distinguish "no files" from
+        // "all the files were symlinks". Asserts the diagnostic actually
+        // fires — relying on result-set exclusion alone passes against
+        // dead-code symlink branches, which is how the initial port shipped.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
+        let real = root.join("real.py");
+        std::fs::write(&real, "print('real')\n".repeat(20)).unwrap();
+        std::os::unix::fs::symlink(&real, root.join("link.py")).unwrap();
+
+        let mut log = Vec::new();
+        let files = scan_project_with_log(root, false, None, &mut log);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["real.py"]);
+        let log = String::from_utf8(log).unwrap();
+        assert!(
+            log.contains("  SKIP: link.py (symlink)\n"),
+            "expected SKIP diagnostic for link.py, got: {log:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_project_skips_nested_symlinks() {
+        // Nested symlinks (e.g. inside a subdirectory) are reported with the
+        // path relative to the scan root, not the leaf filename, so they can
+        // be located unambiguously. See upstream `d7d9604` polish to #1462.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        let real = root.join("a/b/real.py");
+        std::fs::write(&real, "print('real')\n".repeat(20)).unwrap();
+        std::os::unix::fs::symlink(&real, root.join("a/b/link.py")).unwrap();
+
+        let mut log = Vec::new();
+        let files = scan_project_with_log(root, false, None, &mut log);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["a/b/real.py"]);
+        let log = String::from_utf8(log).unwrap();
+        assert!(
+            log.contains("  SKIP: a/b/link.py (symlink)\n"),
+            "expected scan-root-relative SKIP path, got: {log:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_scan_project_skips_dangling_symlinks() {
+        // A dangling symlink (target does not exist) must not panic the
+        // walker nor surface in the result set. Mirrors upstream coverage
+        // for the polished #1462 case.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        let canonical_root = root.canonicalize().unwrap();
+        std::fs::write(root.join("real.py"), "print('real')\n".repeat(20)).unwrap();
+        std::os::unix::fs::symlink(root.join("missing.py"), root.join("dangling.py")).unwrap();
+
+        let mut log = Vec::new();
+        let files = scan_project_with_log(root, false, None, &mut log);
+        let rel: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&canonical_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(rel, vec!["real.py"]);
+        let log = String::from_utf8(log).unwrap();
+        assert!(
+            log.contains("  SKIP: dangling.py (symlink)\n"),
+            "expected SKIP diagnostic for dangling.py, got: {log:?}"
+        );
+    }
+
+    #[test]
+    fn test_scan_project_emits_no_skip_lines_when_no_symlinks_present() {
+        // Negative control: a regular directory with only real files must
+        // not emit any SKIP diagnostics on the writer.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::write(root.join("a.py"), "print('a')\n".repeat(20)).unwrap();
+        std::fs::write(root.join("b.py"), "print('b')\n".repeat(20)).unwrap();
+
+        let mut log = Vec::new();
+        let files = scan_project_with_log(root, false, None, &mut log);
+        assert_eq!(files.len(), 2);
+        let log = String::from_utf8(log).unwrap();
+        assert!(
+            !log.contains("SKIP"),
+            "no symlinks present, expected empty log, got: {log:?}"
+        );
     }
 
     #[test]
