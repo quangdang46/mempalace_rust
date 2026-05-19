@@ -28,7 +28,7 @@ use crate::entity_registry::EntityRegistry;
 use crate::layers::MemoryStack;
 use crate::mine_palace_lock::{self, MineAlreadyRunning};
 use crate::miner::{self, MiningResult};
-use crate::palace_db::PalaceDb;
+use crate::palace_db::{self, PalaceDb};
 use crate::room_detector_local::{detect_rooms_from_folders, RoomMapping};
 use crate::searcher;
 use crate::split_mega_files::split_file_with_options;
@@ -1347,10 +1347,18 @@ fn cmd_compress(
         }
     }
 
-    // Connect to palace
+    // Connect to palace (#1498: stratify state messages so the hint matches
+    // the actual lifecycle stage — init pending vs mine pending vs empty).
+    let state = palace_db::classify_palace(&palace_path);
+    if palace_db::print_palace_state_hint(state, &palace_path) {
+        return Ok(());
+    }
     let Ok(palace_db) = PalaceDb::open(&palace_path) else {
-        println!("\n  No palace found at {:?}", palace_path);
-        println!("  Run: mpr init <dir> then mpr mine <dir>");
+        println!(
+            "\n  Palace at {} could not be opened.",
+            palace_path.display()
+        );
+        println!("  Try: mpr repair status <dir>");
         return Ok(());
     };
 
@@ -1771,14 +1779,22 @@ fn cmd_status(palace_arg: Option<&str>) -> Result<()> {
     let config = Config::load()?;
     println!("  Topic wings: {:?}", config.topic_wings);
 
-    match PalaceDb::open(&palace_path) {
-        Ok(db) => {
-            let count = db.count();
-            println!("  Total drawers: {}", count);
-        }
-        Err(e) => {
-            println!("  Palace not yet initialized: {}", e);
-            println!("  Run: mpr init <dir> then mpr mine <dir>");
+    // #1498: stratify state messages so the next-step hint matches whether
+    // the palace is missing, init-but-unmined, empty, or healthy.
+    let state = palace_db::classify_palace(&palace_path);
+    match state {
+        palace_db::PalaceState::Ready => match PalaceDb::open(&palace_path) {
+            Ok(db) => {
+                let count = db.count();
+                println!("  Total drawers: {}", count);
+            }
+            Err(e) => {
+                println!("  Palace could not be opened: {}", e);
+                println!("  Try: mpr repair status <dir>");
+            }
+        },
+        _ => {
+            palace_db::print_palace_state_hint(state, &palace_path);
         }
     }
 

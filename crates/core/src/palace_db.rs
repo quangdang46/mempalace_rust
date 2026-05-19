@@ -7,6 +7,93 @@ use crate::onnx_embed::OnnxModel;
 pub const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
 pub const DEFAULT_COMPRESSED_COLLECTION_NAME: &str = "mempalace_compressed";
 
+/// Distinct lifecycle states of a palace on disk (#1498).
+///
+/// The upstream Python port (`fix(palace): stratify state messages for
+/// empty/missing palace`, milla-jovovich/mempalace#1498) split the single
+/// "No palace found / run init" message into three actionable states so the
+/// CLI no longer tells a user to re-run `init` after `init` has already
+/// succeeded but `mine` has not. The Rust port carries the same distinction
+/// here, applied by `cmd_status`, `cmd_compress`, and the search error path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PalaceState {
+    /// Palace directory does not exist (or is not a directory).
+    Missing,
+    /// Palace directory exists but the collection JSON has not been written
+    /// yet — `init` ran, `mine` did not.
+    NotInitialized,
+    /// Collection JSON exists but contains no documents.
+    Empty,
+    /// Palace is initialized and contains at least one drawer.
+    Ready,
+}
+
+/// Classify the current state of `palace_path` (#1498).
+///
+/// Cheap, side-effect-free: only touches the filesystem (existence checks +
+/// one JSON read when present). Safe to call from any CLI command before
+/// opening a `PalaceDb` to choose an actionable user-facing message.
+pub fn classify_palace(palace_path: &std::path::Path) -> PalaceState {
+    classify_palace_for_collection(palace_path, DEFAULT_COLLECTION_NAME)
+}
+
+/// Collection-aware variant of [`classify_palace`] (#1498).
+pub fn classify_palace_for_collection(
+    palace_path: &std::path::Path,
+    collection_name: &str,
+) -> PalaceState {
+    if !palace_path.is_dir() {
+        return PalaceState::Missing;
+    }
+    let docs_path = palace_path.join(format!("{}.json", collection_name));
+    if !docs_path.is_file() {
+        return PalaceState::NotInitialized;
+    }
+    // Mirror PalaceDb::open: missing/unparseable JSON degrades to empty.
+    let content = match std::fs::read_to_string(&docs_path) {
+        Ok(c) => c,
+        Err(_) => return PalaceState::NotInitialized,
+    };
+    let docs: HashMap<String, DocumentEntry> = serde_json::from_str(&content).unwrap_or_default();
+    if docs.is_empty() {
+        PalaceState::Empty
+    } else {
+        PalaceState::Ready
+    }
+}
+
+/// Print the actionable next-step hint for a non-`Ready` palace state (#1498).
+///
+/// Returns `true` when a message was printed (state was not `Ready`) so the
+/// caller can decide whether to short-circuit. The leading newline matches the
+/// pre-existing print style used elsewhere in the CLI.
+pub fn print_palace_state_hint(state: PalaceState, palace_path: &std::path::Path) -> bool {
+    match state {
+        PalaceState::Missing => {
+            println!("\n  No palace found at {}", palace_path.display());
+            println!("  Run: mpr init <dir>");
+            true
+        }
+        PalaceState::NotInitialized => {
+            println!(
+                "\n  Palace directory exists at {} but no data has been mined yet.",
+                palace_path.display()
+            );
+            println!("  Run: mpr mine <dir>");
+            true
+        }
+        PalaceState::Empty => {
+            println!(
+                "\n  Palace at {} has no drawers yet.",
+                palace_path.display()
+            );
+            println!("  Run: mpr mine <dir> to ingest content.");
+            true
+        }
+        PalaceState::Ready => false,
+    }
+}
+
 pub struct PalaceDb {
     documents: HashMap<String, DocumentEntry>,
     palace_path: PathBuf,
@@ -509,5 +596,51 @@ mod tests {
 
         let sim = naive_similarity("hello world", "completely different");
         assert!(sim < 0.1);
+    }
+
+    /// #1498 regression: a non-existent path classifies as `Missing`.
+    #[test]
+    fn test_classify_palace_missing_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("nope");
+        assert_eq!(classify_palace(&palace), PalaceState::Missing);
+    }
+
+    /// #1498 regression: directory exists but no collection JSON — the user
+    /// has run `init` but not `mine`. Hint must be `mpr mine`, not `mpr init`.
+    #[test]
+    fn test_classify_palace_not_initialized_when_dir_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+        assert_eq!(classify_palace(&palace), PalaceState::NotInitialized);
+    }
+
+    /// #1498 regression: collection JSON exists but parses to zero documents.
+    #[test]
+    fn test_classify_palace_empty_when_no_documents() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+        let mut db = PalaceDb::open(&palace).unwrap();
+        db.flush().unwrap();
+        assert_eq!(classify_palace(&palace), PalaceState::Empty);
+    }
+
+    /// #1498 regression: a palace with at least one drawer classifies as
+    /// `Ready` so the caller skips the actionable hint and prints stats.
+    #[test]
+    fn test_classify_palace_ready_when_documents_exist() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+        let mut db = PalaceDb::open(&palace).unwrap();
+        db.add(
+            &[("d1", "verbatim chunk")],
+            &[&[("wing", "people"), ("room", "today")]],
+        )
+        .unwrap();
+        db.flush().unwrap();
+        assert_eq!(classify_palace(&palace), PalaceState::Ready);
     }
 }

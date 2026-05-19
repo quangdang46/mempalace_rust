@@ -1,5 +1,5 @@
 use crate::bm25::{Bm25Params, Bm25Scorer};
-use crate::palace_db::{PalaceDb, QueryResult};
+use crate::palace_db::{self, PalaceDb, PalaceState, QueryResult};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +7,14 @@ use std::path::{Path, PathBuf};
 pub enum SearchError {
     #[error("No palace found at {0}")]
     NoPalace(String),
+    /// Palace dir exists but has not been mined yet — keeps the cause chain
+    /// distinct from `NoPalace` so callers can surface an actionable hint
+    /// instead of telling the user to re-run `init` (#1498).
+    #[error("Palace at {0} is not initialized yet")]
+    NotInitialized(String),
+    /// Palace dir + collection JSON exist but contain no drawers yet (#1498).
+    #[error("Palace at {0} has no drawers yet")]
+    Empty(String),
     #[error("Search error: {0}")]
     Query(String),
 }
@@ -123,8 +131,17 @@ pub async fn search_memories_with_rerank(
 ) -> anyhow::Result<SearchResponse> {
     let sanitized = crate::query_sanitizer::sanitize_query(query);
 
-    if !palace_path.exists() {
-        return Err(SearchError::NoPalace(palace_path.display().to_string()).into());
+    // #1498: stratify so the caller's error message tells the user the
+    // *next* step (init / mine) rather than a generic "no palace" hint that
+    // sends them back to `init` after `init` has already succeeded.
+    let path_str = palace_path.display().to_string();
+    match palace_db::classify_palace(palace_path) {
+        PalaceState::Missing => return Err(SearchError::NoPalace(path_str).into()),
+        PalaceState::NotInitialized => {
+            return Err(SearchError::NotInitialized(path_str).into());
+        }
+        PalaceState::Empty => return Err(SearchError::Empty(path_str).into()),
+        PalaceState::Ready => {}
     }
 
     let palace_db = PalaceDb::open(palace_path)
@@ -195,7 +212,18 @@ pub async fn search(
                     match search_error {
                         SearchError::NoPalace(path) => {
                             println!("\n  No palace found at {}", path);
-                            println!("  Run: mempalace init <dir> then mempalace mine <dir>");
+                            println!("  Run: mpr init <dir>");
+                        }
+                        SearchError::NotInitialized(path) => {
+                            println!(
+                                "\n  Palace directory exists at {} but no data has been mined yet.",
+                                path
+                            );
+                            println!("  Run: mpr mine <dir>");
+                        }
+                        SearchError::Empty(path) => {
+                            println!("\n  Palace at {} has no drawers yet.", path);
+                            println!("  Run: mpr mine <dir> to ingest content.");
                         }
                         SearchError::Query(message) => {
                             println!("\n  Search error: {}", message);
@@ -398,7 +426,60 @@ mod tests {
         let error = search_memories("anything", &missing, None, None, DEFAULT_N_RESULTS, None)
             .await
             .unwrap_err();
+        let downcast = error.downcast_ref::<SearchError>().unwrap();
+        assert!(matches!(downcast, SearchError::NoPalace(_)));
         assert!(error.to_string().contains("No palace found"));
+    }
+
+    /// #1498 regression: palace dir exists but no collection JSON — caller
+    /// must see `NotInitialized` (action: `mpr mine`), not a generic missing
+    /// palace error that suggests re-running `init`.
+    #[tokio::test]
+    async fn test_search_memories_palace_not_initialized_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace_path = temp.path().join("palace");
+        std::fs::create_dir_all(&palace_path).unwrap();
+        let error = search_memories(
+            "anything",
+            &palace_path,
+            None,
+            None,
+            DEFAULT_N_RESULTS,
+            None,
+        )
+        .await
+        .unwrap_err();
+        let downcast = error.downcast_ref::<SearchError>().unwrap();
+        assert!(
+            matches!(downcast, SearchError::NotInitialized(_)),
+            "expected NotInitialized, got {downcast:?}"
+        );
+    }
+
+    /// #1498 regression: collection JSON exists but no drawers were filed —
+    /// caller must see `Empty`, not `NoPalace`, so the hint is `mpr mine`.
+    #[tokio::test]
+    async fn test_search_memories_palace_empty_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace_path = temp.path().join("palace");
+        std::fs::create_dir_all(&palace_path).unwrap();
+        let mut db = PalaceDb::open(&palace_path).unwrap();
+        db.flush().unwrap();
+        let error = search_memories(
+            "anything",
+            &palace_path,
+            None,
+            None,
+            DEFAULT_N_RESULTS,
+            None,
+        )
+        .await
+        .unwrap_err();
+        let downcast = error.downcast_ref::<SearchError>().unwrap();
+        assert!(
+            matches!(downcast, SearchError::Empty(_)),
+            "expected Empty, got {downcast:?}"
+        );
     }
 
     #[tokio::test]
