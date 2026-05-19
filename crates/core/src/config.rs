@@ -87,6 +87,15 @@ fn expand_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+/// Lower-case + collapse separators (`-`, ` `) to `_` for wing slugs.
+///
+/// The same rule is applied by `init` when persisting `topics_by_wing` and
+/// when writing `mempalace.yaml`, so the miner's lookup matches at mine
+/// time regardless of the source dirname. (#1504)
+pub fn normalize_wing_name(name: &str) -> String {
+    name.to_lowercase().replace([' ', '-'], "_")
+}
+
 fn normalize_pathbuf(path: PathBuf) -> PathBuf {
     let absolute = if path.is_absolute() {
         path

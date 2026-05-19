@@ -210,8 +210,38 @@ impl PalaceDb {
     }
 
     pub fn file_already_mined(&self, source_file: &str, check_mtime: bool) -> bool {
+        self.file_already_mined_with_mode(source_file, check_mtime, None)
+    }
+
+    /// Extract-mode-aware variant of [`Self::file_already_mined`] (#1505).
+    ///
+    /// When `extract_mode` is `Some`, only drawers whose stored
+    /// `extract_mode` metadata matches the argument are considered. Legacy
+    /// drawers (no `extract_mode` field) are treated as `exchange`-mode so
+    /// pre-#1505 palaces still classify correctly.
+    pub fn file_already_mined_with_mode(
+        &self,
+        source_file: &str,
+        check_mtime: bool,
+        extract_mode: Option<&str>,
+    ) -> bool {
         let Some(entry) = self.documents.values().find(|entry| {
-            entry.metadata.get("source_file").and_then(|v| v.as_str()) == Some(source_file)
+            let same_source =
+                entry.metadata.get("source_file").and_then(|v| v.as_str()) == Some(source_file);
+            if !same_source {
+                return false;
+            }
+            match extract_mode {
+                None => true,
+                Some(want) => {
+                    let stored = entry.metadata.get("extract_mode").and_then(|v| v.as_str());
+                    match stored {
+                        Some(value) => value == want,
+                        // Legacy: unfielded rows are treated as exchange.
+                        None => want == "exchange",
+                    }
+                }
+            }
         }) else {
             return false;
         };

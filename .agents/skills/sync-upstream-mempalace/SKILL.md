@@ -18,7 +18,7 @@ gaps, and porting them safely.
 | `/home/ubuntu/repos/mempalace_rust` | Rust port — make all PRs here |
 | `/home/ubuntu/repos/mempalace_upstream` | Upstream Python — read-only reference |
 | `port.txt` (in the Rust repo) | Sync ledger: last reference commit + open gaps |
-| `.devin/skills/sync-upstream-mempalace/SKILL.md` | This skill |
+| `.agents/skills/sync-upstream-mempalace/SKILL.md` | This skill |
 
 The Python repo lives at `https://github.com/milla-jovovich/mempalace`. The
 Rust port lives at `https://github.com/quangdang46/mempalace_rust`.

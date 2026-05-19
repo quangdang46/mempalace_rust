@@ -258,22 +258,38 @@ impl EntityRegistry {
             .and_then(|s| s.to_str())
             .unwrap_or("entity_registry.json");
         let tmp_path = parent.join(format!("{file_name}.tmp"));
-        {
-            let mut tmp = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&tmp_path)?;
-            tmp.write_all(content.as_bytes())?;
-            tmp.flush()?;
-            tmp.sync_all()?;
+
+        // #1373: clean up the .tmp sidecar on any write/rename failure. The
+        // previous registry stays intact because the rename is atomic on
+        // POSIX/NTFS, but leaving a stale .tmp behind litters the palace
+        // directory and confuses diagnostics. Wrap the whole write+chmod+
+        // replace block in a closure; on any error, attempt to unlink the
+        // temp file before propagating. The parent dir fsync is deliberately
+        // outside this block — it is durability for a successful rename, not
+        // a write step that needs cleanup.
+        let write_result = (|| -> anyhow::Result<()> {
+            {
+                let mut tmp = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&tmp_path)?;
+                tmp.write_all(content.as_bytes())?;
+                tmp.flush()?;
+                tmp.sync_all()?;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
+            }
+            std::fs::rename(&tmp_path, &self.path)?;
+            Ok(())
+        })();
+        if let Err(err) = write_result {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(err);
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
-        }
-        std::fs::rename(&tmp_path, &self.path)?;
 
         // fsync the parent directory so the rename is durable across crashes
         // on ext4 and similar filesystems (#1215 follow-up 2e441d1). Without
@@ -1259,6 +1275,26 @@ mod tests {
         let loaded: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(loaded.get("people").and_then(|v| v.get("Bob")).is_some());
+    }
+
+    #[test]
+    fn test_save_cleans_tmp_on_rename_failure() {
+        // #1373: when the atomic rename fails (here forced by replacing the
+        // target with a directory at the destination) the .tmp sidecar must
+        // be cleaned up so it does not litter the palace directory on
+        // subsequent runs.
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let path = temp_dir.path().join("registry.json");
+        let registry = EntityRegistry::load(&path).unwrap();
+        // Plant a directory at the target so rename(.tmp, target) fails on
+        // every supported platform.
+        std::fs::create_dir_all(&path).unwrap();
+        let err = registry.save().expect_err("rename onto a dir must fail");
+        let tmp_path = temp_dir.path().join("registry.json.tmp");
+        assert!(
+            !tmp_path.exists(),
+            "atomic save must unlink the .tmp sidecar on failure (err: {err:?})"
+        );
     }
 
     #[cfg(unix)]

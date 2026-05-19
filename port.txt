@@ -280,4 +280,83 @@ New deferred work (not ported here):
 
 2. CHANGELOG / docs polish around the same chunk-size feature (`68dc1bf`).
 
-This file is the current gap ledger for the `bb31396` reference state.
+
+Sync update — upstream develop `1b94f4e` (2026-05-19)
+=====================================================
+
+Followed `.agents/skills/sync-upstream-mempalace/SKILL.md`. Diffed upstream
+`bb31396..1b94f4e` (~60 non-merge commits) and ported the highest-priority
+correctness fixes below. Also: cleaned up leftover benchmark/plan files,
+moved the sync skill from `.devin/skills/` to `.agents/skills/`, and
+refreshed the VitePress website to the upstream Crystal-Lattice landing page.
+
+Ported in this session
+----------------------
+
+1. `mempalace/entity_registry.py` `e6f7398` (#1373) — clean up the `.tmp`
+   sidecar file on any write/rename failure during atomic save. Previously
+   a disk-full or perms-flip error left stale `.tmp` debris in the palace
+   directory.
+   - Rust: `crates/core/src/entity_registry.rs::save` — the write+chmod+
+     rename block is wrapped in a closure; on error the `.tmp` is unlinked
+     before propagating. Regression test
+     `test_save_cleans_tmp_on_rename_failure`.
+
+2. `mempalace/convo_miner.py` `92de001` (#1505) — scope `file_already_mined`
+   and drawer IDs by `extract_mode` so mining the same transcript with
+   `--extract general` after `exchange` (or vice versa) is no longer silently
+   skipped. Legacy drawers without `extract_mode` are treated as exchange-mode
+   for back-compat.
+   - Rust: `crates/core/src/palace_db.rs::file_already_mined_with_mode`,
+     `crates/core/src/convo_miner.rs::generate_drawer_id` (now folds
+     `extract_mode` into hash input).
+
+3. `mempalace/palace_graph.py` `fba6372` (#1504) — preserve hyphenated wing
+   slugs in `create_tunnel` write-path. `list_tunnels` now normalizes both
+   the stored and queried wing names at read-time so legacy underscore data
+   and post-fix verbatim data both resolve via either query form.
+   `compute_topic_tunnels` canonicalizes wing keys to prevent duplicate
+   tunnels.
+   - Rust: new `config::normalize_wing_name` helper, new
+     `palace_graph::_normalize_wing`. `list_tunnels` and
+     `compute_topic_tunnels` updated.
+
+4. `mempalace/convo_miner.py` `3cac26f` (#1534) — enforce `CHUNK_SIZE` in
+   `chunk_by_paragraph` and its line-group fallback. A single oversized
+   paragraph (e.g. a 135 KB Claude Code paste) was emitted as one giant drawer,
+   blowing the embedding model's attention budget.
+   - Rust: new `emit_bounded` helper (char-boundary-safe slicing), wired
+     into `chunk_by_paragraph` and `chunk_by_exchange`. Constants
+     `CHUNK_SIZE`, `LINE_GROUP_SIZE`, `LINE_FALLBACK_MIN_NEWLINES` added.
+
+Not ported (Rust N/A)
+---------------------
+
+- `#1426` (`afaedc6`) — tolerate None metadata cells. Python-specific:
+  Rust's typed `HashMap<String, Value>` is never None.
+- `#1473` (`3e92719`) — surface `create_tunnel` ValueError. Rust port has
+  no `tool_create_tunnel` MCP endpoint; `create_tunnel` takes `&str` refs.
+- `#1498` (`c933095`) — stratify state messages for empty/missing palace.
+  UI-only cosmetic change.
+- `#1495` (`cf96e68`) — cold-start embedder diagnostics. Python ChromaDB-
+  specific; Rust uses `edgebert`/`embedvec` with different startup path.
+- `#1372` (`6f9fe80`) — canonicalize KG cache key via realpath. Python-
+  specific import cache.
+- `3da27d3` — VACUUM + FTS5 rebuild after repair. Python ChromaDB-specific.
+
+Remaining gaps after this sync
+------------------------------
+
+Carried forward unchanged: gitignore-aware drawer prune, LLM-assisted
+init / CLI flags, hook/doc/i18n sync, broader test parity.
+
+Closed by this sync: palace-graph cache invalidation — `_normalize_wing`
+and `list_tunnels` now use normalized comparison; `compute_topic_tunnels`
+canonicalizes wing keys.
+
+New deferred work:
+
+1. (Carried forward) Configurable chunk sizes CLI plumbing.
+2. (Carried forward) CHANGELOG / docs polish.
+
+This file is the current gap ledger for the `1b94f4e` reference state.

@@ -9,6 +9,9 @@ use walkdir::WalkDir;
 
 const CONVO_EXTENSIONS: &[&str] = &["txt", "md", "json", "jsonl"];
 const MIN_CHUNK_SIZE: usize = 30;
+const CHUNK_SIZE: usize = 800;
+const LINE_GROUP_SIZE: usize = 25;
+const LINE_FALLBACK_MIN_NEWLINES: usize = 20;
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 const SKIP_DIRS: &[&str] = &[
     ".git",
@@ -175,7 +178,15 @@ pub async fn mine_conversations(
         if !dry_run
             && db
                 .as_ref()
-                .map(|db| db.file_already_mined(&source_file, false))
+                .map(|db| {
+                    // #1505: scope the skip-check by extract_mode. Mining a
+                    // transcript with --extract general after exchange (or
+                    // vice versa) used to be silently a no-op because the
+                    // check only looked at source_file. Legacy drawers
+                    // without an extract_mode field are treated as
+                    // exchange-mode for back-compat.
+                    db.file_already_mined_with_mode(&source_file, false, Some(extract_mode))
+                })
                 .unwrap_or(false)
         {
             files_skipped += 1;
@@ -292,7 +303,13 @@ pub async fn mine_conversations(
             .zip(chunk_rooms.iter())
             .map(|(chunk, chunk_room)| {
                 (
-                    generate_drawer_id(&wing, chunk_room, &source_file, chunk.chunk_index),
+                    generate_drawer_id(
+                        &wing,
+                        chunk_room,
+                        &source_file,
+                        chunk.chunk_index,
+                        extract_mode,
+                    ),
                     chunk.content.clone(),
                 )
             })
@@ -419,8 +436,24 @@ impl ExpandUser for Path {
     }
 }
 
-fn generate_drawer_id(wing: &str, room: &str, source_file: &str, chunk_index: usize) -> String {
-    let input = format!("{}{}", source_file, chunk_index);
+fn generate_drawer_id(
+    wing: &str,
+    room: &str,
+    source_file: &str,
+    chunk_index: usize,
+    extract_mode: &str,
+) -> String {
+    // #1505: fold extract_mode into the hash input so the same chunk_index
+    // of the same source file produces a different drawer id under
+    // `general` vs `exchange`, letting both modes coexist for one source.
+    // `exchange` is folded as the empty string for back-compat with
+    // pre-#1505 drawer ids.
+    let mode_suffix = if extract_mode == "exchange" {
+        ""
+    } else {
+        extract_mode
+    };
+    let input = format!("{}{}{}", source_file, chunk_index, mode_suffix);
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     let hex = hex::encode(hasher.finalize());
@@ -543,13 +576,7 @@ fn chunk_by_exchange(lines: &[&str]) -> Vec<Chunk> {
                 format!("{}\n{}", user_turn, ai_response)
             };
 
-            if chunk_content.trim().len() > MIN_CHUNK_SIZE {
-                chunks.push(Chunk {
-                    content: chunk_content,
-                    chunk_index: chunks.len(),
-                    memory_type: None,
-                });
-            }
+            emit_bounded(&mut chunks, &chunk_content, CHUNK_SIZE, MIN_CHUNK_SIZE);
         } else {
             index += 1;
         }
@@ -558,45 +585,75 @@ fn chunk_by_exchange(lines: &[&str]) -> Vec<Chunk> {
     chunks
 }
 
+/// Append `content` as one or more drawers, none exceeding `chunk_size`.
+///
+/// The `min_chunk_size` floor gates the WHOLE call (drops the input if
+/// its stripped length is at or below the floor, treated as noise). Once
+/// the input passes the floor, every slice is emitted verbatim so a small
+/// trailing remainder is preserved instead of silently dropped. Splits
+/// are snapped to UTF-8 char boundaries so chunk content stays valid UTF-8
+/// (the same defensive snap miner.rs uses).
+///
+/// Ports upstream `_emit_bounded` introduced in `3cac26f` (#1534).
+fn emit_bounded(chunks: &mut Vec<Chunk>, content: &str, chunk_size: usize, min_chunk_size: usize) {
+    if content.trim().len() <= min_chunk_size {
+        return;
+    }
+    let bytes = content.len();
+    let mut start = 0;
+    while start < bytes {
+        let mut end = (start + chunk_size).min(bytes);
+        // Snap to a valid char boundary so we never split a multi-byte
+        // UTF-8 sequence in half.
+        while end > start && !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == start {
+            // Pathological case where a single multi-byte code point is
+            // larger than chunk_size; expand forward to the next boundary
+            // so we emit at least one well-formed slice rather than loop.
+            end = start + 1;
+            while end < bytes && !content.is_char_boundary(end) {
+                end += 1;
+            }
+        }
+        let slice = &content[start..end];
+        chunks.push(Chunk {
+            content: slice.to_string(),
+            chunk_index: chunks.len(),
+            memory_type: None,
+        });
+        start = end;
+    }
+}
+
 fn chunk_by_paragraph(content: &str) -> Vec<Chunk> {
+    let mut chunks: Vec<Chunk> = Vec::new();
     let paragraphs: Vec<String> = content
         .split("\n\n")
         .map(|paragraph| paragraph.trim().to_string())
         .filter(|paragraph| !paragraph.is_empty())
         .collect();
 
-    if paragraphs.len() <= 1 && content.lines().count() > 20 {
-        return content
-            .lines()
-            .collect::<Vec<_>>()
-            .chunks(25)
-            .filter_map(|group| {
-                let text = group.join("\n").trim().to_string();
-                if text.len() > MIN_CHUNK_SIZE {
-                    Some(text)
-                } else {
-                    None
-                }
-            })
-            .enumerate()
-            .map(|(chunk_index, content)| Chunk {
-                content,
-                chunk_index,
-                memory_type: None,
-            })
-            .collect();
+    // #1534: enforce CHUNK_SIZE on the line-group fallback. A normalized
+    // transcript containing a single >CHUNK_SIZE paragraph (e.g. Claude
+    // Code with pasted content as one 135 KB line) used to be appended as
+    // a single drawer, and ChromaDB's embedding step then exploded on the
+    // O(seq_len^2) attention budget. Delegate slicing to emit_bounded.
+    if paragraphs.len() <= 1 && content.matches('\n').count() > LINE_FALLBACK_MIN_NEWLINES {
+        let lines: Vec<&str> = content.split('\n').collect();
+        for group in lines.chunks(LINE_GROUP_SIZE) {
+            let text = group.join("\n");
+            let trimmed = text.trim();
+            emit_bounded(&mut chunks, trimmed, CHUNK_SIZE, MIN_CHUNK_SIZE);
+        }
+        return chunks;
     }
 
-    paragraphs
-        .into_iter()
-        .filter(|paragraph| paragraph.len() > MIN_CHUNK_SIZE)
-        .enumerate()
-        .map(|(chunk_index, content)| Chunk {
-            content,
-            chunk_index,
-            memory_type: None,
-        })
-        .collect()
+    for paragraph in paragraphs {
+        emit_bounded(&mut chunks, &paragraph, CHUNK_SIZE, MIN_CHUNK_SIZE);
+    }
+    chunks
 }
 
 fn detect_convo_room(content: &str) -> String {

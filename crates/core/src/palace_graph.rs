@@ -22,6 +22,19 @@ fn _normalize_topic(name: &str) -> String {
     name.trim().to_lowercase()
 }
 
+/// Normalize a wing name for consistent lookup (#1504).
+///
+/// `init` stores wing names with hyphens/spaces collapsed to underscores.
+/// Callers that pass the raw directory name (`mempalace-public`) would
+/// silently miss. This helper aligns the lookup key with stored metadata.
+fn _normalize_wing(wing: &str) -> Option<String> {
+    let w = wing.trim();
+    if w.is_empty() {
+        return None;
+    }
+    Some(crate::config::normalize_wing_name(w))
+}
+
 fn _tunnel_file() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -142,7 +155,11 @@ pub fn compute_topic_tunnels(
             }
         }
         if !bucket.is_empty() {
-            wing_topics.insert(wing.trim().to_string(), bucket);
+            // #1504: canonicalize wing keys so repeated mining runs with
+            // mixed slug forms (hyphen vs underscore) cannot accumulate
+            // parallel duplicate tunnels.
+            let canon = crate::config::normalize_wing_name(wing.trim());
+            wing_topics.entry(canon).or_default().extend(bucket);
         }
     }
 
@@ -189,10 +206,19 @@ pub fn compute_topic_tunnels(
 pub fn list_tunnels(wing: Option<&str>) -> Vec<ExplicitTunnel> {
     let tunnels = _load_tunnels();
     match wing {
-        Some(w) => tunnels
-            .into_iter()
-            .filter(|t| t.source_wing == w || t.target_wing == w)
-            .collect(),
+        Some(w) => {
+            // #1504: normalize both the query and stored wing names at read
+            // time so legacy underscore tunnels and post-fix verbatim tunnels
+            // both resolve via either form.
+            let norm = _normalize_wing(w);
+            tunnels
+                .into_iter()
+                .filter(|t| {
+                    _normalize_wing(&t.source_wing) == norm
+                        || _normalize_wing(&t.target_wing) == norm
+                })
+                .collect()
+        }
         None => tunnels,
     }
 }

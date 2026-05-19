@@ -828,7 +828,7 @@ Plain text. Becomes Layer 0 — loaded every session.
 
 This is a Rust port of the [original Python MemPalace](https://github.com/milla-jovovich/mempalace). The port brings single-binary distribution, faster performance, and native cross-platform support.
 
-**Status: Complete** — All core modules implemented, 367 tests passing, CI green on ubuntu/macos/windows.
+**Status: Complete** — All core modules implemented, 426 tests passing, CI green on ubuntu/macos/windows.
 
 ### Implementation Progress
 
@@ -868,7 +868,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | Security hardening | ✅ Done | Input validation, read-only MCP mode (`MEMPALACE_READONLY`), no error leaks |
 | MCP best practices | ✅ Done | Tool annotations, structured output, actionable errors |
 | CI/CD + `install.sh` + MCP auto-install | ✅ Done | fmt+clippy+test on 3-OS, curl-pipe installer, auto-detect 9 AI tool providers |
-| Test suite | ✅ Done | 367 tests passing |
+| Test suite | ✅ Done | 426 tests passing |
 
 #### Upstream PRs & Enhancements (merged into Rust)
 
@@ -895,6 +895,10 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | Aider chat history support | upstream | ✅ Done | `try_aider_md` parser |
 | Continue.dev support | PR #731 | ✅ Done | normalize.py continues support |
 | KG self-heal on reconnect | PR #725 | ✅ Done | Schema recreation on reconnect |
+| Entity registry `.tmp` cleanup on failure | Upstream #1373 | ✅ Done | Atomic save cleans stale `.tmp` sidecar on write/rename error |
+| Extract-mode-aware skip-check | Upstream #1505 | ✅ Done | `file_already_mined` + drawer IDs scoped by `extract_mode` |
+| Hyphenated wing slug preservation | Upstream #1504 | ✅ Done | `list_tunnels` + `compute_topic_tunnels` normalize both sides |
+| `CHUNK_SIZE` enforcement in paragraph chunker | Upstream #1534 | ✅ Done | `emit_bounded` helper slices oversized paragraphs/line-groups |
 
 #### Community Issues (fixed in Rust)
 
