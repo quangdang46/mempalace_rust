@@ -1006,7 +1006,14 @@ pub async fn mine(
     wing_override: Option<&str>,
     exclude_patterns: Option<&[String]>,
 ) -> anyhow::Result<MiningResult> {
-    mine_with_options(project_dir, palace_path, wing_override, exclude_patterns, None).await
+    mine_with_options(
+        project_dir,
+        palace_path,
+        wing_override,
+        exclude_patterns,
+        None,
+    )
+    .await
 }
 
 /// Same as `mine` but accepts an explicit per-file chunk cap override.
@@ -1028,8 +1035,8 @@ pub async fn mine_with_options(
         rooms
     };
 
-    let mut miner = Miner::new(palace_path, wing, rooms_to_use)?
-        .with_max_chunks_per_file(max_chunks_per_file);
+    let mut miner =
+        Miner::new(palace_path, wing, rooms_to_use)?.with_max_chunks_per_file(max_chunks_per_file);
 
     let file_paths = scan_project(project_dir, true, exclude_patterns);
     let mut files_processed = 0;
