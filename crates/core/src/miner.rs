@@ -121,16 +121,64 @@ static SKIP_FILES: &[&str] = &[
     "yarn.lock",
 ];
 
-/// Cap on chunks produced from a single file.
+/// Default cap on chunks produced from a single file.
 ///
-/// A file producing more than this is almost always a generated artifact
-/// (CSV/JSON dump, lockfile not in `SKIP_FILES`, etc.). Embedding
-/// thousands of chunks from one file in one batch has triggered ONNX
-/// runtime `bad allocation` errors on Windows (upstream mempalace
-/// `5488e7b`, #1296). The cap is conservative: a 500-chunk file at
-/// `CHUNK_SIZE` (800 chars) is ~400 KB of source, which covers most
-/// legitimate hand-written content while bounding the worst-case batch.
-const MAX_CHUNKS_PER_FILE: usize = 500;
+/// A safety rail against pathological generated artifacts (lockfiles
+/// not in `SKIP_FILES`, vendored data dumps, etc.). Originally 500 to
+/// bound ONNX runtime `bad allocation` errors on Windows (upstream
+/// mempalace `5488e7b`, #1296), but at `CHUNK_SIZE` (800 chars) that
+/// capped legitimate long-form content (full-text scholarly editions,
+/// novels — upstream #1455) at ~400 KB. The new default leaves two
+/// orders of magnitude of safety margin against the original lockfile
+/// case while not touching hand-written prose. Override via
+/// `MEMPALACE_MAX_CHUNKS_PER_FILE` env var, the `--max-chunks-per-file`
+/// CLI flag, or by constructing a `Miner` with `with_max_chunks_per_file`.
+/// Set to 0 (from any source) to disable the cap entirely.
+const MAX_CHUNKS_PER_FILE: usize = 50_000;
+
+/// Skip reason returned by `Miner::mine_file` so callers can surface
+/// chunk-cap drops in mine summaries independently of the residual
+/// already-filed / unreadable / too-short bucket. Mirrors upstream
+/// mempalace's `skip_reason` tuple field added in #1455.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// File produced more than the configured `MAX_CHUNKS_PER_FILE`.
+    ChunkCap,
+}
+
+/// Resolve the effective per-file chunk cap.
+///
+/// Precedence: explicit `override_value` (e.g. the `--max-chunks-per-file`
+/// CLI flag) > `MEMPALACE_MAX_CHUNKS_PER_FILE` env var > the module-level
+/// `MAX_CHUNKS_PER_FILE` default. A sentinel value of `0` (from any
+/// source) disables the cap entirely. Negative or non-numeric values
+/// from the env var emit a stderr warning and fall back to the default,
+/// matching upstream's behavior so a misconfigured
+/// `MEMPALACE_MAX_CHUNKS_PER_FILE=-500` typo does not silently disable
+/// the cap and OOM on a generated artifact (upstream mempalace #1455).
+pub fn resolve_max_chunks_per_file(override_value: Option<usize>) -> usize {
+    if let Some(v) = override_value {
+        return v;
+    }
+    match std::env::var("MEMPALACE_MAX_CHUNKS_PER_FILE") {
+        Ok(raw) => match raw.trim().parse::<i64>() {
+            Ok(val) if val < 0 => {
+                eprintln!(
+                    "  ! WARNING: MEMPALACE_MAX_CHUNKS_PER_FILE={raw:?} is negative; using default {MAX_CHUNKS_PER_FILE}"
+                );
+                MAX_CHUNKS_PER_FILE
+            }
+            Ok(val) => val as usize,
+            Err(_) => {
+                eprintln!(
+                    "  ! WARNING: MEMPALACE_MAX_CHUNKS_PER_FILE={raw:?} is not an integer; using default {MAX_CHUNKS_PER_FILE}"
+                );
+                MAX_CHUNKS_PER_FILE
+            }
+        },
+        Err(_) => MAX_CHUNKS_PER_FILE,
+    }
+}
 
 #[derive(Debug, Clone)]
 struct GitignoreRule {
@@ -560,17 +608,26 @@ fn scan_project_with_log<W: Write>(
     files
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MiningResult {
     pub files_processed: usize,
     pub chunks_created: usize,
     pub errors: Vec<String>,
+    /// Files dropped because they exceeded the per-file chunk cap.
+    /// Surfaced separately from any other skip path so a corpus audit
+    /// can tell chunk-cap drops apart from "already filed / read error"
+    /// (upstream mempalace #1455).
+    pub files_skipped_chunk_cap: usize,
 }
 
 pub struct Miner {
     palace_db: PalaceDb,
     wing: String,
     rooms: Vec<RoomMapping>,
+    /// Per-Miner override for the chunk cap. `None` falls back to
+    /// `MEMPALACE_MAX_CHUNKS_PER_FILE` then the module default. `Some(0)`
+    /// disables the cap entirely (upstream mempalace #1455).
+    max_chunks_per_file: Option<usize>,
 }
 
 impl Miner {
@@ -580,7 +637,16 @@ impl Miner {
             palace_db,
             wing: wing.to_string(),
             rooms,
+            max_chunks_per_file: None,
         })
+    }
+
+    /// Override the per-file chunk cap for this `Miner`. `Some(0)`
+    /// disables the cap entirely; `None` falls back to the env var
+    /// (`MEMPALACE_MAX_CHUNKS_PER_FILE`) and then the module default.
+    pub fn with_max_chunks_per_file(mut self, override_value: Option<usize>) -> Self {
+        self.max_chunks_per_file = override_value;
+        self
     }
 
     fn is_readable_file(path: &Path) -> bool {
@@ -753,11 +819,20 @@ impl Miner {
         format!("drawer_{}_{}_{}", wing, room, &hex_str[..24])
     }
 
-    pub async fn mine_file(&mut self, filepath: &Path) -> anyhow::Result<usize> {
+    /// Mine one file. Returns `(chunks_added, skip_reason)`. `skip_reason`
+    /// is `None` on success and on every non-chunk-cap skip path (already
+    /// filed, unreadable, too short, chunker empty); it is
+    /// `Some(SkipReason::ChunkCap)` when the per-file chunk cap aborted
+    /// the file. Callers use the tag to surface a separate counter in
+    /// the mine summary (upstream mempalace #1455).
+    pub async fn mine_file(
+        &mut self,
+        filepath: &Path,
+    ) -> anyhow::Result<(usize, Option<SkipReason>)> {
         let source_file = filepath.to_string_lossy().to_string();
 
         if self.palace_db.file_already_mined(&source_file, true) {
-            return Ok(0);
+            return Ok((0, None));
         }
 
         let source_mtime = std::fs::metadata(filepath)
@@ -768,37 +843,41 @@ impl Miner {
 
         let content = match std::fs::read_to_string(filepath) {
             Ok(c) => c,
-            Err(_) => return Ok(0),
+            Err(_) => return Ok((0, None)),
         };
 
         let content = content.trim();
         if content.len() < MIN_CHUNK_SIZE {
-            return Ok(0);
+            return Ok((0, None));
         }
 
         let room = self.detect_room(filepath, content);
         let chunks = self.chunk_text(content, &source_file);
 
         if chunks.is_empty() {
-            return Ok(0);
+            return Ok((0, None));
         }
 
-        if chunks.len() > MAX_CHUNKS_PER_FILE {
-            // Catches the broader class of generated artifacts (CSV/JSON
-            // dumps, build outputs, lockfiles not yet in `SKIP_FILES`)
-            // that the named-file list will never fully cover.
+        let effective_cap = resolve_max_chunks_per_file(self.max_chunks_per_file);
+        if effective_cap > 0 && chunks.len() > effective_cap {
+            // Skip notice goes to stderr (upstream mempalace #1455) so
+            // `mpr mine ... > out.log 2> err.log` piping stays coherent:
+            // degraded outcomes on stderr, progress on stdout. Raised
+            // default (50,000) means hand-written long-form content no
+            // longer trips the cap; the env var / CLI flag exist for
+            // operators who need a lower bound on Windows ONNX builds.
             let display = filepath
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| source_file.clone());
             let truncated: String = display.chars().take(50).collect();
-            println!(
-                "  ! [skip] {:<50} produced {} chunks (> {}); add to SKIP_FILES or .gitignore",
+            eprintln!(
+                "  ! [skip] {:<50} produced {} chunks (> {}); raise via --max-chunks-per-file or MEMPALACE_MAX_CHUNKS_PER_FILE (set 0 to disable), or add to SKIP_FILES if this is a generated artifact",
                 truncated,
                 chunks.len(),
-                MAX_CHUNKS_PER_FILE
+                effective_cap
             );
-            return Ok(0);
+            return Ok((0, Some(SkipReason::ChunkCap)));
         }
 
         let chunks_added = chunks.len();
@@ -843,7 +922,7 @@ impl Miner {
 
         self.palace_db.add(&ids_and_docs, &metadata_refs)?;
 
-        Ok(chunks_added)
+        Ok((chunks_added, None))
     }
 
     pub async fn scan_and_mine(&mut self, project_dir: &Path) -> MiningResult {
@@ -852,14 +931,18 @@ impl Miner {
         // Sequential processing (parallelization requires mutable borrow of palace_db)
         let mut files_processed = 0;
         let mut chunks_created = 0;
+        let mut files_skipped_chunk_cap = 0;
         let mut errors = Vec::new();
 
         for filepath in file_paths {
             match self.mine_file(&filepath).await {
-                Ok(count) => {
+                Ok((count, skip_reason)) => {
                     if count > 0 {
                         files_processed += 1;
                         chunks_created += count;
+                    }
+                    if skip_reason == Some(SkipReason::ChunkCap) {
+                        files_skipped_chunk_cap += 1;
                     }
                 }
                 Err(e) => {
@@ -875,6 +958,7 @@ impl Miner {
             files_processed,
             chunks_created,
             errors,
+            files_skipped_chunk_cap,
         }
     }
 }
@@ -922,6 +1006,19 @@ pub async fn mine(
     wing_override: Option<&str>,
     exclude_patterns: Option<&[String]>,
 ) -> anyhow::Result<MiningResult> {
+    mine_with_options(project_dir, palace_path, wing_override, exclude_patterns, None).await
+}
+
+/// Same as `mine` but accepts an explicit per-file chunk cap override.
+/// `None` defers to `MEMPALACE_MAX_CHUNKS_PER_FILE` then the module default;
+/// `Some(0)` disables the cap entirely (upstream mempalace #1455).
+pub async fn mine_with_options(
+    project_dir: &Path,
+    palace_path: &Path,
+    wing_override: Option<&str>,
+    exclude_patterns: Option<&[String]>,
+    max_chunks_per_file: Option<usize>,
+) -> anyhow::Result<MiningResult> {
     let (wing, rooms) = load_config(project_dir)?;
     let wing = wing_override.unwrap_or(&wing);
 
@@ -931,19 +1028,24 @@ pub async fn mine(
         rooms
     };
 
-    let mut miner = Miner::new(palace_path, wing, rooms_to_use)?;
+    let mut miner = Miner::new(palace_path, wing, rooms_to_use)?
+        .with_max_chunks_per_file(max_chunks_per_file);
 
     let file_paths = scan_project(project_dir, true, exclude_patterns);
     let mut files_processed = 0;
     let mut chunks_created = 0;
+    let mut files_skipped_chunk_cap = 0;
     let mut errors = Vec::new();
 
     for filepath in file_paths {
         match miner.mine_file(&filepath).await {
-            Ok(count) => {
+            Ok((count, skip_reason)) => {
                 if count > 0 {
                     files_processed += 1;
                     chunks_created += count;
+                }
+                if skip_reason == Some(SkipReason::ChunkCap) {
+                    files_skipped_chunk_cap += 1;
                 }
             }
             Err(e) => errors.push(format!("Error mining {:?}: {}", filepath, e)),
@@ -956,6 +1058,7 @@ pub async fn mine(
         files_processed,
         chunks_created,
         errors,
+        files_skipped_chunk_cap,
     })
 }
 
@@ -1031,8 +1134,9 @@ mod tests {
         }];
 
         let mut miner = Miner::new(&palace, "wing", rooms.clone()).unwrap();
-        let first = miner.mine_file(&file).await.unwrap();
+        let (first, skip) = miner.mine_file(&file).await.unwrap();
         assert!(first > 0);
+        assert_eq!(skip, None);
         miner.palace_db.flush().unwrap();
 
         let remine = Miner::new(&palace, "wing", rooms).unwrap();
@@ -1041,8 +1145,9 @@ mod tests {
             .file_already_mined(&file.to_string_lossy(), true));
 
         let mut remine = remine;
-        let second = remine.mine_file(&file).await.unwrap();
+        let (second, skip) = remine.mine_file(&file).await.unwrap();
         assert_eq!(second, 0);
+        assert_eq!(skip, None);
     }
 
     #[test]
@@ -1509,20 +1614,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_mine_file_skips_when_chunks_exceed_cap() {
-        // A file that would produce > MAX_CHUNKS_PER_FILE chunks should be
-        // skipped with a warning instead of triggering a worst-case batch
-        // through the embedder. Mirrors upstream mempalace 5488e7b (#1296).
+        // A file that would produce > cap chunks should be skipped with a
+        // warning instead of triggering a worst-case batch through the
+        // embedder. Mirrors upstream mempalace 5488e7b (#1296). Uses an
+        // explicit low cap so the fixture stays small under the raised
+        // default introduced by upstream #1455.
         let temp = tempfile::TempDir::new().unwrap();
         let palace = temp.path().join("palace");
         let file = temp.path().join("generated.csv");
 
         // Build a payload with enough non-overlapping chunks to exceed the
-        // cap. Each chunk needs >= MIN_CHUNK_SIZE chars and the chunker
-        // splits on `\n\n`, so we emit (MAX_CHUNKS_PER_FILE + 50) blocks
+        // low test cap. Each chunk needs >= MIN_CHUNK_SIZE chars and the
+        // chunker splits on `\n\n`, so we emit `test_cap + 50` blocks
         // separated by blank lines.
+        let test_cap = 50usize;
         let block = "lorem ipsum dolor sit amet consectetur adipiscing elit ";
         let mut payload = String::new();
-        for _ in 0..(MAX_CHUNKS_PER_FILE + 50) {
+        for _ in 0..(test_cap + 50) {
             payload.push_str(&block.repeat(20));
             payload.push_str("\n\n");
         }
@@ -1533,26 +1641,109 @@ mod tests {
             description: "General".to_string(),
             keywords: vec![],
         }];
-        let mut miner = Miner::new(&palace, "wing", rooms).unwrap();
+        let mut miner = Miner::new(&palace, "wing", rooms)
+            .unwrap()
+            .with_max_chunks_per_file(Some(test_cap));
 
-        // Sanity: the chunker really would emit > MAX_CHUNKS_PER_FILE
-        // before the cap kicks in.
+        // Sanity: the chunker really would emit > cap before the cap
+        // kicks in.
         let raw_chunks = miner.chunk_text(payload.trim(), "generated.csv");
         assert!(
-            raw_chunks.len() > MAX_CHUNKS_PER_FILE,
+            raw_chunks.len() > test_cap,
             "fixture should exceed cap; produced {}",
             raw_chunks.len()
         );
 
-        let added = miner.mine_file(&file).await.unwrap();
+        let (added, skip) = miner.mine_file(&file).await.unwrap();
         assert_eq!(
             added, 0,
             "files exceeding chunk cap should not be filed (got {added})"
+        );
+        assert_eq!(
+            skip,
+            Some(SkipReason::ChunkCap),
+            "skip_reason should be ChunkCap so callers can account chunk-cap drops separately (#1455)"
         );
 
         // No drawers should have been added to the palace.
         miner.palace_db.flush().unwrap();
         assert_eq!(miner.palace_db.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mine_file_zero_cap_disables_check() {
+        // Sentinel value 0 disables the cap entirely (upstream mempalace
+        // #1455). A long-form file that would have tripped a low cap should
+        // be filed when `with_max_chunks_per_file(Some(0))` is used.
+        let temp = tempfile::TempDir::new().unwrap();
+        let palace = temp.path().join("palace");
+        let file = temp.path().join("novel.txt");
+
+        let block = "lorem ipsum dolor sit amet consectetur adipiscing elit ";
+        let mut payload = String::new();
+        for _ in 0..60 {
+            payload.push_str(&block.repeat(20));
+            payload.push_str("\n\n");
+        }
+        std::fs::write(&file, &payload).unwrap();
+
+        let rooms = vec![RoomMapping {
+            name: "general".to_string(),
+            description: "General".to_string(),
+            keywords: vec![],
+        }];
+        let mut miner = Miner::new(&palace, "wing", rooms)
+            .unwrap()
+            .with_max_chunks_per_file(Some(0));
+
+        let (added, skip) = miner.mine_file(&file).await.unwrap();
+        assert!(
+            added > 0,
+            "cap=0 disables chunk-cap check; file should be filed"
+        );
+        assert_eq!(skip, None);
+    }
+
+    #[test]
+    fn test_resolve_max_chunks_per_file_default() {
+        // Unset the env var to exercise the module-default path
+        // deterministically regardless of how the test binary was launched.
+        // SAFETY: tests in this module are not parallelized against env var
+        // reads here, and the var is restored after the assertion.
+        let prev = std::env::var("MEMPALACE_MAX_CHUNKS_PER_FILE").ok();
+        // SAFETY: Single-threaded test process; restore below.
+        unsafe {
+            std::env::remove_var("MEMPALACE_MAX_CHUNKS_PER_FILE");
+        }
+        assert_eq!(
+            resolve_max_chunks_per_file(None),
+            MAX_CHUNKS_PER_FILE,
+            "unset env + no override should yield module default"
+        );
+        if let Some(v) = prev {
+            unsafe {
+                std::env::set_var("MEMPALACE_MAX_CHUNKS_PER_FILE", v);
+            }
+        }
+    }
+
+    #[test]
+    fn test_resolve_max_chunks_per_file_override_wins() {
+        // Explicit override beats env var (upstream mempalace #1455).
+        let prev = std::env::var("MEMPALACE_MAX_CHUNKS_PER_FILE").ok();
+        unsafe {
+            std::env::set_var("MEMPALACE_MAX_CHUNKS_PER_FILE", "123");
+        }
+        assert_eq!(resolve_max_chunks_per_file(Some(999)), 999);
+        // Sentinel 0 from the override path also wins.
+        assert_eq!(resolve_max_chunks_per_file(Some(0)), 0);
+        unsafe {
+            if let Some(v) = prev {
+                std::env::set_var("MEMPALACE_MAX_CHUNKS_PER_FILE", v);
+            } else {
+                std::env::remove_var("MEMPALACE_MAX_CHUNKS_PER_FILE");
+            }
+        }
     }
 
     #[test]

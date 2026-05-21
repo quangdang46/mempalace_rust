@@ -153,6 +153,13 @@ enum Commands {
 
         #[arg(long, action = clap::ArgAction::SetTrue)]
         redetect_origin: bool,
+
+        /// Override the per-file chunk cap (#1455). Defaults to
+        /// `MEMPALACE_MAX_CHUNKS_PER_FILE` then 50000. Set to 0 to
+        /// disable the cap entirely; lower it to bound ONNX worst-case
+        /// batches on Windows.
+        #[arg(long, value_name = "N")]
+        max_chunks_per_file: Option<usize>,
     },
 
     /// Find anything, exact words.
@@ -694,6 +701,7 @@ fn cmd_init(
             None,
             None,
             false,
+            None,
         ) {
             eprintln!("Warning: auto-mine failed: {}", err);
         }
@@ -770,6 +778,7 @@ fn cmd_mine(
     palace_arg: Option<&str>,
     extract: Option<&str>,
     redetect_origin: bool,
+    max_chunks_per_file: Option<usize>,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
@@ -831,7 +840,7 @@ fn cmd_mine(
 
     match mode {
         MiningMode::Projects => {
-            let result = runtime().block_on(miner::mine(
+            let result = runtime().block_on(miner::mine_with_options(
                 dir,
                 &palace_path,
                 wing,
@@ -840,6 +849,7 @@ fn cmd_mine(
                 } else {
                     Some(include_ignored_flat.as_slice())
                 },
+                max_chunks_per_file,
             ));
             match result {
                 Ok(mining_result) => {
@@ -881,7 +891,7 @@ fn cmd_mine(
             println!("  Auto-detected mode: {:?}", detected);
             match detected {
                 MiningMode::Projects | MiningMode::Auto => {
-                    let result = runtime().block_on(miner::mine(
+                    let result = runtime().block_on(miner::mine_with_options(
                         dir,
                         &palace_path,
                         wing,
@@ -890,6 +900,7 @@ fn cmd_mine(
                         } else {
                             Some(include_ignored_flat.as_slice())
                         },
+                        max_chunks_per_file,
                     ));
                     match result {
                         Ok(mining_result) => {
@@ -1831,6 +1842,15 @@ fn print_mining_result(result: &MiningResult) {
     println!("  Mining complete!");
     println!("    Files processed: {}", result.files_processed);
     println!("    Chunks created: {}", result.chunks_created);
+    if result.files_skipped_chunk_cap > 0 {
+        // Upstream mempalace #1455: separate counter so corpus audits
+        // can tell chunk-cap drops apart from already-filed / read-error
+        // skips. The hint mirrors the stderr [skip] line from `mine_file`.
+        println!(
+            "    Files skipped (chunk cap): {} (raise via --max-chunks-per-file or MEMPALACE_MAX_CHUNKS_PER_FILE; set 0 to disable)",
+            result.files_skipped_chunk_cap
+        );
+    }
     if !result.errors.is_empty() {
         println!("    Errors ({}):", result.errors.len());
         for e in &result.errors {
@@ -1918,6 +1938,7 @@ pub fn run() -> Result<()> {
             dry_run,
             extract,
             redetect_origin,
+            max_chunks_per_file,
         } => {
             let palace_path = resolve_palace_path(palace_arg)?;
             if let Err(MineAlreadyRunning { pid }) =
@@ -1941,6 +1962,7 @@ pub fn run() -> Result<()> {
                 palace_arg,
                 extract.as_deref(),
                 *redetect_origin,
+                *max_chunks_per_file,
             )?
         }
         Commands::Search {
@@ -2905,6 +2927,7 @@ mod tests {
             Some("/tmp/palace"),
             Some("exchange"),
             false,
+            None,
         );
 
         if let Err(e) = &result {
