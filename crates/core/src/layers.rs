@@ -10,6 +10,20 @@ use crate::palace_db::PalaceDb;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Default location for the `identity.txt` file. Mirrors `Config::identity_file_path()`
+/// (XDG `~/.config/mempalace/identity.txt`) so that `wake-up` and `status` always
+/// agree on where the L0 identity lives. Falls back to `~/.mempalace/identity.txt`
+/// only when the XDG path cannot be resolved (e.g. `HOME` unset in tests).
+fn default_identity_path() -> PathBuf {
+    Config::identity_file_path().unwrap_or_else(|_| {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".mempalace")
+            .join("identity.txt")
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Layer 0 — Identity
 // ---------------------------------------------------------------------------
@@ -22,13 +36,7 @@ pub struct Layer0 {
 
 impl Layer0 {
     pub fn new(identity_path: Option<PathBuf>) -> Self {
-        let path = identity_path.unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".mempalace")
-                .join("identity.txt")
-        });
+        let path = identity_path.unwrap_or_else(default_identity_path);
         Self {
             path,
             cached_text: None,
@@ -45,7 +53,10 @@ impl Layer0 {
                 .map(|s| s.trim().to_string())
                 .unwrap_or_else(|_| "## L0 — IDENTITY\nNo identity configured.".to_string())
         } else {
-            "## L0 — IDENTITY\nNo identity configured. Create ~/.mempalace/identity.txt".to_string()
+            format!(
+                "## L0 — IDENTITY\nNo identity configured. Create {}",
+                self.path.display()
+            )
         };
         self.cached_text = Some(text.clone());
         text
@@ -388,13 +399,7 @@ impl MemoryStack {
     pub fn new(palace_path: Option<PathBuf>, identity_path: Option<PathBuf>) -> Self {
         let config = Config::default();
         let palace_path = palace_path.unwrap_or_else(|| config.palace_path.clone());
-        let identity_path = identity_path.unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".mempalace")
-                .join("identity.txt")
-        });
+        let identity_path = identity_path.unwrap_or_else(default_identity_path);
 
         Self {
             palace_path: palace_path.clone(),
@@ -631,6 +636,56 @@ mod tests {
         std::fs::write(&identity_path, "12345678").unwrap();
         let mut l0 = Layer0::new(Some(identity_path));
         assert_eq!(l0.token_estimate(), 2);
+    }
+
+    /// Regression for the audit Bug B: `Layer0::new(None)` must default to the
+    /// XDG identity path resolved by `Config::identity_file_path()` so that
+    /// `wake-up` and `status` agree on the L0 file location.
+    #[test]
+    fn test_layer0_default_path_matches_config_identity_file_path() {
+        let _guard = crate::test_env_lock()
+            .lock()
+            .expect("test env lock should not be poisoned");
+        let temp_dir = tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        let config_dir = temp_dir.path().join("mempalace");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let xdg_identity = config_dir.join("identity.txt");
+        std::fs::write(&xdg_identity, "I am the XDG identity.").unwrap();
+
+        let mut l0 = Layer0::new(None);
+        let rendered = l0.render();
+        std::env::remove_var("XDG_CONFIG_HOME");
+
+        assert!(
+            rendered.contains("I am the XDG identity."),
+            "Layer0 must read identity.txt from the XDG config dir; got:\n{}",
+            rendered
+        );
+    }
+
+    /// Regression for the audit Bug B: `MemoryStack::new(None, None)` must also
+    /// fall back to the XDG identity path.
+    #[test]
+    fn test_memorystack_default_identity_path_matches_xdg() {
+        let _guard = crate::test_env_lock()
+            .lock()
+            .expect("test env lock should not be poisoned");
+        let temp_dir = tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        let config_dir = temp_dir.path().join("mempalace");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let xdg_identity = config_dir.join("identity.txt");
+        std::fs::write(&xdg_identity, "stack-level identity").unwrap();
+
+        let stack = MemoryStack::new(Some(temp_dir.path().join("palace")), None);
+        std::env::remove_var("XDG_CONFIG_HOME");
+
+        assert_eq!(
+            std::fs::canonicalize(stack.identity_path.clone()).unwrap_or(stack.identity_path),
+            std::fs::canonicalize(&xdg_identity).unwrap_or(xdg_identity),
+            "MemoryStack must default identity_path to the XDG identity.txt"
+        );
     }
 
     // Layer1 tests
