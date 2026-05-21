@@ -444,6 +444,7 @@ fn save_project_config(
 #[allow(clippy::too_many_arguments)]
 fn cmd_init(
     dir: &PathBuf,
+    palace_arg: Option<&str>,
     yes: bool,
     _use_llm: bool,
     _llm_provider: Option<&str>,
@@ -464,14 +465,24 @@ fn cmd_init(
     // Canonicalize the target directory for comparison
     let target_dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
 
-    // Idempotency check: if palace already exists at target dir, handle gracefully
+    // Resolve the palace path: honour the global --palace flag if present, else
+    // default to the project directory (project-dir-as-palace, existing behavior).
+    let palace_path = match palace_arg {
+        Some(_) => resolve_palace_path(palace_arg)?,
+        None => target_dir.clone(),
+    };
+
+    // Idempotency check: if palace already exists at the resolved palace path,
+    // handle gracefully.
     let existing_palace_path =
         std::fs::canonicalize(&config.palace_path).unwrap_or_else(|_| config.palace_path.clone());
+    let canonical_palace_path =
+        std::fs::canonicalize(&palace_path).unwrap_or_else(|_| palace_path.clone());
 
-    // Check if target is the same as existing palace
-    if target_dir == existing_palace_path {
+    // Check if palace location is the same as the previously configured palace
+    if canonical_palace_path == existing_palace_path {
         // Check if it's a valid palace
-        let palace_db_path = target_dir.join(format!(
+        let palace_db_path = palace_path.join(format!(
             "{}.json",
             crate::palace_db::DEFAULT_COLLECTION_NAME
         ));
@@ -479,7 +490,7 @@ fn cmd_init(
 
         if is_valid_palace {
             println!();
-            println!("  Palace already exists at: {}", target_dir.display());
+            println!("  Palace already exists at: {}", palace_path.display());
             println!();
 
             if yes {
@@ -565,8 +576,9 @@ fn cmd_init(
         }
     }
 
-    // Set the palace path to the target directory
-    config.palace_path = target_dir.clone();
+    // Set the palace path. When --palace was explicit, this is the user-supplied
+    // location; otherwise it equals the project directory (existing behaviour).
+    config.palace_path = palace_path.clone();
     config.save()?;
 
     let config_path = config.init()?;
@@ -698,7 +710,7 @@ fn cmd_init(
             false,
             false,
             &[],
-            None,
+            palace_arg,
             None,
             false,
             None,
@@ -1916,6 +1928,7 @@ pub fn run() -> Result<()> {
             let use_llm = !no_llm;
             cmd_init(
                 dir,
+                palace_arg,
                 *yes,
                 use_llm,
                 llm_provider.as_deref(),
@@ -2240,6 +2253,7 @@ mod tests {
         std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().join("xdg"));
         cmd_init(
             &project_dir,
+            None,
             true,
             false,
             None,
@@ -2276,6 +2290,7 @@ mod tests {
         std::env::set_var("MEMPALACE_NONINTERACTIVE", "1");
         let result = cmd_init(
             &project_dir,
+            None,
             false,
             false,
             None,
@@ -2298,6 +2313,93 @@ mod tests {
         let (wing, rooms) = crate::miner::load_config(&project_dir).unwrap();
         assert_eq!(wing, "interactive_project");
         assert!(rooms.iter().any(|room| room.name == "src"));
+    }
+
+    /// Regression for the audit Bug A: `mpr --palace /path/to/palace init <project>`
+    /// must store the palace at `/path/to/palace`, NOT at the project directory.
+    /// Previously the global `--palace` flag was ignored by `cmd_init`, which
+    /// silently aliased the project dir as the palace path.
+    #[test]
+    fn test_cmd_init_honours_explicit_palace_flag() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should not be poisoned");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir.path().join("Project");
+        let palace_dir = temp_dir.path().join("custom_palace");
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&palace_dir).unwrap();
+        std::fs::write(src_dir.join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::create_dir_all(temp_dir.path().join("xdg")).unwrap();
+
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().join("xdg"));
+        let palace_str = palace_dir.to_string_lossy().to_string();
+        cmd_init(
+            &project_dir,
+            Some(palace_str.as_str()),
+            true,
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        let saved_palace_path = Config::load().unwrap().palace_path;
+        std::env::remove_var("XDG_CONFIG_HOME");
+
+        assert_eq!(
+            std::fs::canonicalize(saved_palace_path).unwrap(),
+            std::fs::canonicalize(&palace_dir).unwrap(),
+            "init must persist the user-supplied --palace path to the global config"
+        );
+
+        // Project config still lives in the project directory; only palace_path
+        // in the global config should point at the custom palace location.
+        assert!(project_dir.join("mempalace.json").exists());
+    }
+
+    /// Counterpart to `test_cmd_init_honours_explicit_palace_flag`: when no
+    /// `--palace` flag is supplied, behaviour stays project-dir-as-palace.
+    #[test]
+    fn test_cmd_init_defaults_to_project_dir_when_palace_flag_omitted() {
+        let _guard = test_env_lock()
+            .lock()
+            .expect("test env lock should not be poisoned");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir.path().join("DefaultProject");
+        let src_dir = project_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("main.rs"), "fn main() {}\n").unwrap();
+        std::fs::create_dir_all(temp_dir.path().join("xdg")).unwrap();
+
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().join("xdg"));
+        cmd_init(
+            &project_dir,
+            None,
+            true,
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        let saved_palace_path = Config::load().unwrap().palace_path;
+        std::env::remove_var("XDG_CONFIG_HOME");
+
+        assert_eq!(
+            std::fs::canonicalize(saved_palace_path).unwrap(),
+            std::fs::canonicalize(&project_dir).unwrap(),
+            "without --palace, init keeps existing project-dir-as-palace behavior"
+        );
     }
 
     #[test]

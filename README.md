@@ -106,7 +106,7 @@ After the one-time setup (install → init → mine), you don't run MemPalace co
 claude mcp add mpr -- mpr mcp
 ```
 
-Now your AI has 14+ tools available through MCP. Ask it anything:
+Now your AI has 19+ tools available through MCP. Ask it anything:
 
 > *"What did we decide about auth last month?"*
 
@@ -454,7 +454,7 @@ Letta charges $20–200/mo for agent-managed memory. MemPalace does it with a wi
 claude mcp add mpr -- mpr mcp
 ```
 
-### 14 Tools (consolidated from the original 19)
+### 19 Tools
 
 **Palace (read)**
 
@@ -861,7 +861,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | `knowledge_graph.rs` | ✅ Done | SQLite temporal triples, auto-conflict resolution, episodic memory |
 | `palace_graph.rs` | ✅ Done | BFS traversal, tunnel detection |
 | `palace_db.rs` | ✅ Done | Centralized embedvec access, thread-safe singleton |
-| `mcp_server.rs` | ✅ Done | 14 MCP tools over stdio |
+| `mcp_server.rs` | ✅ Done | 19 MCP tools over stdio |
 | `cli.rs` | ✅ Done | clap-based CLI, binary name `mpr` |
 | `onboarding.rs` | ✅ Done | Interactive + non-interactive setup |
 | `entity_registry.rs` | ✅ Done | Persistent entity codes |
@@ -895,7 +895,7 @@ This is a Rust port of the [original Python MemPalace](https://github.com/milla-
 | `doctor` health check command | PR #36 | ✅ Done | 6-check diagnostic |
 | Zero-interactive setup (`--auto`, env var) | PR #33 | ✅ Done | `MEMPALACE_NONINTERACTIVE=1` |
 | Non-Latin / Unicode-aware processing | PR #28 | ✅ Done | Unicode regex `\p{Lu}\p{Ll}`, Cyrillic entity patterns |
-| palace_db singleton + MCP 19→14 | PR #25 | ✅ Done | 14 tools in Rust |
+| palace_db singleton + MCP 19→14 | PR #25 | ✅ Done | 19 tools in Rust (palace + KG + diary) |
 | Batch I/O + hash-set dedup | PR #38 | ✅ Done | O(1) dedup via HashSet |
 | Unify onboarding + non-interactive init | PR #18 + #13 | ✅ Done | Interactive + non-interactive |
 | mtime-based DB reconnection | PR #757 | ✅ N/A | Rust uses embedvec (not ChromaDB HNSW) — no stale index issue |
@@ -1057,7 +1057,7 @@ mempalace_rust/
 │   │       ├── knowledge_graph.rs     ← temporal entity graph (SQLite)
 │   │       ├── palace_graph.rs        ← room navigation graph
 │   │       ├── palace_db.rs           ← centralized vector DB access (embedvec)
-│   │       ├── mcp_server.rs          ← MCP server (14 tools)
+│   │       ├── mcp_server.rs          ← MCP server (19 tools)
 │   │       ├── onboarding.rs          ← guided setup
 │   │       ├── entity_registry.rs     ← entity code registry
 │   │       ├── entity_detector.rs     ← auto-detect people/projects

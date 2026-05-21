@@ -229,6 +229,23 @@ where
 /// gate on `**kwargs` handlers. (#1512)
 const TOOLS_ACCEPTING_EXTRAS: &[&str] = &["mempalace_add_drawer"];
 
+/// Tools that mutate palace state. Hidden from `tools/list` when the server runs
+/// with `--read-only`; the call-time `read_only_guard` remains as a defense-in-
+/// depth check for any client that still tries to invoke them by name.
+const MUTATION_TOOLS: &[&str] = &[
+    "mempalace_add_drawer",
+    "mempalace_delete_drawer",
+    "mempalace_kg_add",
+    "mempalace_kg_invalidate",
+    "mempalace_diary_write",
+];
+
+/// Whether a tool mutates state and should be excluded from `tools/list` in
+/// read-only mode. Public so unit tests can guard against drift.
+pub fn is_mutation_tool(tool_name: &str) -> bool {
+    MUTATION_TOOLS.contains(&tool_name)
+}
+
 /// Keys that are internal transport metadata and live in no tool schema. They
 /// are stripped before dispatch elsewhere; flagging them as unknown here would
 /// surface a misleading error for legitimate transport-level options. (#1512)
@@ -485,6 +502,12 @@ impl ServerHandler for MempalaceServer {
     }
 
     fn get_tool(&self, name: &str) -> Option<rmcp::model::Tool> {
+        // In read-only mode, hide mutation tools from `tools/get` so well-behaved
+        // clients don't surface them as available. Call-time `read_only_guard`
+        // still rejects direct invocations as a defense-in-depth fallback.
+        if self.state.read_only && is_mutation_tool(name) {
+            return None;
+        }
         make_tools().into_iter().find(|t| t.name.as_ref() == name)
     }
 
@@ -511,7 +534,18 @@ impl ServerHandler for MempalaceServer {
         _ctx: rmcp::service::RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + MaybeSendFuture + '_
     {
-        std::future::ready(Ok(ListToolsResult::with_all_items(make_tools())))
+        // Filter mutation tools out of the listing when running read-only so
+        // clients don't show them as available actions. `read_only_guard` keeps
+        // call-time rejection in place for any client that bypasses the list.
+        let tools = if self.state.read_only {
+            make_tools()
+                .into_iter()
+                .filter(|t| !is_mutation_tool(t.name.as_ref()))
+                .collect()
+        } else {
+            make_tools()
+        };
+        std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
 }
 
@@ -1345,6 +1379,83 @@ mod tests {
         let state = test_state();
         let result = dispatch(&state, "mempalace_status", json!({}));
         assert!(result.is_ok());
+    }
+
+    /// Regression for the audit Issue D: when the server runs `--read-only`, the
+    /// list of tools exposed must NOT include the five mutation tools. Call-time
+    /// `read_only_guard` still rejects the underlying handlers, but well-behaved
+    /// clients should never see the tools as available actions.
+    #[test]
+    fn test_mutation_tools_classification_matches_dispatch() {
+        // Drift guard — every name in MUTATION_TOOLS must be a real tool name
+        // that make_tools() emits, otherwise the read-only filter is a no-op.
+        let names: std::collections::HashSet<String> = make_tools()
+            .into_iter()
+            .map(|t| t.name.as_ref().to_string())
+            .collect();
+        for tool in MUTATION_TOOLS {
+            assert!(
+                names.contains(*tool),
+                "MUTATION_TOOLS entry {tool} is not a real tool name; rename or remove"
+            );
+            assert!(is_mutation_tool(tool));
+        }
+        // Spot-check a read-only tool is NOT classified as mutation.
+        assert!(!is_mutation_tool("mempalace_search"));
+        assert!(!is_mutation_tool("mempalace_status"));
+        assert!(!is_mutation_tool("mempalace_kg_query"));
+    }
+
+    #[test]
+    fn test_read_only_mode_hides_mutation_tools_from_list() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = crate::Config {
+            palace_path: temp_dir.path().join("palace"),
+            collection_name: "test_collection".to_string(),
+            people_map: Default::default(),
+            topic_wings: vec!["emotions".to_string()],
+            hall_keywords: Default::default(),
+            embedding_model: "naive".to_string(),
+            languages: vec![],
+        };
+        std::fs::create_dir_all(&config.palace_path).unwrap();
+        let ro_state = AppState::new(config, true).unwrap();
+        let server = MempalaceServer::new(ro_state);
+
+        // Mirror the filter the list_tools handler applies.
+        let filtered: Vec<String> = if server.state.read_only {
+            make_tools()
+                .into_iter()
+                .filter(|t| !is_mutation_tool(t.name.as_ref()))
+                .map(|t| t.name.as_ref().to_string())
+                .collect()
+        } else {
+            make_tools()
+                .into_iter()
+                .map(|t| t.name.as_ref().to_string())
+                .collect()
+        };
+        for tool in MUTATION_TOOLS {
+            assert!(
+                !filtered.contains(&tool.to_string()),
+                "mutation tool {tool} must be hidden from tools/list in --read-only mode"
+            );
+        }
+        // Sanity check: a few read-only tools are still present.
+        for kept in ["mempalace_search", "mempalace_status", "mempalace_kg_query"] {
+            assert!(
+                filtered.contains(&kept.to_string()),
+                "read-only tool {kept} must remain visible in tools/list"
+            );
+        }
+
+        // And get_tool() must also refuse to surface mutation tools by name.
+        for tool in MUTATION_TOOLS {
+            assert!(
+                server.get_tool(tool).is_none(),
+                "MempalaceServer::get_tool({tool}) must return None in --read-only mode"
+            );
+        }
     }
 
     #[test]
