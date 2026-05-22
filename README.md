@@ -54,7 +54,14 @@ Other memory systems try to fix this by letting AI decide what's worth rememberi
 ```bash
 # One-line install (Linux / macOS / Windows Git Bash)
 curl -fsSL "https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.sh?$(date +%s)" | bash
+```
 
+```powershell
+# One-line install (Windows PowerShell)
+irm "https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.ps1" | iex
+```
+
+```bash
 # Or build from source
 cargo install --path .
 ```
