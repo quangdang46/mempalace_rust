@@ -38,6 +38,8 @@ pub mod corpus_origin;
 #[doc(hidden)]
 pub mod dedup;
 #[doc(hidden)]
+pub mod dedup_window;
+#[doc(hidden)]
 pub mod diary_ingest;
 #[doc(hidden)]
 pub mod entity_detector;
@@ -80,6 +82,8 @@ pub mod palace_db;
 #[doc(hidden)]
 pub mod palace_graph;
 #[doc(hidden)]
+pub mod privacy;
+#[doc(hidden)]
 pub mod project_scanner;
 #[doc(hidden)]
 pub mod query_sanitizer;
@@ -98,6 +102,19 @@ pub mod split_mega_files;
 #[doc(hidden)]
 pub mod sweeper;
 
+// =====================================================================
+// New-architecture surface (mp-010 onwards) — Embedder trait
+// =====================================================================
+//
+// Placed AFTER the `#[doc(hidden)]` internal block (mp-006) so this
+// module renders on docs.rs as part of the curated public API. See
+// docs/research/00_UPGRADE_AND_INTEGRATION_PLAN.md ADR-1, ADR-3,
+// ADR-8, §3 "Concrete API Sketch".
+
+pub mod embed;
+
+pub use embed::{Embedder, NullEmbedder};
+
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
     use std::sync::{Mutex, OnceLock};
@@ -108,6 +125,7 @@ pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
 
 pub use config::Config;
 pub use error::MempalaceError;
+pub use privacy::{redact, RedactionConfig, RedactionKind, RedactionResult};
 
 pub mod error {
     use thiserror::Error;
