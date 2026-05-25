@@ -46,3 +46,19 @@ winapi = { version = "0.3", features = ["consoleapi", "wincon"] }
 tempfile = { workspace = true }
 mockall = { workspace = true }
 tokio-test = { workspace = true }
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+# Criterion benches for the production hot paths (mp-002 / Phase 0).
+# `cargo bench --no-run` keeps these compiling on every PR; the long-running
+# `cargo bench` is intentionally not wired into CI.
+[[bench]]
+name = "bench_search"
+harness = false
+
+[[bench]]
+name = "bench_palace_db"
+harness = false
+
+[[bench]]
+name = "bench_miner"
+harness = false

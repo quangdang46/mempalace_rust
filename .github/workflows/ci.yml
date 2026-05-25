@@ -37,3 +37,9 @@ jobs:
       - name: Test (default features)
         if: runner.os == 'Windows'
         run: cargo test --workspace
+
+      # Compile (but don't run) criterion benches on every PR — mp-002 / Phase 0.
+      # Catches API drift in the bench harnesses without paying the multi-minute
+      # cost of actually running them.
+      - name: Compile benches
+        run: cargo bench --no-run -p mempalace-core
