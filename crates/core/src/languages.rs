@@ -3,6 +3,8 @@
 //! Each language implements the Language trait with language-specific patterns.
 //! Currently supports Latin (default) and Russian (Cyrillic).
 
+#![doc(hidden)]
+
 use regex::Regex;
 
 /// Language trait for language-specific processing.

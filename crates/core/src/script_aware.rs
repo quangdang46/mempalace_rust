@@ -7,12 +7,15 @@
 //! - Arabic script (Arabic, Persian, Urdu)
 //! - Other Unicode scripts
 
+#![doc(hidden)]
+
 use regex::{Regex, RegexBuilder};
 use std::sync::LazyLock;
 use unicode_script::{Script, UnicodeScript};
 
 /// Script type for text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ScriptType {
     /// Latin script (English, French, German, etc.)
     Latin,

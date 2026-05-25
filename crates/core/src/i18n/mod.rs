@@ -2,11 +2,14 @@
 //!
 //! Provides locale-aware entity detection, UI strings, and language-specific patterns.
 
+#![doc(hidden)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Locale configuration loaded from JSON files.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
 pub struct Locale {
     /// Human-readable name of the locale (e.g., "English", "Português (Brasil)")
     pub name: String,
@@ -25,6 +28,7 @@ pub struct Locale {
 
 /// CLI UI strings.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct CliStrings {
     #[serde(default = "default_init_complete")]
     pub init_complete: String,
@@ -60,6 +64,7 @@ fn default_corpus_empty() -> String {
 
 /// Entity detection patterns for a locale.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct EntityPatterns {
     /// Verbs that indicate person entities (e.g., "said", "asked", "told")
     #[serde(default)]
@@ -94,6 +99,7 @@ fn default_versioned_pattern() -> String {
 
 /// Dialect-specific configuration.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct DialectConfig {
     /// Instructions for AAAK compression in this language
     #[serde(default = "default_compression_instructions")]
@@ -316,6 +322,7 @@ impl Default for LocaleManager {
 
 /// Errors that can occur when working with locales.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LocaleError {
     #[error("Locale not found: {0}")]
     NotFound(String),

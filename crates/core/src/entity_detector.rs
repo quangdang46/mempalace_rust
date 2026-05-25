@@ -6,6 +6,8 @@
 //!
 //! Used by mempalace init before mining begins.
 
+#![doc(hidden)]
+
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,6 +20,7 @@ use std::sync::LazyLock;
 
 /// Locale-specific entity patterns loaded from i18n system
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct LocalePatterns {
     pub person_verbs: Vec<String>,
     pub project_verbs: Vec<String>,
@@ -785,6 +788,7 @@ const PRONOUN_PATTERNS_STATIC: &[&str] = &[
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PersonEntity {
     pub name: String,
     pub confidence: f32,
@@ -792,6 +796,7 @@ pub struct PersonEntity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ProjectEntity {
     pub name: String,
     pub confidence: f32,
@@ -799,6 +804,7 @@ pub struct ProjectEntity {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DetectionResult {
     pub people: Vec<PersonEntity>,
     pub projects: Vec<ProjectEntity>,

@@ -6,6 +6,8 @@
 //! Usage:
 //!     mpr dedup [--dry-run] [--threshold 0.15] [--stats] [--wing X]
 
+#![doc(hidden)]
+
 use crate::config::Config;
 use crate::palace_db::{PalaceDb, QueryResult};
 use std::collections::HashMap;
@@ -19,6 +21,7 @@ const MIN_DRAWERS_TO_CHECK: usize = 5;
 
 /// Deduplication statistics.
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct DedupStats {
     pub sources_checked: usize,
     pub total_kept: usize,

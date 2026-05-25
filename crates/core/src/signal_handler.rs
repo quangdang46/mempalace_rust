@@ -2,6 +2,8 @@
 //!
 //! Provides graceful Ctrl-C (SIGINT) handling for long-running operations.
 
+#![doc(hidden)]
+
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -102,6 +104,7 @@ pub fn check_shutdown() -> Result<(), ShutdownError> {
 
 /// Error type for shutdown requests.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ShutdownError {
     #[error("Shutdown requested by user")]
     Requested,

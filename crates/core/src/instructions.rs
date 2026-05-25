@@ -1,5 +1,7 @@
 //! instructions.rs — CLI tool for reading instruction markdown files.
 
+#![doc(hidden)]
+
 #[allow(dead_code)]
 const INSTRUCTIONS_DIR: &str = "instructions";
 

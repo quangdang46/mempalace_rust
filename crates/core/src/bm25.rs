@@ -5,10 +5,13 @@
 //!
 //! This implementation uses the standard BM25 formula with configurable parameters.
 
+#![doc(hidden)]
+
 use std::collections::HashMap;
 
 /// BM25 ranking parameters.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Bm25Params {
     /// k1 parameter - term frequency saturation (default: 1.2)
     pub k1: f64,

@@ -7,6 +7,8 @@
 //!     mpr repair prune --confirm
 //!     mpr repair rebuild
 
+#![doc(hidden)]
+
 use crate::config::Config;
 use crate::palace_db::PalaceDb;
 use std::collections::HashSet;

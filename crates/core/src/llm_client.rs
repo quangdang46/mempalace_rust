@@ -13,6 +13,8 @@
 //! All providers expose the same `classify(system, user, json_mode)` method and
 //! the same `check_available()` probe.
 
+#![doc(hidden)]
+
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -22,6 +24,7 @@ use std::time::Duration;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct LlmResponse {
     pub text: String,
     pub model: String,
@@ -30,6 +33,7 @@ pub struct LlmResponse {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LlmError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),

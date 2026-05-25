@@ -14,10 +14,13 @@
 //! to provide a native Rust implementation of the MemoryProvider trait.
 //! Currently provides a MemPalace-backed provider that stores directly to palace.
 
+#![doc(hidden)]
+
 use std::path::PathBuf;
 
 /// Hermes memory provider configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HermesConfig {
     /// Hermes server endpoint (e.g., "http://localhost:8000")
     pub endpoint: String,
@@ -61,6 +64,7 @@ pub trait HermesMemoryProvider: Send + Sync {
 
 /// A single memory entry from Hermes.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MemoryEntry {
     /// Role that generated this entry (e.g., "user", "assistant", "system")
     pub role: String,

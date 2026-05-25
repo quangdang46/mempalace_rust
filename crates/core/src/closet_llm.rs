@@ -6,6 +6,8 @@
 //! Usage:
 //!     mpr regenerate-closets [--wing X] [--dry-run]
 
+#![doc(hidden)]
+
 use crate::config::Config;
 use crate::palace_db::PalaceDb;
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,7 @@ Requirements:
 
 /// Regeneration statistics.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct RegenerateStats {
     pub wings_processed: usize,
     pub entries_regenerated: usize,
@@ -44,6 +47,7 @@ struct LlmResponse {
 pub use self::RegenerateError as Error;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RegenerateError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),

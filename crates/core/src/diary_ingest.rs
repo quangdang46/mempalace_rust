@@ -8,6 +8,8 @@
 //! Usage:
 //!     mpr diary-ingest --dir ~/daily_summaries [--wing diary] [--force]
 
+#![doc(hidden)]
+
 use crate::config::Config;
 use crate::entity_detector::detect_from_content;
 use crate::palace_db::PalaceDb;
@@ -192,6 +194,7 @@ struct StateEntry {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct DiaryIngestStats {
     pub days_updated: usize,
     pub closets_created: usize,

@@ -7,6 +7,8 @@
 //! Distinguishes true session starts from mid-session context restores
 //! (which show "Ctrl+E to show X previous messages").
 
+#![doc(hidden)]
+
 use anyhow::{anyhow, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -62,6 +64,7 @@ const SKIP_PATTERNS: &[&str] = &[
 
 /// Result of splitting a mega-file
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SplitResult {
     pub sessions_found: usize,
     pub files_created: Vec<String>,
@@ -83,6 +86,7 @@ struct SessionBoundary {
 
 /// Known names configuration loaded from ~/.mempalace/known_names.json
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct KnownNamesConfig {
     #[serde(default)]
     pub names: Vec<String>,

@@ -9,6 +9,8 @@
 //!
 //! No LLM required. Pure keyword/pattern heuristics.
 
+#![doc(hidden)]
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -548,6 +550,7 @@ pub fn classify(text: &str) -> Vec<Classification> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum MemoryType {
     Decision,
     Preference,
@@ -557,6 +560,7 @@ pub enum MemoryType {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Classification {
     pub memory_type: MemoryType,
     pub confidence: f32,
@@ -565,6 +569,7 @@ pub struct Classification {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct PythonMemory {
     pub content: String,
     pub memory_type: String,

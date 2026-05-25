@@ -12,6 +12,8 @@
 //!   - Genuine typos in lowercase, flowing text
 //!   - Common fat-finger words
 
+#![doc(hidden)]
+
 use std::collections::HashSet;
 use std::sync::OnceLock;
 

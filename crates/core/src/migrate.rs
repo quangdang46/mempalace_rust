@@ -6,6 +6,8 @@
 //! Usage:
 //!     mpr migrate [--dry-run]
 
+#![doc(hidden)]
+
 use crate::config::Config;
 use rusqlite::{Connection, Result as SqlResult};
 use serde::Serialize;
@@ -13,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 /// Migration statistics.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct MigrateStats {
     pub drawers_found: usize,
     pub drawers_migrated: usize,
@@ -132,6 +135,7 @@ pub fn detect_version(palace_path: &Path) -> anyhow::Result<ChromaDetectReport> 
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct ChromaDetectReport {
     pub version: String,
     pub drawer_count: usize,

@@ -6,6 +6,8 @@
 //!     mpr hook save     — save hook for Claude Code stop
 //!     mpr hook precompact — precompact hook for Claude Code
 
+#![doc(hidden)]
+
 use regex::Regex;
 use std::fs;
 use std::path::PathBuf;
@@ -15,6 +17,7 @@ const STATE_DIR: &str = ".mempalace/hook_state";
 
 /// Hook data parsed from Claude Code JSON input.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HookData {
     pub session_id: String,
     pub stop_hook_active: bool,
@@ -180,6 +183,7 @@ pub fn hook_precompact(_transcript_path: &str) {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HookDecision {
     Pass,
     Block { reason: String },

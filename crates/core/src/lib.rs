@@ -1,48 +1,101 @@
-pub mod bm25;
+// =====================================================================
+// Public API surface
+// =====================================================================
+//
+// These modules form the curated public API rendered on docs.rs.
+// Adding a module here is a SemVer commitment — see docs/research/04
+// "Stability assessment" before promoting an internal module.
+
 pub mod cli;
-pub mod closet_llm;
 pub mod config;
 pub mod constants;
-pub mod convo_miner;
-pub mod corpus_origin;
-pub mod dedup;
 pub mod dialect;
-pub mod diary_ingest;
 pub mod doctor;
-pub mod entity_detector;
-pub mod entity_registry;
-pub mod exporter;
-pub mod fact_checker;
-pub mod general_extractor;
-pub mod hermes_integration;
-pub mod hooks_cli;
-pub mod i18n;
-pub mod instructions;
 pub mod knowledge_graph;
-pub mod languages;
 pub mod layers;
-pub mod llm_client;
-pub mod llm_refine;
 pub mod mcp_server;
-pub mod migrate;
-pub mod mine_lock;
-pub mod mine_palace_lock;
-pub mod mine_pid_guard;
 pub mod miner;
-pub mod normalize;
 pub mod onboarding;
-pub mod onnx_embed;
-pub mod palace_db;
-pub mod palace_graph;
-pub mod project_scanner;
-pub mod query_sanitizer;
-pub mod repair;
-pub mod room_detector_local;
-pub mod script_aware;
 pub mod searcher;
+
+// =====================================================================
+// Internal modules — hidden from docs.rs (mp-006)
+// =====================================================================
+//
+// These remain `pub` so the workspace's `cli`, `bench`, integration
+// tests, and the Hermes adapter can reach them, but they are NOT part
+// of the curated public API. Hidden via `#[doc(hidden)]` so docs.rs
+// only renders the surface above. See research/04 P2 #19.
+
+#[doc(hidden)]
+pub mod bm25;
+#[doc(hidden)]
+pub mod closet_llm;
+#[doc(hidden)]
+pub mod convo_miner;
+#[doc(hidden)]
+pub mod corpus_origin;
+#[doc(hidden)]
+pub mod dedup;
+#[doc(hidden)]
+pub mod diary_ingest;
+#[doc(hidden)]
+pub mod entity_detector;
+#[doc(hidden)]
+pub mod entity_registry;
+#[doc(hidden)]
+pub mod exporter;
+#[doc(hidden)]
+pub mod fact_checker;
+#[doc(hidden)]
+pub mod general_extractor;
+#[doc(hidden)]
+pub mod hermes_integration;
+#[doc(hidden)]
+pub mod hooks_cli;
+#[doc(hidden)]
+pub mod i18n;
+#[doc(hidden)]
+pub mod instructions;
+#[doc(hidden)]
+pub mod languages;
+#[doc(hidden)]
+pub mod llm_client;
+#[doc(hidden)]
+pub mod llm_refine;
+#[doc(hidden)]
+pub mod migrate;
+#[doc(hidden)]
+pub mod mine_lock;
+#[doc(hidden)]
+pub mod mine_palace_lock;
+#[doc(hidden)]
+pub mod mine_pid_guard;
+#[doc(hidden)]
+pub mod normalize;
+#[doc(hidden)]
+pub mod onnx_embed;
+#[doc(hidden)]
+pub mod palace_db;
+#[doc(hidden)]
+pub mod palace_graph;
+#[doc(hidden)]
+pub mod project_scanner;
+#[doc(hidden)]
+pub mod query_sanitizer;
+#[doc(hidden)]
+pub mod repair;
+#[doc(hidden)]
+pub mod room_detector_local;
+#[doc(hidden)]
+pub mod script_aware;
+#[doc(hidden)]
 pub mod signal_handler;
+#[doc(hidden)]
 pub mod spellcheck;
+#[doc(hidden)]
 pub mod split_mega_files;
+#[doc(hidden)]
 pub mod sweeper;
 
 #[cfg(test)]
@@ -60,6 +113,7 @@ pub mod error {
     use thiserror::Error;
 
     #[derive(Error, Debug)]
+    #[non_exhaustive]
     pub enum MempalaceError {
         #[error("IO error: {0}")]
         Io(#[from] std::io::Error),

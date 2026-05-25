@@ -4,6 +4,8 @@
 //! before starting a mine operation. The PID file contains the process ID and
 //! timestamp of the current mine operation.
 
+#![doc(hidden)]
+
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,6 +14,7 @@ use thiserror::Error;
 
 /// Error types for PID file operations.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum PidGuardError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

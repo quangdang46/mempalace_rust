@@ -3,6 +3,8 @@
 //! Prevents multiple agents from mining the same file simultaneously,
 //! which causes duplicate drawers when the delete+insert cycle interleaves.
 
+#![doc(hidden)]
+
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;

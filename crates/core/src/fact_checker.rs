@@ -2,6 +2,8 @@
 //!
 //! Purely offline. No network calls.
 
+#![doc(hidden)]
+
 use crate::config::Config;
 use crate::knowledge_graph::KnowledgeGraph;
 use regex::Regex;
@@ -12,6 +14,7 @@ pub use self::FactIssueType::*;
 
 /// Fact issues detected in text.
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct FactIssue {
     #[serde(rename = "type")]
     pub issue_type: FactIssueType,
@@ -32,6 +35,7 @@ pub struct FactIssue {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum FactIssueType {
     SimilarName,
     RelationshipMismatch,
@@ -39,12 +43,14 @@ pub enum FactIssueType {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct Claim {
     pub predicate: String,
     pub object: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct KgFact {
     pub predicate: String,
     pub object: String,

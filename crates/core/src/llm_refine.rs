@@ -10,6 +10,8 @@
 //! - Batch processing (25 candidates per LLM call).
 //! - Don't feed raw corpus to LLM — candidates + sampled contexts only.
 
+#![doc(hidden)]
+
 use crate::llm_client::LlmProvider;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -48,6 +50,7 @@ One entry per candidate, same order as the input."#;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EntityLabel {
     Person,
     Project,
@@ -90,6 +93,7 @@ impl EntityLabel {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Classification {
     pub name: String,
     pub label: EntityLabel,
@@ -97,6 +101,7 @@ pub struct Classification {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct RefineResult {
     pub merged: DetectedEntities,
     pub reclassified: usize,
@@ -108,6 +113,7 @@ pub struct RefineResult {
 }
 
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct DetectedEntities {
     pub people: Vec<EntityEntry>,
     pub projects: Vec<EntityEntry>,
@@ -116,6 +122,7 @@ pub struct DetectedEntities {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EntityEntry {
     pub name: String,
     pub entry_type: String,

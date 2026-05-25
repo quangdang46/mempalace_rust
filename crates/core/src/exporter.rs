@@ -1,5 +1,7 @@
 //! exporter.rs - Export the palace as a browsable folder of markdown files.
 
+#![doc(hidden)]
+
 use crate::palace_db::PalaceDb;
 use std::collections::HashMap;
 use std::path::Path;
@@ -90,6 +92,7 @@ fn safe_open_for_write(path: &Path, append: bool) -> anyhow::Result<std::fs::Fil
     }
 }
 
+#[non_exhaustive]
 pub struct ExportStats {
     pub wings: usize,
     pub rooms: usize,
