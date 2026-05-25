@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;
+use tracing::warn;
 
 #[allow(unused)]
 const GRAPH_CACHE_TTL: Duration = Duration::from_secs(60);
@@ -35,7 +36,20 @@ fn _normalize_wing(wing: &str) -> Option<String> {
     Some(crate::config::normalize_wing_name(w))
 }
 
-fn _tunnel_file() -> PathBuf {
+// Explicit tunnels are stored as a JSON file alongside the palace itself
+// (`dirname(palace_path)/tunnels.json`) so they persist across palace
+// rebuilds (not in the vector DB which can be recreated) and so they live
+// next to the rest of the palace state instead of in `~/.mempalace`
+// regardless of where the palace was configured (#1467).
+fn _get_tunnel_file() -> PathBuf {
+    crate::config::Config::load()
+        .unwrap_or_default()
+        .tunnel_file()
+}
+
+/// The pre-#1467 hardcoded path. Kept only for one-time orphan detection
+/// in `_load_tunnels`; never written to.
+fn _legacy_tunnel_file() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
@@ -57,18 +71,39 @@ pub struct ExplicitTunnel {
 }
 
 fn _load_tunnels() -> Vec<ExplicitTunnel> {
-    let path = _tunnel_file();
-    if !path.exists() {
-        return Vec::new();
+    // Backwards-compatibility: prior to #1467 the tunnel file was hardcoded
+    // at `~/.mempalace/tunnels.json` regardless of the configured
+    // `palace_path`. If the configured tunnel file is missing but a legacy
+    // file exists at a different path, log a one-line warning naming both
+    // paths so users can move the file manually. We do NOT auto-migrate —
+    // auto-merging tunnel state across two locations is too magical for a
+    // bugfix and risks clobbering newer data.
+    let path = _get_tunnel_file();
+    if path.exists() {
+        return match fs::read_to_string(&path) {
+            Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|_| {
+                warn!(
+                    "Mempalace tunnels file {:?} is corrupt or unreadable; starting empty.",
+                    path
+                );
+                Vec::new()
+            }),
+            Err(_) => Vec::new(),
+        };
     }
-    match fs::read_to_string(&path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => Vec::new(),
+    let legacy = _legacy_tunnel_file();
+    if legacy != path && legacy.exists() {
+        warn!(
+            "Legacy tunnels file at {:?} is being ignored; configured location is {:?}. \
+             Move or copy the legacy file to the configured path to recover its tunnels.",
+            legacy, path
+        );
     }
+    Vec::new()
 }
 
 fn _save_tunnels(tunnels: &[ExplicitTunnel]) -> std::io::Result<()> {
-    let path = _tunnel_file();
+    let path = _get_tunnel_file();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
         #[cfg(unix)]
@@ -784,5 +819,96 @@ mod tests {
             }],
         });
         assert_eq!(graph.stats().total_rooms, 0);
+    }
+
+    // ── #1467 — tunnel file follows palace_path config ────────────────────
+    //
+    // Mirrors upstream Python's `TestTunnelFileFollowsConfig`. We can't
+    // monkeypatch a module-level constant the way Python tests do, so we
+    // exercise the `Config::load() → tunnel_file()` chain through the
+    // public `MEMPALACE_PALACE_PATH` env var and verify that `_save_tunnels`
+    // writes to / `_load_tunnels` reads from `dirname(palace_path)`.
+
+    /// Set up an isolated XDG_CONFIG_HOME + on-disk `config.json` so that
+    /// `Config::load()` returns a `palace_path` rooted in a temp dir.
+    ///
+    /// We don't rely solely on `MEMPALACE_PALACE_PATH` because the current
+    /// `Config::load()` only honours the env var when a config file already
+    /// exists (the env-var-first path lives behind the file-exists branch
+    /// in `config.rs`). Writing a config file with the desired palace_path
+    /// is the path-of-least-surprise: it exercises `tunnel_file()` through
+    /// exactly the same `Config::load()` chain production code uses.
+    fn _write_palace_config(xdg_dir: &std::path::Path, palace_path: &std::path::Path) {
+        let cfg_dir = xdg_dir.join("mempalace");
+        fs::create_dir_all(&cfg_dir).unwrap();
+        let cfg_path = cfg_dir.join("config.json");
+        let json = serde_json::json!({
+            "palace_path": palace_path,
+            "collection_name": "test_collection",
+        });
+        fs::write(&cfg_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_tunnel_file_follows_palace_path_config() {
+        let _guard = crate::test_env_lock().lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg = temp_dir.path().join("xdg");
+        let palace_path = temp_dir.path().join("palace_root").join("custom_palace");
+        fs::create_dir_all(palace_path.parent().unwrap()).unwrap();
+        _write_palace_config(&xdg, &palace_path);
+        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        std::env::remove_var("MEMPALACE_PALACE_PATH");
+        std::env::remove_var("MEMPAL_PALACE_PATH");
+
+        // _get_tunnel_file() must derive from the configured palace_path.
+        let resolved = super::_get_tunnel_file();
+        let expected = palace_path.parent().unwrap().join("tunnels.json");
+        assert_eq!(resolved, expected);
+
+        // Round-trip: a tunnel saved under the configured palace_path must
+        // be readable from the same path (i.e. it really did land there,
+        // not at ~/.mempalace/tunnels.json).
+        let tunnel = ExplicitTunnel {
+            id: "test_tunnel_id".to_string(),
+            source_wing: "wing_a".to_string(),
+            source_room: "room_a".to_string(),
+            target_wing: "wing_b".to_string(),
+            target_room: "room_b".to_string(),
+            label: "test".to_string(),
+            kind: "explicit".to_string(),
+            created_at: "2026-05-25T00:00:00+00:00".to_string(),
+            updated_at: "2026-05-25T00:00:00+00:00".to_string(),
+        };
+        super::_save_tunnels(std::slice::from_ref(&tunnel)).unwrap();
+        assert!(resolved.exists(), "tunnels.json should be next to palace");
+
+        let loaded = super::_load_tunnels();
+        assert_eq!(loaded, vec![tunnel]);
+
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn test_load_tunnels_returns_empty_when_configured_file_missing() {
+        let _guard = crate::test_env_lock().lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg = temp_dir.path().join("xdg");
+        let palace_path = temp_dir.path().join("palace_root").join("empty_palace");
+        fs::create_dir_all(palace_path.parent().unwrap()).unwrap();
+        _write_palace_config(&xdg, &palace_path);
+        std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        std::env::remove_var("MEMPALACE_PALACE_PATH");
+        std::env::remove_var("MEMPAL_PALACE_PATH");
+
+        // No tunnels.json sibling exists; _load_tunnels must not panic and
+        // must return an empty Vec rather than reading the legacy
+        // `~/.mempalace/tunnels.json` (which might exist on the host).
+        let resolved = super::_get_tunnel_file();
+        assert!(!resolved.exists());
+        let loaded = super::_load_tunnels();
+        assert!(loaded.is_empty());
+
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }
