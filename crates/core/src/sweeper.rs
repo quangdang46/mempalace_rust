@@ -7,6 +7,7 @@ const BATCH_SIZE: usize = 64;
 
 /// Sweep statistics for a directory sweep operation.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct SweepStats {
     /// Drawers that did not exist before this sweep.
     pub drawers_added: usize,
@@ -23,6 +24,7 @@ pub struct SweepStats {
 
 /// Result for a single file in a directory sweep.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct SweepFileResult {
     pub file: String,
     pub added: usize,

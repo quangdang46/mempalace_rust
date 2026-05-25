@@ -164,6 +164,7 @@ fn internal_error_safe<E: std::fmt::Display>(e: &E) -> ErrorData {
 // Shared state
 // ---------------------------------------------------------------------------
 
+#[non_exhaustive]
 pub struct AppState {
     pub config: crate::Config,
     pub db: crate::palace_db::PalaceDb,

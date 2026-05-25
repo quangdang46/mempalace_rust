@@ -4,6 +4,7 @@ use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum SearchError {
     #[error("No palace found at {0}")]
     NoPalace(String),
@@ -20,6 +21,7 @@ pub enum SearchError {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct SearchResult {
     pub text: String,
     pub wing: String,
@@ -87,6 +89,7 @@ impl RoundTo3 for f64 {
 }
 
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct SearchResponse {
     pub query: String,
     pub filters: SearchFilters,
@@ -94,6 +97,7 @@ pub struct SearchResponse {
 }
 
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct SearchFilters {
     pub wing: Option<String>,
     pub room: Option<String>,

@@ -372,6 +372,7 @@ impl Layer3 {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SearchHit {
     pub text: String,
     pub wing: Option<String>,
@@ -501,6 +502,7 @@ fn truncate_snippet(text: &str, max_len: usize) -> String {
 }
 
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct LayerStatus {
     pub palace_path: PathBuf,
     pub identity_path: PathBuf,
@@ -512,20 +514,24 @@ pub struct LayerStatus {
 }
 
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct IdentityStatus {
     pub path: PathBuf,
     pub exists: bool,
     pub tokens: usize,
 }
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct EssentialStatus {
     pub description: String,
 }
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct OnDemandStatus {
     pub description: String,
 }
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct DeepSearchStatus {
     pub description: String,
 }

@@ -45,6 +45,7 @@ const TURN_MARKERS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CorpusOriginResult {
     pub likely_ai_dialogue: bool,
     pub confidence: f64,

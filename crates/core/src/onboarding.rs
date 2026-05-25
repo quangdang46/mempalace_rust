@@ -107,6 +107,7 @@ pub const DEFAULT_WINGS_COMBO: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum Mode {
     Work,
     Personal,
@@ -140,6 +141,7 @@ impl Mode {
 
 /// Person entry from onboarding questions.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PersonEntry {
     pub name: String,
     pub relationship: String,

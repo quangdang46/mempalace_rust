@@ -141,6 +141,7 @@ const MAX_CHUNKS_PER_FILE: usize = 50_000;
 /// already-filed / unreadable / too-short bucket. Mirrors upstream
 /// mempalace's `skip_reason` tuple field added in #1455.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SkipReason {
     /// File produced more than the configured `MAX_CHUNKS_PER_FILE`.
     ChunkCap,
@@ -609,6 +610,7 @@ fn scan_project_with_log<W: Write>(
 }
 
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct MiningResult {
     pub files_processed: usize,
     pub chunks_created: usize,

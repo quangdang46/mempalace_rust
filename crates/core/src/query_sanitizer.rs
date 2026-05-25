@@ -7,6 +7,7 @@ pub const SAFE_QUERY_LENGTH: usize = 200;
 pub const MIN_QUERY_LENGTH: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct SanitizedQuery {
     pub clean_query: String,
     pub was_sanitized: bool,

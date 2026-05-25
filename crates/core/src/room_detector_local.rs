@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RoomMapping {
     pub name: String,
     pub description: String,

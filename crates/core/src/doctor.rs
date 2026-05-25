@@ -15,12 +15,14 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct DoctorReport {
     pub checks: Vec<CheckResult>,
     pub healthy: bool,
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CheckResult {
     pub name: String,
     pub status: CheckStatus,
@@ -28,6 +30,7 @@ pub struct CheckResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum CheckStatus {
     Pass,
     Warn,

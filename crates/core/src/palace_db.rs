@@ -16,6 +16,7 @@ pub const DEFAULT_COMPRESSED_COLLECTION_NAME: &str = "mempalace_compressed";
 /// succeeded but `mine` has not. The Rust port carries the same distinction
 /// here, applied by `cmd_status`, `cmd_compress`, and the search error path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PalaceState {
     /// Palace directory does not exist (or is not a directory).
     Missing,
@@ -107,6 +108,7 @@ pub(crate) struct DocumentEntry {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct QueryResult {
     pub ids: Vec<String>,
     pub documents: Vec<String>,

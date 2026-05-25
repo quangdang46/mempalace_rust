@@ -114,13 +114,13 @@ async fn main() -> Result<()> {
     println!("Metrics at K: {:?}", ks);
     println!("Granularity: {:?}", args.granularity);
 
-    let config = BenchmarkConfig {
-        granularity: args.granularity.into(),
-        n_results: args.n_results,
+    let config = BenchmarkConfig::new(
+        args.granularity.into(),
+        args.n_results,
         ks,
-        limit: args.limit,
-        embed_model: args.embed_model,
-    };
+        args.limit,
+        args.embed_model,
+    );
 
     println!("Running benchmark ...\n");
 

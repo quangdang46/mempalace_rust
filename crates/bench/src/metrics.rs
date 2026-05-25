@@ -165,6 +165,7 @@ pub fn f1_score(prediction: &str, ground_truth: &str) -> f64 {
 
 /// Aggregated benchmark metrics over a collection of questions.
 #[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct BenchmarkMetrics {
     pub ks: Vec<usize>,
     pub recall_any: HashMap<usize, Vec<f64>>,

@@ -221,6 +221,7 @@ fn default_hall_keywords() -> HashMap<String, Vec<String>> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Config {
     pub palace_path: PathBuf,
     pub collection_name: String,

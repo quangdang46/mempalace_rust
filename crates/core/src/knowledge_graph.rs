@@ -7,6 +7,7 @@ pub struct KnowledgeGraph {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Triple {
     pub subject: String,
     pub predicate: String,
@@ -27,6 +28,7 @@ pub struct Triple {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Entity {
     pub id: String,
     pub name: String,
@@ -35,6 +37,7 @@ pub struct Entity {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct KgStats {
     pub total_entities: usize,
     pub total_triples: usize,
@@ -44,6 +47,7 @@ pub struct KgStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EntityQueryResult {
     pub direction: String,
     pub subject: String,

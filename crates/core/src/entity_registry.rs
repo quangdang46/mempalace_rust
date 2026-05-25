@@ -8,6 +8,7 @@ use std::path::Path;
 const EMPTY_REJECTED: &[String] = &[];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EntityEntry {
     pub source: String,
     pub contexts: Vec<String>,
@@ -21,6 +22,7 @@ pub struct EntityEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct WikiCacheEntry {
     pub inferred_type: String,
     pub confidence: f64,
@@ -39,6 +41,7 @@ pub struct WikiCacheEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RegistryData {
     pub version: usize,
     pub mode: String,
@@ -71,6 +74,7 @@ pub struct EntityRegistry {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[non_exhaustive]
 pub struct LookupResult {
     pub entity_type: String,
     pub confidence: f64,
@@ -837,6 +841,7 @@ impl EntityRegistry {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct LearnedEntity {
     pub name: String,
     pub confidence: f32,

@@ -58,6 +58,7 @@ fn _legacy_tunnel_file() -> PathBuf {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ExplicitTunnel {
     pub id: String,
     pub source_wing: String,
@@ -323,6 +324,7 @@ pub struct PalaceGraph {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Wing {
     pub name: String,
     pub wing_type: WingType,
@@ -330,6 +332,7 @@ pub struct Wing {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum WingType {
     Person,
     Project,
@@ -337,6 +340,7 @@ pub enum WingType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[non_exhaustive]
 pub struct Room {
     pub name: String,
     pub hall: HallType,
@@ -345,6 +349,7 @@ pub struct Room {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum HallType {
     Facts,
     Events,
@@ -355,6 +360,7 @@ pub enum HallType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TraversalResult {
     pub room: String,
     pub wings: Vec<String>,
@@ -366,12 +372,14 @@ pub struct TraversalResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TraverseError {
     pub error: String,
     pub suggestions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Tunnel {
     pub room: String,
     pub wings: Vec<String>,
@@ -381,6 +389,7 @@ pub struct Tunnel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TopTunnel {
     pub room: String,
     pub wings: Vec<String>,
@@ -388,6 +397,7 @@ pub struct TopTunnel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct GraphStats {
     pub total_rooms: usize,
     pub tunnel_rooms: usize,
@@ -397,6 +407,7 @@ pub struct GraphStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct GraphNode {
     pub wings: Vec<String>,
     pub halls: Vec<String>,
@@ -405,6 +416,7 @@ pub struct GraphNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct GraphEdge {
     pub room: String,
     pub wing_a: String,
@@ -414,6 +426,7 @@ pub struct GraphEdge {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TraverseOutcome {
     Results(Vec<TraversalResult>),
     Error(TraverseError),

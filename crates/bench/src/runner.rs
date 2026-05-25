@@ -8,6 +8,7 @@ use mempalace_core::palace_db::EmbeddingDb;
 use crate::dataset::{build_session_corpus, build_turn_corpus, BenchmarkEntry, Granularity};
 use crate::metrics::{session_id_from_corpus_id, BenchmarkMetrics};
 
+#[non_exhaustive]
 pub struct BenchmarkConfig {
     pub granularity: Granularity,
     pub n_results: usize,
@@ -28,6 +29,31 @@ impl Default for BenchmarkConfig {
     }
 }
 
+impl BenchmarkConfig {
+    /// Construct a `BenchmarkConfig` with the given fields.
+    ///
+    /// Provided as the public constructor because the struct is
+    /// `#[non_exhaustive]` (mp-005) — external callers cannot use struct
+    /// literal syntax. New fields added in the future will get sensible
+    /// defaults via this method.
+    pub fn new(
+        granularity: Granularity,
+        n_results: usize,
+        ks: Vec<usize>,
+        limit: Option<usize>,
+        embed_model: String,
+    ) -> Self {
+        Self {
+            granularity,
+            n_results,
+            ks,
+            limit,
+            embed_model,
+        }
+    }
+}
+
+#[non_exhaustive]
 pub struct BenchmarkResults {
     pub total_questions: usize,
     pub skipped: usize,

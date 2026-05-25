@@ -110,6 +110,7 @@ const TOPIC_KEYWORDS: &[(&str, &[&str])] = &[
 ];
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ConvoMiningResult {
     pub files_processed: usize,
     pub conversations_mined: usize,

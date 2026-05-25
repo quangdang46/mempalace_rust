@@ -13,6 +13,7 @@ pub const LOMEMEVAL_FILE: &str = "longmemeval_s_cleaned.json";
 
 /// A single turn in a conversation session.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct Turn {
     pub role: String,
     pub content: String,
@@ -20,6 +21,7 @@ pub struct Turn {
 
 /// A single benchmark entry (question + haystack).
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct BenchmarkEntry {
     pub question_id: String,
     pub question: String,
@@ -40,6 +42,7 @@ pub struct BenchmarkEntry {
 
 /// Granularity for corpus construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Granularity {
     /// One document per session (all user turns joined).
     Session,

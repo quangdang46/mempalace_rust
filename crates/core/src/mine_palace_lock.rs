@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 
+#[non_exhaustive]
 pub struct MineAlreadyRunning {
     pub pid: u32,
 }

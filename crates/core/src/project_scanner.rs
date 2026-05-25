@@ -33,6 +33,7 @@ const SKIP_DIRS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ProjectInfo {
     pub name: String,
     pub repo_root: PathBuf,
@@ -80,6 +81,7 @@ impl ProjectInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PersonInfo {
     pub name: String,
     pub total_commits: usize,
