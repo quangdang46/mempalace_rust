@@ -602,6 +602,21 @@ fn no_palace() -> serde_json::Value {
     })
 }
 
+/// Open a fresh `PalaceDb` view rooted at the configured palace path.
+///
+/// All write tools (`tool_add_drawer`, `tool_delete_drawer`,
+/// `tool_diary_write`) open ad-hoc `PalaceDb` handles, mutate them, and
+/// flush to disk. The long-lived `state.db` snapshot built once in
+/// `AppState::new` is therefore stale the moment any write tool runs.
+/// Read-side tools must reopen from disk on every call so that
+/// read-after-write within a single MCP server session reflects the
+/// latest data. The unit-test `dispatch` helper masks this by
+/// reopening `AppState.db` per call, but the real server holds one
+/// `Arc<AppState>` for the whole session.
+fn fresh_db(state: &AppState) -> Result<crate::palace_db::PalaceDb, ErrorData> {
+    crate::palace_db::PalaceDb::open(&state.palace_path).map_err(|e| internal_error_safe(&e))
+}
+
 fn collection_missing(state: &AppState) -> bool {
     !state
         .palace_path
@@ -620,7 +635,8 @@ fn tool_status(state: &AppState, _args: JsonObject) -> Result<CallToolResult, Er
     if collection_missing(state) {
         return ok_json(no_palace());
     }
-    let entries = state.db.get_all(None, None, usize::MAX);
+    let db = fresh_db(state)?;
+    let entries = db.get_all(None, None, usize::MAX);
     let mut wings: HashMap<String, usize> = HashMap::new();
     let mut rooms: HashMap<String, usize> = HashMap::new();
     for entry in &entries {
@@ -638,7 +654,7 @@ fn tool_status(state: &AppState, _args: JsonObject) -> Result<CallToolResult, Er
         }
     }
     ok_json(serde_json::json!({
-        "total_drawers": state.db.count(),
+        "total_drawers": db.count(),
         "wings": wings,
         "rooms": rooms,
         "palace_path": state.palace_path.display().to_string(),
@@ -651,7 +667,7 @@ fn tool_list_wings(state: &AppState, _args: JsonObject) -> Result<CallToolResult
     if collection_missing(state) {
         return ok_json(no_palace());
     }
-    let entries = state.db.get_all(None, None, usize::MAX);
+    let entries = fresh_db(state)?.get_all(None, None, usize::MAX);
     let mut wings: HashMap<String, usize> = HashMap::new();
     for entry in &entries {
         if let Some(meta) = entry.metadatas.first() {
@@ -675,7 +691,7 @@ fn tool_list_rooms(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         wing: Option<String>,
     }
     let input: Input = parse_args(args)?;
-    let entries = state.db.get_all(input.wing.as_deref(), None, usize::MAX);
+    let entries = fresh_db(state)?.get_all(input.wing.as_deref(), None, usize::MAX);
     let mut room_counts: HashMap<String, usize> = HashMap::new();
     for entry in &entries {
         if let Some(meta) = entry.metadatas.first() {
@@ -693,7 +709,7 @@ fn tool_get_taxonomy(state: &AppState, _args: JsonObject) -> Result<CallToolResu
     if collection_missing(state) {
         return ok_json(no_palace());
     }
-    let entries = state.db.get_all(None, None, usize::MAX);
+    let entries = fresh_db(state)?.get_all(None, None, usize::MAX);
     let mut taxonomy: HashMap<String, HashMap<String, usize>> = HashMap::new();
     for entry in &entries {
         if let Some(meta) = entry.metadatas.first() {
@@ -1069,7 +1085,15 @@ fn tool_kg_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, 
 fn build_graph_from_db(state: &AppState) -> crate::palace_graph::PalaceGraph {
     use crate::palace_graph::{HallType, PalaceGraph, Room, Wing, WingType};
     let mut by_wing: HashMap<String, Vec<Room>> = HashMap::new();
-    for entry in state.db.get_all(None, None, usize::MAX) {
+    // Reopen from disk so a graph built mid-session reflects mutations
+    // committed by other tools in the same session. Use ok() so that if
+    // the palace is genuinely unreachable we return an empty graph rather
+    // than panicking the dispatcher.
+    let entries = crate::palace_db::PalaceDb::open(&state.palace_path)
+        .ok()
+        .map(|db| db.get_all(None, None, usize::MAX))
+        .unwrap_or_default();
+    for entry in entries {
         if let Some(meta) = entry.metadatas.first() {
             let wing = meta
                 .get("wing")
@@ -1182,12 +1206,11 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
         .map(str::trim)
         .filter(|wing| !wing.is_empty())
         .map(ToString::to_string);
+    let db = fresh_db(state)?;
     let entries = if let Some(wing) = wing.as_deref() {
-        state.db.get_all(Some(wing), Some("diary"), usize::MAX)
+        db.get_all(Some(wing), Some("diary"), usize::MAX)
     } else {
-        state
-            .db
-            .get_all(None, Some("diary"), usize::MAX)
+        db.get_all(None, Some("diary"), usize::MAX)
             .into_iter()
             .filter(|entry| {
                 entry
@@ -2028,6 +2051,102 @@ mod tests {
             json!({ "agent_name": "TestAgent" }),
         );
         assert!(read_result.is_ok(), "diary read failed: {:?}", read_result);
+    }
+
+    /// Regression: every read-side MCP tool that consulted the long-lived
+    /// `AppState.db` snapshot was stale within a single server session,
+    /// because write tools (`tool_diary_write`, `tool_add_drawer`,
+    /// `tool_delete_drawer`) open their own ad-hoc `PalaceDb` handles and
+    /// flush to disk without touching `state.db`. Reproduced live by
+    /// running a single `mpr serve` session, calling `mempalace_diary_write`
+    /// (success) then `mempalace_diary_read` immediately after (returned
+    /// `entries: []`). The unit-test `dispatch` helper masks this by
+    /// reopening `AppState.db` per call, so these tests deliberately call
+    /// `tool_*` directly on a single shared `&AppState` to exercise the
+    /// real server's behaviour.
+    #[test]
+    fn test_diary_read_after_write_reflects_disk_writes() {
+        let state = test_state();
+
+        let write_args = json!({
+            "agent_name": "ReproAgent",
+            "entry": "Diary entry that must come back on read",
+            "topic": "smoke",
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        tool_diary_write(&state, write_args).expect("diary write should succeed");
+
+        let read_args = json!({ "agent_name": "ReproAgent" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        let result = tool_diary_read(&state, read_args).expect("diary read should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let entries = parsed
+            .get("entries")
+            .and_then(|v| v.as_array())
+            .expect("entries array");
+        assert_eq!(
+            entries.len(),
+            1,
+            "diary_read returned {} entries despite a successful write \
+             on the same long-lived AppState (state.db staleness bug). \
+             Parsed response: {}",
+            entries.len(),
+            parsed
+        );
+        let entry = &entries[0];
+        assert_eq!(
+            entry.get("content").and_then(|v| v.as_str()),
+            Some("Diary entry that must come back on read"),
+        );
+    }
+
+    /// Regression: same staleness bug, but via `mempalace_list_wings`
+    /// (read) after `mempalace_add_drawer` (write). Locks in the wider
+    /// fix beyond the original `diary_read` repro.
+    #[test]
+    fn test_list_wings_after_add_drawer_reflects_disk_writes() {
+        let state = test_state();
+
+        let add_args = json!({
+            "wing": "regression_wing",
+            "room": "regression_room",
+            "content": "Drawer added in the same session.",
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        tool_add_drawer(&state, add_args).expect("add_drawer should succeed");
+
+        let result = tool_list_wings(&state, json!({}).as_object().cloned().unwrap())
+            .expect("list_wings should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let wings = parsed
+            .get("wings")
+            .and_then(|v| v.as_object())
+            .expect("wings object");
+        assert_eq!(
+            wings.get("regression_wing").and_then(|v| v.as_u64()),
+            Some(1),
+            "list_wings missed the just-added wing (state.db staleness bug). \
+             Parsed response: {}",
+            parsed
+        );
     }
 
     #[test]
