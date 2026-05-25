@@ -9,3 +9,6 @@
 # Temporary
 last-touched
 *.tmp
+
+# Local history backups (beads internal)
+.br_history/
