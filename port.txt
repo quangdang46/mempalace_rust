@@ -597,3 +597,113 @@ New deferred work:
    pair on top of the existing tunnels code.
 
 This file is the current gap ledger for the `95caf80` reference state.
+
+
+Sync update — upstream HEAD `d0d011e` (2026-05-25)
+==================================================
+
+Followed `.agents/skills/sync-upstream-mempalace/SKILL.md`. Diffed
+upstream `95caf80..d0d011e` (33 commits touching `mempalace/`) against
+the Rust port and ported the single highest-priority correctness fix
+below. Larger / data-shipping / feature-flag work is deferred and
+listed in the updated "Remaining gaps" section.
+
+Ported in this session
+----------------------
+
+1. `mempalace/palace_graph.py` + `mempalace/config.py` `3171a1b`
+   (#1467) — tunnel file now follows `palace_path` config instead of
+   the hardcoded `~/.mempalace/tunnels.json`. Without this, drawers
+   landed in the configured palace while tunnels silently landed in a
+   different file invisible to other processes touching the same
+   palace (subagent profiles, sandboxes, multi-tenant hosts, container
+   mounts moving the palace to `/srv/`).
+   - Rust: new `Config::tunnel_file()` returning
+     `dirname(palace_path)/tunnels.json`;
+     `palace_graph::_tunnel_file` split into `_get_tunnel_file`
+     (configured) + `_legacy_tunnel_file` (legacy detection).
+     `_load_tunnels` warns via `tracing::warn!` if the configured
+     tunnel file is missing but the pre-fix hardcoded path has one —
+     no auto-migration, matching upstream's intentional choice.
+   - Regression tests:
+     `config::tests::test_tunnel_file_is_sibling_of_palace_path`,
+     `palace_graph::tests::test_tunnel_file_follows_palace_path_config`,
+     `palace_graph::tests::test_load_tunnels_returns_empty_when_configured_file_missing`.
+
+Not ported (Rust N/A)
+---------------------
+
+- `f620809` / `997ec1b` / `3e00192` (#1235) — strip lone UTF-16
+  surrogates with U+FFFD before writing to ChromaDB. Rust's `String`
+  type forbids invalid UTF-8 by construction; lone surrogates cannot
+  exist in a Rust `String` reaching the storage layer. The closest
+  surface (JSON decode) returns a parse error before any sanitizer
+  runs. Stricter than upstream but never silently corrupts data.
+
+Carried forward to a focused PR (too large to bundle here)
+----------------------------------------------------------
+
+- `0ecf0e5` (#1537) — validate FTS5 at end of mine. Wires
+  `_validate_palace_fts5_after_mine` into the three mine entry points
+  and surfaces `MineValidationError` as exit 1. Rust's
+  `crates/core/src/repair.rs` does not yet have a
+  `sqlite_integrity_errors` primitive; porting the validation hook
+  requires landing that helper first. Tracked for the next sync.
+- `6658a4d` (#1539 / #1540) — chunk content before embedding in
+  `tool_add_drawer`, `tool_diary_write`, and two other write sites to
+  avoid silent data loss when content exceeds the embedder context
+  window. Substantial diff that touches MCP request handling,
+  chunk-id derivation, and parent-drawer metadata across multiple
+  call sites. Rust's `Miner::chunk_text` is the canonical chunker
+  already; lifting it into a shared helper and threading it through
+  the MCP write surfaces is a dedicated piece of work.
+- `db4f6cd` (#1538) — paragraph chunker bug where the splitter can
+  emit oversized chunks. Lands together with #1539/#1540 (same chunk
+  pipeline).
+- `3171a1b` (#1468) — second half of the tunnels fix: explicit-tunnel
+  endpoint validation against ChromaDB. Requires plumbing
+  `_check_room_exists(wing, room, col)` through `create_tunnel`'s
+  call graph. Rust's `palace_graph::create_tunnel` is invoked from
+  contexts that don't currently hold a `PalaceDb` handle; adding it
+  here would balloon the diff and risk regressions in topic-tunnel
+  pathways that intentionally skip validation. Deferred to land with
+  a small refactor of the tunnel-creation API.
+- `0b9c562` (#1455 fix) — carried forward from the previous ledger.
+  Rust's `extract_entities_for_metadata` is wired through
+  `entity_detector::detect_from_content` (which is already
+  case-insensitive), so this may already be structurally N/A; needs a
+  parity test before closing the gap definitively.
+- `7bddb65` / `1c818d5` (#1552) — stale-PID timeout + MCP idle exit +
+  structured errors. Carried forward unchanged from the previous
+  ledger.
+
+Feature-flag / data-file work (not sync, treat as feature requests)
+-------------------------------------------------------------------
+
+- `3189407` (#1605) — COCA-derived common-English filter for entity
+  candidates. Ships a wordlist data file plus filter wiring in
+  `entity_detector.py`. Net-new feature.
+- `49a8c86` (#494) — `hooks.auto_save` config toggle + env var. New
+  config knob + env var.
+- `1c5f15c` / `d0d011e` — graph layout features (force-directed
+  layout). New visualization feature work.
+- `5e3d3dd` / `e362dfa` / `5c40cc3` / `ffc2ae4` — format-miner feature
+  track. Carried forward unchanged from the previous ledger.
+- `07807ab` / `fc13be5` / `c18879b` — hallways + cross-wing entity
+  tunnels feature pair. Carried forward unchanged.
+
+Remaining gaps after this sync
+------------------------------
+
+Closed by this sync: tunnel-file location no longer ignores configured
+`palace_path` (#1467).
+
+Carried forward (Python-only or large): #1537 FTS5 validation, #1538 /
+#1539 / #1540 chunk-before-embed pipeline, #1468 tunnel endpoint
+validation, #1552 stale-PID + MCP idle, #1455 case-insensitive entity
+match parity check, LLM-assisted init / CLI flags, hook/doc/i18n sync,
+broader test parity, format-miner feature track, hallways + entity
+tunnels feature pair, COCA filter feature, hooks.auto_save toggle,
+graph layout features.
+
+This file is the current gap ledger for the `d0d011e` reference state.

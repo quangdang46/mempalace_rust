@@ -416,6 +416,24 @@ impl Config {
         Ok(Self::config_dir()?.join("entity_registry.json"))
     }
 
+    /// Path to the tunnel file, sibling of `palace_path` (#1467).
+    ///
+    /// Before this fix the tunnel file was hardcoded at
+    /// `~/.mempalace/tunnels.json` regardless of the configured
+    /// `palace_path`. Whenever the configured palace lived elsewhere
+    /// (subagent profile, sandbox, container mount on `/srv/`, …) the
+    /// drawers landed in the configured palace while tunnels silently
+    /// landed in a different file invisible to other processes touching
+    /// the same palace. Anchoring the tunnel file to `dirname(palace_path)`
+    /// keeps every piece of palace state co-located.
+    pub fn tunnel_file(&self) -> PathBuf {
+        self.palace_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("tunnels.json")
+    }
+
     pub fn identity_file_path() -> anyhow::Result<PathBuf> {
         Ok(Self::config_dir()?.join("identity.txt"))
     }
@@ -651,6 +669,25 @@ mod tests {
         );
 
         std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn test_tunnel_file_is_sibling_of_palace_path() {
+        // #1467: the tunnel file must live next to the configured palace,
+        // not at the hardcoded `~/.mempalace/tunnels.json` legacy path.
+        let cfg = Config {
+            palace_path: PathBuf::from("/srv/mempalace/palace"),
+            collection_name: DEFAULT_COLLECTION_NAME.to_string(),
+            people_map: HashMap::new(),
+            topic_wings: default_topic_wings(),
+            hall_keywords: default_hall_keywords(),
+            embedding_model: default_embedding_model(),
+            languages: vec![],
+        };
+        assert_eq!(
+            cfg.tunnel_file(),
+            PathBuf::from("/srv/mempalace/tunnels.json")
+        );
     }
 
     #[test]
