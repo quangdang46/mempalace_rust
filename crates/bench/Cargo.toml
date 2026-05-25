@@ -17,3 +17,18 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 regex = { workspace = true }
 edgebert = "0.4"
+
+# `mempalace-bench` keeps its existing main.rs (synthetic embedding harness
+# from the original port) while `longmemeval-bench` (mp-003) lives under
+# src/bin/ as the production-path reproducer. Declaring both explicitly
+# stops cargo from silently auto-discovering anything else under src/bin/.
+[[bin]]
+name = "mempalace-bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "longmemeval-bench"
+path = "src/bin/longmemeval-bench.rs"
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -6,3 +6,7 @@ port.txt
 .omc/*
 target/*
 .sisyphus/*
+
+# LongMemEval-S dataset (mp-003) — fetched lazily, never committed.
+crates/bench/data/longmemeval_s/
+crates/bench/data/longmemeval_s/*
