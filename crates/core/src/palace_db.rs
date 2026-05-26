@@ -144,6 +144,18 @@ pub struct EmbeddingDb {
     storage: embedvec::VectorStorage,
 }
 
+impl EmbeddingDb {
+    /// Return the text of the drawer at index `idx`, or `None` if out of range.
+    pub(crate) fn nth_text(&self, idx: usize) -> Option<&str> {
+        self.documents.get(idx).map(|(_, t)| t.as_str())
+    }
+
+    /// Return the number of drawers stored.
+    pub(crate) fn len(&self) -> usize {
+        self.documents.len()
+    }
+}
+
 impl PalaceDb {
     pub fn open(palace_path: &std::path::Path) -> anyhow::Result<Self> {
         Self::open_collection(palace_path, DEFAULT_COLLECTION_NAME)
@@ -688,6 +700,19 @@ impl EmbeddingDb {
     pub fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
         let embedding = self.embedder.encode(text)?;
         Ok(embedding)
+    }
+
+    /// Search using a pre-computed embedding vector (already normalized).
+    /// Returns `(distance, index)` pairs in ascending distance order.
+    pub fn query_by_vector(
+        &self,
+        normalized_query: &[f32],
+        n_results: usize,
+    ) -> anyhow::Result<Vec<(f32, usize)>> {
+        let results = self
+            .hnsw
+            .search(normalized_query, n_results, 1024, &self.storage, None)?;
+        Ok(results.into_iter().map(|(id, dist)| (dist, id)).collect())
     }
 }
 

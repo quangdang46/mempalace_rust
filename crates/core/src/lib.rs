@@ -129,6 +129,8 @@ pub use palace::{
 pub use palace::builder::PalaceConfig;
 // PalaceStore lives in the palace module (not builder); re-export from palace.
 pub use palace::PalaceStore;
+// EmbedvecStore is the default concrete store implementation.
+pub use palace::store::EmbedvecStore;
 
 #[cfg(feature = "embed-fastembed")]
 pub use embed::FastEmbedEmbedder;

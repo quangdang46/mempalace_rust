@@ -33,3 +33,7 @@ impl Default for StoreTier {
         Self::Embedvec
     }
 }
+
+// Re-export the concrete store implementations.
+pub mod embedvec;
+pub use embedvec::EmbedvecStore;
