@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
@@ -39,37 +39,9 @@ struct WalEntry {
     trace_id: String,
 }
 
-fn wal_dir_path() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
-        if !xdg.is_empty() {
-            return PathBuf::from(xdg).join("mempalace").join("wal");
-        }
-    }
-
-    if let Some(proj) = directories::ProjectDirs::from("com", "mempalace", "mempalace") {
-        if let Some(state_dir) = proj.state_dir() {
-            return state_dir.join("wal");
-        }
-    }
-
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join(".mempalace")
-        .join("wal")
-}
-
-fn wal_file_path() -> PathBuf {
-    wal_dir_path().join("write_log.jsonl")
-}
-
-fn append_wal_entry(entry: &WalEntry) -> anyhow::Result<()> {
-    let wal_file = wal_file_path();
-    let wal_dir = wal_file
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(wal_dir_path);
-    fs::create_dir_all(&wal_dir)?;
+fn append_wal_entry(entry: &WalEntry, wal_dir: &Path) -> anyhow::Result<()> {
+    let wal_file = wal_dir.join("write_log.jsonl");
+    fs::create_dir_all(wal_dir)?;
 
     let existing = fs::read(&wal_file).unwrap_or_default();
     let temp_path = wal_dir.join(format!("write_log.{}.tmp", entry.trace_id));
@@ -107,6 +79,7 @@ fn log_tool_invocation(
     args: &JsonObject,
     result_summary: Option<serde_json::Value>,
     trace_id: &str,
+    wal_dir: &Path,
 ) {
     let entry = WalEntry {
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -116,7 +89,7 @@ fn log_tool_invocation(
         trace_id: trace_id.to_string(),
     };
 
-    if let Err(err) = append_wal_entry(&entry) {
+    if let Err(err) = append_wal_entry(&entry, wal_dir) {
         warn!("Failed to append MCP WAL entry: {}", err);
     }
 }
@@ -196,6 +169,7 @@ async fn invoke_with_wal<F>(
     tool_name: String,
     args: JsonObject,
     dispatch: F,
+    wal_dir: PathBuf,
 ) -> Result<CallToolResult, ErrorData>
 where
     F: FnOnce(String, JsonObject) -> DynResult,
@@ -209,7 +183,7 @@ where
         ),
         16,
     );
-    log_tool_invocation(&tool_name, &args, None, &trace_id);
+    log_tool_invocation(&tool_name, &args, None, &trace_id, &wal_dir);
     let result = match validate_known_params(&tool_name, &args) {
         Err(err) => Err(err),
         Ok(()) => dispatch(tool_name.clone(), args.clone()).await,
@@ -219,6 +193,7 @@ where
         &args,
         Some(summarize_tool_result(&result)),
         &trace_id,
+        &wal_dir,
     );
     result
 }
@@ -539,11 +514,13 @@ impl ServerHandler for MempalaceServer {
     ) -> impl std::future::Future<Output = Result<CallToolResult, rmcp::ErrorData>> + MaybeSendFuture + '_
     {
         let dispatch = make_dispatch(self.state.clone());
+        let wal_dir = self.state.palace_path.join("wal");
         async move {
             invoke_with_wal(
                 request.name.to_string(),
                 request.arguments.unwrap_or_default(),
                 dispatch,
+                wal_dir,
             )
             .await
         }
@@ -1428,13 +1405,14 @@ mod tests {
         };
         let f = make_dispatch(Arc::new(owned_state));
         let args = args.as_object().cloned().unwrap_or_default();
+        let wal_dir = state.palace_path.join("wal");
         // Use try_current to detect if we're in a runtime
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(invoke_with_wal(name.to_string(), args, f)),
+            Ok(handle) => handle.block_on(invoke_with_wal(name.to_string(), args, f, wal_dir.clone())),
             Err(_) => {
                 // No runtime: create one just for this call
                 let rt = Runtime::new().unwrap();
-                rt.block_on(invoke_with_wal(name.to_string(), args, f))
+                rt.block_on(invoke_with_wal(name.to_string(), args, f, wal_dir))
             }
         }
     }
@@ -2026,28 +2004,9 @@ mod tests {
     }
 
     #[test]
-    fn test_wal_file_path_prefers_xdg_state_home() {
-        let temp = tempfile::tempdir().expect("tempdir should be created");
-        std::env::set_var("XDG_STATE_HOME", temp.path());
-        let path = wal_file_path();
-        assert_eq!(
-            path,
-            temp.path()
-                .join("mempalace")
-                .join("wal")
-                .join("write_log.jsonl")
-        );
-        std::env::remove_var("XDG_STATE_HOME");
-    }
-
-    #[test]
     fn test_dispatch_writes_wal_entries() {
-        let temp = tempfile::tempdir().expect("tempdir should be created");
-        let xdg_path = temp.path().join("mempalace_state");
-        std::env::set_var("XDG_STATE_HOME", &xdg_path);
         let state = test_state();
-
-        let wal_path = wal_file_path();
+        let wal_path = state.palace_path.join("wal").join("write_log.jsonl");
 
         let entries_before = if wal_path.exists() {
             let content = std::fs::read_to_string(&wal_path).unwrap_or_default();
@@ -2070,8 +2029,6 @@ mod tests {
             entries_after > entries_before,
             "WAL should grow after dispatch call"
         );
-
-        std::env::remove_var("XDG_STATE_HOME");
     }
 
     #[test]
