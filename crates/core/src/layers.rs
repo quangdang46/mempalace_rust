@@ -434,20 +434,18 @@ impl MemoryStack {
         }
 
         let l0_text = self.l0.render();
-        let l1_text = self.l1.generate(palace.as_ref()).await;
+        let l1_text = self.l1.generate(&palace).await;
 
         format!("{}\n\n{}", l0_text, l1_text)
     }
 
     /// On-demand L2 retrieval filtered by wing/room.
     pub fn recall(&self, wing: Option<&str>, room: Option<&str>, n_results: usize) -> String {
-        let palace = match crate::palace::PalaceBuilder::new()
-            .config(crate::palace::builder::PalaceConfig { palace_path: self.palace_path.clone(), ..Default::default() })
-            .open().await {
-            Ok(p) => p,
+        let palace_db = match PalaceDb::open(&self.palace_path) {
+            Ok(db) => db,
             Err(e) => return format!("No palace found: {}", e),
         };
-        self.l2.retrieve(palace.as_ref(), wing, room, n_results)
+        self.l2.retrieve(&palace_db, wing, room, n_results)
     }
 
     /// Deep L3 semantic search.
@@ -458,10 +456,8 @@ impl MemoryStack {
         room: Option<&str>,
         n_results: usize,
     ) -> String {
-        let palace = match crate::palace::PalaceBuilder::new()
-            .config(crate::palace::builder::PalaceConfig { palace_path: self.palace_path.clone(), ..Default::default() })
-            .open().await {
-            Ok(p) => p,
+        let palace_db = match PalaceDb::open(&self.palace_path) {
+            Ok(db) => db,
             Err(e) => return format!("No palace found: {}", e),
         };
         self.l3
