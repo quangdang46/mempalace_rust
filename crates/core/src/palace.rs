@@ -549,6 +549,7 @@ pub trait MemoryProvider: Send + Sync + 'static {
 /// ```
 ///
 /// See [`PalaceBuilder`] for all configuration options.
+#[derive(Clone)]
 pub struct Palace {
     // All internal state is behind Arcs so Palace is Send + Sync.
     embedder: Arc<dyn super::embed::Embedder>,
