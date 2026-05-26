@@ -156,7 +156,6 @@ impl Default for MemoryTier {
 /// `SearchScope { hall: Some("advice"), .. }` searches all wings but
 /// only in the advice hall.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-#[non_exhaustive]
 pub struct SearchScope {
     /// Limit to drawers in this wing (project/person name).
     pub wing: Option<String>,
