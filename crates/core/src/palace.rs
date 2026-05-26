@@ -471,6 +471,15 @@ pub trait MemoryProvider: Send + Sync + 'static {
     /// knowledge graph as a `Triple` (entity extraction from content).
     async fn add_drawer(&self, drawer: Drawer) -> anyhow::Result<DrawerId>;
 
+    /// Batch version of add_drawer for efficiency.
+    async fn add_drawers(&self, drawers: Vec<Drawer>) -> anyhow::Result<Vec<DrawerId>> {
+        let mut ids = Vec::new();
+        for drawer in drawers {
+            ids.push(self.add_drawer(drawer).await?);
+        }
+        Ok(ids)
+    }
+
     /// Convenience: file content directly with a kind and scope.
     /// Shorthand for `add_drawer(Drawer::new(content).kind(kind).wing(wing))`.
     async fn remember(
