@@ -137,25 +137,51 @@ impl PalaceBuilder {
     /// storage. Returns an error if config or embedder is missing, or
     /// if the embedder fails to load.
     pub async fn open(self) -> anyhow::Result<Palace> {
-        let _config = self.config.ok_or_else(|| {
+        let config = self.config.ok_or_else(|| {
             anyhow::anyhow!("PalaceBuilder: config is mandatory. Call .config(PalaceConfig) before .open()")
         })?;
 
         let embedder = self.embedder.ok_or_else(|| {
             anyhow::anyhow!("PalaceBuilder: embedder is mandatory. Call .embedder(arc_embedder) before .open()")
         })?;
+
+        // Ensure palace directory exists first (manifest lives here).
+        std::fs::create_dir_all(&config.palace_path)?;
+
+        // Load or create the embedding manifest.
+        use crate::embed::EmbeddingManifest;
+        let _manifest = match EmbeddingManifest::read(&config.palace_path)? {
+            Some(existing) => {
+                // Validate: manifest dim/fingerprint must match the embedder.
+                // If validation fails, return an actionable error with both
+                // the recorded and runtime values so the user knows how to fix it.
+                if let Err(err) = existing.validate_against(embedder.as_ref()) {
+                    return Err(anyhow::anyhow!(
+                        "embedding manifest mismatch: {}
+                         Hint: delete {} to re-initialise with the current embedder.",
+                        err,
+                        EmbeddingManifest::path(&config.palace_path).display()
+                    ));
+                }
+                existing
+            }
+            None => {
+                // First open: write the manifest so future opens can validate.
+                let manifest = EmbeddingManifest::from_embedder(
+                    embedder.as_ref(),
+                    &config.embed_model,
+                );
+                EmbeddingManifest::write(&config.palace_path, &manifest)?;
+                manifest
+            }
+        };
+
         let store = if let Some(s) = self.store {
             s
         } else {
-            // Use embedvec-based store as default.
-            // TODO: wire to EmbedvecStore once it implements PalaceStore (mp-021).
-            // For now, return an error asking the user to set a store.
-            anyhow::bail!(
-                "PalaceBuilder: no store supplied and the default EmbedvecStore \
-                 is not yet wired to the PalaceStore trait (mp-021). \
-                 Set a store explicitly with .store(Arc::new(EmbedvecStore::new())) \
-                 or wait for mp-021."
-            )
+            // Default: EmbedvecStore matching the embedder dimension.
+            // Dimension is validated above; if we reach here, dim matches.
+            Arc::new(crate::EmbedvecStore::new()?)
         };
 
         Ok(Palace { embedder, store })
