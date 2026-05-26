@@ -45,6 +45,8 @@ pub mod store;
 
 pub use builder::PalaceBuilder;
 pub use store::StoreTier;
+#[cfg(feature = "embed-embedvec")]
+pub use store::embedvec::EmbedvecStore;
 
 // ---------------------------------------------------------------------------
 // Public types (mirroring the §3 Concrete API Sketch)
@@ -108,6 +110,39 @@ pub enum DrawerKind {
 impl Default for DrawerKind {
     fn default() -> Self {
         Self::Raw
+    }
+}
+
+/// Memory tier — lifecycle stage of a drawer (ADR-13 / mp-051).
+///
+/// Drawers move through tiers as consolidation happens:
+///
+///   | Tier | Meaning |
+///   |-------|---------|
+///   | `Working` | Raw observation just ingested |
+///   | `Episodic` | Session-level summary (e.g. mined conversation) |
+///   | `Semantic` | Consolidated fact in KG (Phase 5 sleep consolidation) |
+///   | `Procedural` | Encoded skill/how-to from repeated patterns |
+///
+/// Default on ingest is `Working` or `Episodic` (set by the caller based on source).
+/// Promotion through tiers happens in sleep-time consolidation (mp-091).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryTier {
+    /// Raw observation — verbatim content, not yet consolidated.
+    Working,
+    /// Episodic summary of a session or batch ingest.
+    Episodic,
+    /// Fact surfaced via KG consolidation (Phase 5).
+    Semantic,
+    /// Learned procedure/skill (Phase 5).
+    Procedural,
+}
+
+impl Default for MemoryTier {
+    fn default() -> Self {
+        Self::Working
     }
 }
 
@@ -340,6 +375,11 @@ pub struct Drawer {
     pub content: String,
     /// The memory type, which determines hall routing.
     pub kind: DrawerKind,
+    /// Memory lifecycle tier. Controls consolidation policy (ADR-13 / mp-051).
+    /// Default is `MemoryTier::Working`. Promotion to Episodic/Semantic/Procedural
+    /// happens in sleep-time consolidation (mp-091).
+    #[serde(default)]
+    pub tier: MemoryTier,
     /// Wing (project/person). `None` means the palace default wing.
     pub wing: Option<String>,
     /// Room (specific topic within the wing). `None` means unfiled.
@@ -357,6 +397,7 @@ impl Drawer {
             id: None,
             content: content.into(),
             kind: DrawerKind::default(),
+            tier: MemoryTier::default(),
             wing: None,
             room: None,
             metadata: std::collections::HashMap::new(),
@@ -365,6 +406,11 @@ impl Drawer {
 
     pub fn kind(mut self, kind: DrawerKind) -> Self {
         self.kind = kind;
+        self
+    }
+
+    pub fn tier(mut self, tier: MemoryTier) -> Self {
+        self.tier = tier;
         self
     }
 
