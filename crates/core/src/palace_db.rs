@@ -170,6 +170,59 @@ impl PalaceDb {
         })
     }
 
+    /// Embedder-aware open path (mp-016 / ADR-8).
+    ///
+    /// Performs the same work as [`Self::open`] **plus** the
+    /// `embedding.json` manifest dance:
+    ///
+    /// * If a manifest exists on disk, validate it against `embedder`'s
+    ///   `dim()` and `fingerprint()`. A mismatch returns
+    ///   [`crate::embed::ManifestMismatch`] wrapped in
+    ///   [`crate::error::MempalaceError::ManifestMismatch`] whose
+    ///   message points at `mpr migrate --re-embed`.
+    /// * If absent and the palace has zero drawers (fresh install),
+    ///   write a manifest from `embedder`.
+    /// * If absent but drawers already exist (legacy palace from before
+    ///   mp-015 landed), emit a `tracing::warn!` and write a
+    ///   best-effort manifest. We can't validate the *existing* vectors
+    ///   against this manifest after the fact, but we can at least
+    ///   ensure subsequent opens are checked.
+    ///
+    /// Override: `MEMPALACE_SKIP_MANIFEST_CHECK=1` skips validation.
+    /// This is a deliberate test-and-migration backdoor; production
+    /// code paths must not set it. The override emits a `warn!` so it
+    /// shows up in logs.
+    ///
+    /// `model_name` is supplied by the caller because [`Embedder`]
+    /// deliberately keeps the human-readable model name out of its
+    /// surface (different backends have different concepts of a
+    /// "name"). Used only when *writing* a new manifest.
+    pub fn open_with_embedder(
+        palace_path: &std::path::Path,
+        embedder: &dyn crate::embed::Embedder,
+        model_name: &str,
+    ) -> anyhow::Result<Self> {
+        Self::open_collection_with_embedder(
+            palace_path,
+            DEFAULT_COLLECTION_NAME,
+            embedder,
+            model_name,
+        )
+    }
+
+    /// Collection-aware variant of [`Self::open_with_embedder`]
+    /// (mp-016 / ADR-8). See that method's docs for the full contract.
+    pub fn open_collection_with_embedder(
+        palace_path: &std::path::Path,
+        collection_name: &str,
+        embedder: &dyn crate::embed::Embedder,
+        model_name: &str,
+    ) -> anyhow::Result<Self> {
+        let db = Self::open_collection(palace_path, collection_name)?;
+        validate_or_write_manifest(palace_path, embedder, model_name, db.documents.len())?;
+        Ok(db)
+    }
+
     pub async fn query(
         &self,
         query_text: &str,
@@ -660,6 +713,77 @@ fn naive_similarity(query: &str, content: &str) -> f64 {
     intersection as f64 / union as f64
 }
 
+/// Environment variable that disables the manifest validation in
+/// [`PalaceDb::open_with_embedder`] (mp-016 / ADR-8).
+///
+/// Intended exclusively for tests and the planned `mpr migrate
+/// --re-embed` flow, where we deliberately want to open a palace with
+/// a different embedder. Setting it always emits a `warn!` so it
+/// shows up in logs.
+pub const SKIP_MANIFEST_CHECK_ENV: &str = "MEMPALACE_SKIP_MANIFEST_CHECK";
+
+/// Read-or-write the embedding manifest as part of an embedder-aware
+/// `PalaceDb::open` call. See [`PalaceDb::open_with_embedder`] for the
+/// full contract.
+fn validate_or_write_manifest(
+    palace_path: &std::path::Path,
+    embedder: &dyn crate::embed::Embedder,
+    model_name: &str,
+    drawer_count: usize,
+) -> anyhow::Result<()> {
+    use crate::embed::EmbeddingManifest;
+
+    // Check the override first so we can warn and bail before touching
+    // the disk.
+    if std::env::var(SKIP_MANIFEST_CHECK_ENV)
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
+    {
+        tracing::warn!(
+            target: "mempalace::manifest",
+            env = SKIP_MANIFEST_CHECK_ENV,
+            "embedding manifest validation skipped via env override (test/migration only)"
+        );
+        return Ok(());
+    }
+
+    match EmbeddingManifest::read(palace_path)? {
+        Some(manifest) => {
+            // mp-016: present → validate. Any mismatch is fatal and
+            // surfaces as `MempalaceError::ManifestMismatch` once it
+            // bubbles through the `?`-driven anyhow chain (the wrapper
+            // `From<ManifestMismatch> for MempalaceError` is what makes
+            // the typed error available to library callers; CLI users
+            // see the same actionable message either way).
+            manifest
+                .validate_against(embedder)
+                .map_err(crate::error::MempalaceError::ManifestMismatch)?;
+            Ok(())
+        }
+        None => {
+            // mp-015 / mp-016: absent. Two cases:
+            //   1. Fresh palace (no drawers yet) → silently write the
+            //      manifest so the next open is validated.
+            //   2. Legacy palace (drawers exist, no manifest) → warn
+            //      and write best-effort. We can't retrofit-validate
+            //      the existing vectors but at least we lock in the
+            //      identity going forward.
+            if drawer_count > 0 {
+                tracing::warn!(
+                    target: "mempalace::manifest",
+                    palace = %palace_path.display(),
+                    drawers = drawer_count,
+                    fingerprint = %embedder.fingerprint(),
+                    "legacy palace has drawers but no embedding.json; writing best-effort manifest from active embedder. If this is the wrong embedder, run `mpr migrate --re-embed`."
+                );
+            }
+            let manifest = EmbeddingManifest::from_embedder(embedder, model_name);
+            EmbeddingManifest::write(palace_path, &manifest)?;
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -842,5 +966,159 @@ mod tests {
             "trimmed whitespace should still hit the dedup window"
         );
         assert_eq!(db.count(), 1);
+    }
+
+    // -----------------------------------------------------------------
+    // mp-016: `PalaceDb::open_with_embedder` manifest validation.
+    // -----------------------------------------------------------------
+
+    /// mp-016: opening a fresh palace with an embedder writes the
+    /// manifest as a side-effect.
+    #[test]
+    fn test_open_with_embedder_writes_manifest_on_fresh_palace() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+
+        let embedder = crate::embed::NullEmbedder::new(384);
+        let _db = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+
+        let manifest = crate::embed::EmbeddingManifest::read(&palace)
+            .unwrap()
+            .expect("manifest must be written on first open");
+        assert_eq!(manifest.dim, 384);
+        assert_eq!(manifest.fingerprint, "null:384");
+        assert_eq!(manifest.model_name, "null-test");
+    }
+
+    /// mp-016: re-opening with the same embedder is a no-op (validation
+    /// passes; the manifest is not rewritten with a fresh `created_at`).
+    #[test]
+    fn test_open_with_embedder_validates_existing_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+
+        let embedder = crate::embed::NullEmbedder::new(384);
+        let _ = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+        let original = crate::embed::EmbeddingManifest::read(&palace)
+            .unwrap()
+            .unwrap();
+
+        // Re-open and confirm the manifest is unchanged byte-for-byte.
+        let _ = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+        let after = crate::embed::EmbeddingManifest::read(&palace)
+            .unwrap()
+            .unwrap();
+        assert_eq!(original, after);
+    }
+
+    /// mp-016: a dimension mismatch returns the actionable error.
+    #[test]
+    fn test_open_with_embedder_rejects_dim_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+
+        // Record at 384.
+        let recorded = crate::embed::NullEmbedder::new(384);
+        let _ = PalaceDb::open_with_embedder(&palace, &recorded, "null-test").unwrap();
+
+        // Open at 768 — must fail loud.
+        let runtime = crate::embed::NullEmbedder::new(768);
+        let err = match PalaceDb::open_with_embedder(&palace, &runtime, "null-test") {
+            Ok(_) => panic!("dim mismatch must be rejected"),
+            Err(e) => e,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("mpr migrate --re-embed"),
+            "error must point at recovery command: {msg}"
+        );
+        assert!(msg.contains("384"), "error must show recorded dim: {msg}");
+        assert!(msg.contains("768"), "error must show runtime dim: {msg}");
+
+        // Confirm the typed error is reachable through the chain.
+        let chain = err.chain();
+        let mut found = false;
+        for source in chain {
+            if source
+                .downcast_ref::<crate::embed::ManifestMismatch>()
+                .is_some()
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "ManifestMismatch must be in the error chain");
+    }
+
+    /// mp-016: the `MEMPALACE_SKIP_MANIFEST_CHECK=1` override lets a
+    /// mismatched embedder open the palace anyway, for tests and the
+    /// future re-embed migration. Other tests in the suite serialise on
+    /// the env-mutex so we don't race with them.
+    #[test]
+    fn test_open_with_embedder_env_override_skips_validation() {
+        let _guard = crate::test_env_lock().lock().unwrap();
+        // SAFETY: serialised via test_env_lock; no concurrent env access.
+        unsafe { std::env::remove_var(SKIP_MANIFEST_CHECK_ENV) };
+
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+
+        // Record at 384.
+        let recorded = crate::embed::NullEmbedder::new(384);
+        let _ = PalaceDb::open_with_embedder(&palace, &recorded, "null-test").unwrap();
+
+        // Open at 768 with the override set — must succeed.
+        let runtime = crate::embed::NullEmbedder::new(768);
+        // SAFETY: serialised via test_env_lock; no concurrent env access.
+        unsafe { std::env::set_var(SKIP_MANIFEST_CHECK_ENV, "1") };
+        let res = PalaceDb::open_with_embedder(&palace, &runtime, "null-test");
+        // SAFETY: serialised via test_env_lock; no concurrent env access.
+        unsafe { std::env::remove_var(SKIP_MANIFEST_CHECK_ENV) };
+        assert!(
+            res.is_ok(),
+            "override must allow mismatched open: {:?}",
+            res.err()
+        );
+    }
+
+    /// mp-016: legacy palace (existing drawers, no `embedding.json`)
+    /// gets a best-effort manifest written on next open. The drawers
+    /// remain untouched.
+    #[test]
+    fn test_open_with_embedder_writes_legacy_manifest_with_drawers() {
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path().join("palace");
+        std::fs::create_dir_all(&palace).unwrap();
+
+        // Simulate a legacy palace: drawers exist, no manifest.
+        {
+            let mut db = PalaceDb::open(&palace).unwrap();
+            db.add(
+                &[("d-legacy", "an old drawer from before mp-015")],
+                &[&[("wing", "ops"), ("room", "history")]],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+        assert!(
+            !crate::embed::EmbeddingManifest::path(&palace).is_file(),
+            "legacy palace must start with no manifest"
+        );
+
+        // Now open with an embedder — manifest should be best-effort
+        // written from the active embedder.
+        let embedder = crate::embed::NullEmbedder::new(384);
+        let db = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+        assert_eq!(db.count(), 1, "drawer count must be preserved");
+
+        let manifest = crate::embed::EmbeddingManifest::read(&palace)
+            .unwrap()
+            .unwrap();
+        assert_eq!(manifest.dim, 384);
+        assert_eq!(manifest.fingerprint, "null:384");
     }
 }

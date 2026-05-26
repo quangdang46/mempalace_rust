@@ -1,13 +1,20 @@
 //! doctor.rs — Palace health check command
 //!
-//! Runs 6 independent checks to diagnose palace health:
+//! Runs 7 independent checks to diagnose palace health:
 //!   1. Palace directory exists and is accessible
 //!   2. Config validity
 //!   3. Drawer count and wing/room breakdown
 //!   4. Orphan drawers (metadata references non-existent source files)
 //!   5. Duplicate content detection
 //!   6. Knowledge graph connectivity
+//!   7. Embedder identity (active embedder vs `embedding.json` manifest)
+//!
+//! See [`run_doctor_with_options`] for the embedder check (mp-019). The
+//! original [`run_doctor`] entry point preserves backward compatibility
+//! and runs the embedder check in "manifest-only" mode (no live
+//! embedder, no network).
 
+use crate::embed::{Embedder, EmbeddingManifest};
 use crate::knowledge_graph::KnowledgeGraph;
 use crate::palace_db::PalaceDb;
 use std::collections::HashMap;
@@ -38,6 +45,28 @@ pub enum CheckStatus {
 }
 
 pub fn run_doctor(palace_path: &Path) -> anyhow::Result<DoctorReport> {
+    // Backward-compatible default: no live embedder, manifest-only
+    // embedder check (acts as if `--no-network` was passed). Callers
+    // that want the active-embedder comparison should use
+    // `run_doctor_with_options`.
+    run_doctor_with_options(palace_path, None, true)
+}
+
+/// Extended doctor entry point that can compare a live embedder
+/// against the palace's `embedding.json` manifest (mp-019).
+///
+/// * `embedder` — borrowed reference to the active embedder. Pass
+///   `None` if the caller hasn't loaded one (e.g. `mpr doctor` on a
+///   machine without a downloaded model).
+/// * `no_network` — when `true`, never inspect the live embedder even
+///   if one is provided; report the manifest only. This is the escape
+///   hatch for environments where instantiating the configured
+///   embedder would trigger a model download.
+pub fn run_doctor_with_options(
+    palace_path: &Path,
+    embedder: Option<&dyn Embedder>,
+    no_network: bool,
+) -> anyhow::Result<DoctorReport> {
     let mut checks = Vec::new();
     let palace_path = PathBuf::from(palace_path);
 
@@ -58,6 +87,9 @@ pub fn run_doctor(palace_path: &Path) -> anyhow::Result<DoctorReport> {
 
     // Check 6: Knowledge graph
     checks.push(check_knowledge_graph(&palace_path)?);
+
+    // Check 7: Embedder identity (mp-019)
+    checks.push(check_embedder(&palace_path, embedder, no_network));
 
     let healthy = !checks.iter().any(|c| c.status == CheckStatus::Fail);
 
@@ -276,6 +308,154 @@ fn check_knowledge_graph(palace_path: &Path) -> anyhow::Result<CheckResult> {
     })
 }
 
+/// Check 7 — embedder identity (mp-019).
+///
+/// Reports the active embedder's fingerprint, dim, and source
+/// (env-var override vs default), reads the palace's `embedding.json`
+/// manifest if present, and compares them.
+///
+/// Outcomes:
+///   * ✅ `Pass`  — manifest matches the active embedder.
+///   * ⚠️ `Warn` — manifest absent (will be written on next write),
+///                 manifest present but no active embedder, or
+///                 `--no-network` mode without a manifest.
+///   * ❌ `Fail` — manifest disagrees with the active embedder; the
+///                 message tells the user to run
+///                 `mpr migrate --re-embed`.
+///
+/// `--no-network` (`no_network = true`) skips inspection of the live
+/// embedder so a `doctor` run on a fresh machine can still surface
+/// what the palace recorded without triggering a model download.
+fn check_embedder(
+    palace_path: &Path,
+    embedder: Option<&dyn Embedder>,
+    no_network: bool,
+) -> CheckResult {
+    let manifest_path = EmbeddingManifest::path(palace_path);
+    let manifest = match EmbeddingManifest::read(palace_path) {
+        Ok(m) => m,
+        Err(e) => {
+            return CheckResult {
+                name: "embedder".to_string(),
+                status: CheckStatus::Fail,
+                message: format!(
+                    "Failed to read embedding manifest at {}: {}",
+                    manifest_path.display(),
+                    e
+                ),
+            };
+        }
+    };
+
+    // Source: env-var override vs default. Reported alongside the
+    // active embedder so users can tell at a glance whether their
+    // palace is running on the configured model or an override.
+    let env_model = std::env::var("MEMPALACE_EMBED_MODEL").ok();
+    let source = match &env_model {
+        Some(m) => format!("env-var override (MEMPALACE_EMBED_MODEL={m})"),
+        None => "default".to_string(),
+    };
+
+    // --no-network: never touch the live embedder, even if one was
+    // provided. Report what the manifest records, or warn that the
+    // palace has no recorded identity yet.
+    if no_network {
+        return match manifest {
+            Some(m) => CheckResult {
+                name: "embedder".to_string(),
+                status: CheckStatus::Pass,
+                message: format!(
+                    "Embedder check skipped (--no-network); manifest: model={} fingerprint={} (dim {}) created_at={} (source: {})",
+                    m.model_name,
+                    m.fingerprint,
+                    m.dim,
+                    m.created_at.to_rfc3339(),
+                    source,
+                ),
+            },
+            None => CheckResult {
+                name: "embedder".to_string(),
+                status: CheckStatus::Warn,
+                message: format!(
+                    "Embedder check skipped (--no-network); no manifest found at {} (source: {})",
+                    manifest_path.display(),
+                    source,
+                ),
+            },
+        };
+    }
+
+    // No live embedder injected. We still surface the manifest so
+    // operators can see what the palace recorded, but we can't make
+    // the active-vs-recorded comparison without one.
+    let Some(active) = embedder else {
+        return match manifest {
+            Some(m) => CheckResult {
+                name: "embedder".to_string(),
+                status: CheckStatus::Warn,
+                message: format!(
+                    "No active embedder configured; manifest: model={} fingerprint={} (dim {}) created_at={} (source: {})",
+                    m.model_name,
+                    m.fingerprint,
+                    m.dim,
+                    m.created_at.to_rfc3339(),
+                    source,
+                ),
+            },
+            None => CheckResult {
+                name: "embedder".to_string(),
+                status: CheckStatus::Warn,
+                message: format!(
+                    "No active embedder configured and no manifest found at {} (source: {})",
+                    manifest_path.display(),
+                    source,
+                ),
+            },
+        };
+    };
+
+    let active_fp = active.fingerprint().to_string();
+    let active_dim = active.dim();
+
+    match manifest {
+        Some(m) => {
+            if m.fingerprint == active_fp && m.dim == active_dim {
+                CheckResult {
+                    name: "embedder".to_string(),
+                    status: CheckStatus::Pass,
+                    message: format!(
+                        "✅ Embedder: {} (dim {}) — manifest matches (source: {}, created_at: {})",
+                        active_fp,
+                        active_dim,
+                        source,
+                        m.created_at.to_rfc3339(),
+                    ),
+                }
+            } else {
+                CheckResult {
+                    name: "embedder".to_string(),
+                    status: CheckStatus::Fail,
+                    message: format!(
+                        "❌ Embedder mismatch: palace recorded {} (dim {}), active is {} (dim {}). Run `mpr migrate --re-embed`.",
+                        m.fingerprint,
+                        m.dim,
+                        active_fp,
+                        active_dim,
+                    ),
+                }
+            }
+        }
+        None => CheckResult {
+            name: "embedder".to_string(),
+            status: CheckStatus::Warn,
+            message: format!(
+                "⚠️ Embedder: {} (dim {}) — manifest absent (will be written on next write). Source: {}",
+                active_fp, active_dim, source,
+            ),
+        },
+    }
+}
+
 impl std::fmt::Display for CheckStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -295,6 +475,7 @@ impl std::fmt::Display for CheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embed::NullEmbedder;
     use tempfile::TempDir;
 
     #[test]
@@ -308,6 +489,270 @@ mod tests {
     fn test_run_doctor_empty() {
         let temp_dir = TempDir::new().unwrap();
         let result = run_doctor(temp_dir.path()).unwrap();
-        assert!(result.checks.len() >= 6);
+        // 7 checks now (palace dir, config, drawers, orphans, dupes, kg, embedder)
+        assert!(result.checks.len() >= 7);
+        // The embedder check is the last one and should warn on a
+        // bare temp dir (no manifest, no embedder).
+        let last = result.checks.last().expect("at least one check");
+        assert_eq!(last.name, "embedder");
+    }
+
+    /// mp-019: with a live embedder and no manifest, the check warns
+    /// that the manifest is absent and reports the active embedder's
+    /// fingerprint and dim verbatim.
+    #[test]
+    fn test_check_embedder_manifest_absent() {
+        let temp_dir = TempDir::new().unwrap();
+        let embedder = NullEmbedder::new(384);
+        let result = check_embedder(temp_dir.path(), Some(&embedder), false);
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(
+            result.message.contains("Embedder: null:384 (dim 384)"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("manifest absent"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("written on next write"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: with a manifest matching the live embedder, the check
+    /// passes with the canonical "manifest matches" message.
+    #[test]
+    fn test_check_embedder_manifest_matches() {
+        let temp_dir = TempDir::new().unwrap();
+        let embedder = NullEmbedder::new(384);
+        let manifest = EmbeddingManifest::from_embedder(&embedder, "null-test");
+        EmbeddingManifest::write(temp_dir.path(), &manifest).unwrap();
+
+        let result = check_embedder(temp_dir.path(), Some(&embedder), false);
+        assert_eq!(
+            result.status,
+            CheckStatus::Pass,
+            "expected Pass, got {}: {}",
+            result.status,
+            result.message
+        );
+        assert!(
+            result.message.contains("Embedder: null:384 (dim 384)"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("manifest matches"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: a fingerprint disagreement between manifest and active
+    /// embedder is a Fail with an actionable message.
+    #[test]
+    fn test_check_embedder_fingerprint_mismatch() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Hand-write a manifest with a different fingerprint than
+        // NullEmbedder(384) would produce. We use the public schema
+        // shape directly so the test doesn't depend on the
+        // hypothetical FixedEmbedder helper.
+        let recorded = EmbeddingManifest::from_embedder(
+            &NullEmbedder::new(384), // dim matches
+            "null-test",
+        );
+        // Replace fingerprint after construction by writing JSON.
+        let mut json = serde_json::to_value(&recorded).unwrap();
+        json["fingerprint"] = serde_json::Value::String("fastembed:bge-small-en-v15:384".into());
+        std::fs::write(
+            EmbeddingManifest::path(temp_dir.path()),
+            serde_json::to_vec_pretty(&json).unwrap(),
+        )
+        .unwrap();
+
+        let active = NullEmbedder::new(384);
+        let result = check_embedder(temp_dir.path(), Some(&active), false);
+        assert_eq!(
+            result.status,
+            CheckStatus::Fail,
+            "expected Fail, got {}: {}",
+            result.status,
+            result.message
+        );
+        assert!(
+            result.message.contains("Embedder mismatch"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result
+                .message
+                .contains("palace recorded fastembed:bge-small-en-v15:384"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("active is null:384"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("mpr migrate --re-embed"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: a dimension disagreement is a Fail; both dims appear
+    /// in the message and the recovery command is suggested.
+    #[test]
+    fn test_check_embedder_dim_mismatch() {
+        let temp_dir = TempDir::new().unwrap();
+        // Manifest written from a 768-dim embedder.
+        let recorded = EmbeddingManifest::from_embedder(&NullEmbedder::new(768), "null-test");
+        EmbeddingManifest::write(temp_dir.path(), &recorded).unwrap();
+
+        let active = NullEmbedder::new(384);
+        let result = check_embedder(temp_dir.path(), Some(&active), false);
+        assert_eq!(
+            result.status,
+            CheckStatus::Fail,
+            "expected Fail, got {}: {}",
+            result.status,
+            result.message
+        );
+        assert!(
+            result.message.contains("(dim 768)"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("(dim 384)"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("mpr migrate --re-embed"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: `--no-network` reports the manifest only and never
+    /// inspects the embedder, so the message says
+    /// "Embedder check skipped".
+    #[test]
+    fn test_check_embedder_no_network_with_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let embedder = NullEmbedder::new(384);
+        let manifest = EmbeddingManifest::from_embedder(&embedder, "null-test");
+        EmbeddingManifest::write(temp_dir.path(), &manifest).unwrap();
+
+        let result = check_embedder(temp_dir.path(), None, true);
+        assert_eq!(result.status, CheckStatus::Pass);
+        assert!(
+            result.message.contains("--no-network"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("fingerprint=null:384"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("model=null-test"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: `--no-network` with no manifest warns that nothing is
+    /// recorded, instead of trying to load an embedder.
+    #[test]
+    fn test_check_embedder_no_network_no_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = check_embedder(temp_dir.path(), None, true);
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(
+            result.message.contains("--no-network"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("no manifest found"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: with no embedder and no manifest (and no `--no-network`),
+    /// we still warn rather than fail — operators may simply not have
+    /// loaded an embedder yet.
+    #[test]
+    fn test_check_embedder_no_embedder_no_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = check_embedder(temp_dir.path(), None, false);
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(
+            result.message.contains("No active embedder configured"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("no manifest found"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: with no embedder but a manifest, surface the recorded
+    /// identity so operators can audit a palace without loading the
+    /// model.
+    #[test]
+    fn test_check_embedder_no_embedder_with_manifest() {
+        let temp_dir = TempDir::new().unwrap();
+        let embedder = NullEmbedder::new(384);
+        let manifest = EmbeddingManifest::from_embedder(&embedder, "null-test");
+        EmbeddingManifest::write(temp_dir.path(), &manifest).unwrap();
+
+        let result = check_embedder(temp_dir.path(), None, false);
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(
+            result.message.contains("No active embedder configured"),
+            "got: {}",
+            result.message
+        );
+        assert!(
+            result.message.contains("fingerprint=null:384"),
+            "got: {}",
+            result.message
+        );
+    }
+
+    /// mp-019: `run_doctor_with_options` runs all 7 checks and the
+    /// embedder check uses the live embedder when one is supplied.
+    #[test]
+    fn test_run_doctor_with_options_includes_embedder() {
+        let temp_dir = TempDir::new().unwrap();
+        let embedder = NullEmbedder::new(384);
+        let manifest = EmbeddingManifest::from_embedder(&embedder, "null-test");
+        EmbeddingManifest::write(temp_dir.path(), &manifest).unwrap();
+
+        let report = run_doctor_with_options(temp_dir.path(), Some(&embedder), false).unwrap();
+        assert!(report.checks.len() >= 7);
+        let last = report.checks.last().expect("at least one check");
+        assert_eq!(last.name, "embedder");
+        assert_eq!(last.status, CheckStatus::Pass);
+        assert!(
+            last.message.contains("manifest matches"),
+            "got: {}",
+            last.message
+        );
     }
 }

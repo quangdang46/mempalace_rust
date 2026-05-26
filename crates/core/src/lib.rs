@@ -113,7 +113,25 @@ pub mod sweeper;
 
 pub mod embed;
 
-pub use embed::{Embedder, NullEmbedder};
+pub use embed::{embedder_from_env, resolve_embedder, DEFAULT_EMBED_MODEL};
+pub use embed::{Embedder, EmbeddingManifest, ManifestMismatch, NullEmbedder};
+
+// =====================================================================
+// New-architecture surface (mp-020 / ADR-3 / ADR-6 / ADR-7)
+// =====================================================================
+
+pub mod palace;
+pub use palace::{
+    Drawer, DrawerId, DrawerKind, MemoryProvider, MemoryScope,
+    Palace, PalaceBuilder, SearchHit, SearchScope, StoreTier,
+};
+// PalaceConfig lives in the builder module; re-export from here for ergonomic public API.
+pub use palace::builder::PalaceConfig;
+// PalaceStore lives in the palace module (not builder); re-export from palace.
+pub use palace::PalaceStore;
+
+#[cfg(feature = "embed-fastembed")]
+pub use embed::FastEmbedEmbedder;
 
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
@@ -159,5 +177,24 @@ pub mod error {
 
         #[error("Normalize error: {0}")]
         Normalize(String),
+
+        /// Embedding manifest mismatch on `Palace::open` (mp-016 / ADR-8).
+        ///
+        /// The wrapped [`crate::embed::ManifestMismatch`] carries the
+        /// recorded vs runtime values inline so the user-facing message
+        /// always includes the recovery command (`mpr migrate --re-embed`).
+        ///
+        /// `#[error("{0}")]` forwards Display to the inner while keeping
+        /// `source()` returning `Some(&inner)`, so callers walking the
+        /// anyhow chain can `downcast_ref::<ManifestMismatch>()` on the
+        /// inner error. (`#[error(transparent)]` would also forward
+        /// Display but additionally forward `source()` past the inner,
+        /// hiding it from the chain — see mp-016 test.)
+        #[error("{0}")]
+        ManifestMismatch(
+            #[from]
+            #[source]
+            crate::embed::ManifestMismatch,
+        ),
     }
 }

@@ -8,7 +8,17 @@ repository.workspace = true
 description.workspace = true
 
 [features]
-default = []
+# Default ships with `embed-fastembed` so the binary works out-of-the-box
+# without any extra configuration (ADR-1, 05 §A.4 / §C.2 PR 2). Disable
+# default features to opt into a different embedder backend (e.g.
+# `embed-tract`, `embed-model2vec`) or `NullEmbedder` for tests.
+default = ["embed-fastembed"]
+# `fastembed-rs` 4.x. Loads BGE / multilingual-E5 / Nomic / MxBai / etc.
+# via the `ort` C++ ONNX Runtime. See `crates/core/src/embed/fastembed.rs`
+# for the `FastEmbedEmbedder` adapter and `crates/core/src/embed/mod.rs`
+# for `MEMPALACE_EMBED_MODEL` env-var → `EmbeddingModel` enum mapping
+# (mp-012, mp-018).
+embed-fastembed = ["dep:fastembed"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -36,6 +46,13 @@ edgebert = "0.4"
 unicode-script = "0.5"
 signal-hook = "0.3"
 async-trait = { workspace = true }
+
+# Optional: `fastembed-rs` powers `FastEmbedEmbedder` behind feature
+# `embed-fastembed` (mp-012). Pulls in `ort` (C++ ONNX Runtime) and
+# `tokenizers`. Disable via `--no-default-features` for builds that
+# need a pure-Rust embedder (e.g. `embed-tract` from mp-014) or the
+# `NullEmbedder` test backend.
+fastembed = { version = "4", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
