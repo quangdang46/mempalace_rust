@@ -932,7 +932,20 @@ impl Miner {
         }
         let metadata_refs: Vec<&[(&str, &str)]> = metadata.iter().map(|v| v.as_slice()).collect();
 
-        self.palace_db.add(&ids_and_docs, &metadata_refs)?;
+        // Build Drawer objects from ids_and_docs and metadata
+        let mut drawers = Vec::new();
+        for (i, (id, doc)) in ids_and_docs.iter().enumerate() {
+            let mut drawer = crate::palace::Drawer::new(*doc);
+            drawer.id = Some(crate::palace::DrawerId::new(id.to_string()));
+            drawer.wing = Some(self.wing.clone());
+            drawer.room = Some(room.clone());
+            // Convert metadata slice to HashMap
+            for (k, v) in metadata_refs[i] {
+                drawer.metadata.insert(k.to_string(), serde_json::json!(v));
+            }
+            drawers.push(drawer);
+        }
+        self.palace.add_drawers(drawers).await?;
 
         Ok((chunks_added, None))
     }
