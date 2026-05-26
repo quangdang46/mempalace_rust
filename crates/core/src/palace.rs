@@ -389,6 +389,12 @@ pub struct Drawer {
     /// Custom keys are allowed and forwarded to the vector store.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub metadata: std::collections::HashMap<String, serde_json::Value>,
+    /// IDs of drawers this drawer was derived from (mp-052 / ADR-10 / ADR-13).
+    /// Populated during AAAK compression (derived drawer ← original drawer) and
+    /// general extraction (extracted fact ← source conversation). Enables
+    /// citation chains: "I used drawer #42 which came from session #abc-123".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_from: Vec<DrawerId>,
 }
 
 impl Drawer {
@@ -401,6 +407,7 @@ impl Drawer {
             wing: None,
             room: None,
             metadata: std::collections::HashMap::new(),
+            derived_from: Vec::new(),
         }
     }
 
