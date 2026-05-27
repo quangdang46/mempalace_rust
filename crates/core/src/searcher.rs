@@ -1,5 +1,7 @@
 use crate::bm25::{Bm25Params, Bm25Scorer};
+use crate::palace::FusionMode;
 use crate::palace_db::{self, PalaceDb, PalaceState, QueryResult};
+use crate::palace_graph::cached_graph;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
@@ -120,11 +122,12 @@ pub async fn search_memories(
         _embedding_model,
         false,
         None,
+        None,
     )
     .await
 }
 
-/// Search with optional BM25 reranking.
+/// Search with optional BM25 reranking and PPR fusion mode.
 pub async fn search_memories_with_rerank(
     query: &str,
     palace_path: &Path,
@@ -134,6 +137,7 @@ pub async fn search_memories_with_rerank(
     _embedding_model: Option<&str>,
     use_bm25: bool,
     max_per_session: Option<usize>,
+    fusion_mode: Option<FusionMode>,
 ) -> anyhow::Result<SearchResponse> {
     let sanitized = crate::query_sanitizer::sanitize_query(query);
 
@@ -190,6 +194,38 @@ pub async fn search_memories_with_rerank(
 
         // Truncate to requested count
         search_results.truncate(n_results);
+    }
+
+    let fusion = fusion_mode.unwrap_or(FusionMode::Vector);
+    if fusion != FusionMode::Vector && !search_results.is_empty() {
+        let graph = cached_graph(palace_path);
+        let ppr_scores: std::collections::HashMap<String, f64> =
+            graph.ppr_search(&sanitized.clean_query, 50).into_iter().collect();
+
+        for result in &mut search_results {
+            let ppr_score = ppr_scores.get(&result.room).copied().unwrap_or(0.0_f64);
+            match fusion {
+                FusionMode::Hybrid => {
+                    let sim = result.similarity;
+                    let combined = 0.7 * sim + 0.3 * ppr_score;
+                    result.combined_score = Some(combined);
+                }
+                FusionMode::Ppr => {
+                    result.combined_score = Some(ppr_score);
+                }
+                FusionMode::Vector => {}
+            }
+        }
+
+        if fusion == FusionMode::Hybrid || fusion == FusionMode::Ppr {
+            search_results.sort_by(|a, b| {
+                b.combined_score
+                    .unwrap_or(0.0)
+                    .partial_cmp(&a.combined_score.unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            search_results.truncate(n_results);
+        }
     }
 
     // Apply max_per_session filter (post-RRF deduplication by session)

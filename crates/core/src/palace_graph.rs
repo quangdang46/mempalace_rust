@@ -301,6 +301,101 @@ pub fn cache_invalidation_count() -> u64 {
     _GRAPH_CACHE.read().unwrap().invalidate_counter
 }
 
+/// Returns a warm cached `PalaceGraph` built from `palace_path`, rebuilding
+/// from the database if the TTL has expired.
+///
+/// Thread-safe. Uses a 60-second TTL so repeated graph-tool calls within
+/// the same time window reuse the in-memory graph without re-querying the
+/// vector DB. Any write to the palace (add_drawer, delete_drawer,
+/// diary_write) calls `invalidate_cache()` to bust the stale copy.
+pub fn cached_graph(palace_path: &std::path::Path) -> PalaceGraph {
+    if _cache_is_warm() {
+        let cache = _GRAPH_CACHE.read().unwrap();
+        if let (Some(nodes), Some(edges)) = (&cache.nodes, &cache.edges) {
+            return PalaceGraph {
+                nodes: nodes.clone(),
+                edges: edges.clone(),
+            };
+        }
+    }
+
+    let graph = build_graph_from_db_path(palace_path);
+    {
+        let mut cache = _GRAPH_CACHE.write().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        cache.nodes = Some(graph.nodes.clone());
+        cache.edges = Some(graph.edges.clone());
+        cache.cached_at = now;
+    }
+    graph
+}
+
+/// Build a fresh `PalaceGraph` from the drawer database at `palace_path`.
+///
+/// This is the only function that touches `PalaceDb` in `palace_graph.rs`;
+/// keeping it here (rather than duplicating the logic in `mcp_server.rs`)
+/// ensures the DB→graph transformation stays consistent.
+fn build_graph_from_db_path(palace_path: &std::path::Path) -> PalaceGraph {
+    use crate::palace_db::PalaceDb;
+
+    let mut by_wing: std::collections::HashMap<String, Vec<Room>> =
+        std::collections::HashMap::new();
+
+    let entries = PalaceDb::open(palace_path)
+        .ok()
+        .map(|db| db.get_all(None, None, usize::MAX))
+        .unwrap_or_default();
+
+    for entry in entries {
+        if let Some(meta) = entry.metadatas.first() {
+            let wing = meta
+                .get("wing")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let room = meta
+                .get("room")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let hall = match meta
+                .get("hall")
+                .and_then(|v| v.as_str())
+                .unwrap_or("hall_facts")
+            {
+                "hall_events" | "events" => HallType::Events,
+                "hall_discoveries" | "discoveries" => HallType::Discoveries,
+                "hall_preferences" | "preferences" => HallType::Preferences,
+                "hall_advice" | "advice" => HallType::Advice,
+                "hall_facts" | "facts" => HallType::Facts,
+                other => HallType::Raw(other.to_string()),
+            };
+            by_wing.entry(wing).or_default().push(Room {
+                name: room,
+                hall,
+                closet_id: entry.ids.first().cloned(),
+                date: meta
+                    .get("date")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+            });
+        }
+    }
+
+    let mut graph = PalaceGraph::new();
+    for (wing_name, rooms) in by_wing {
+        graph.add_wing(Wing {
+            name: wing_name,
+            wing_type: WingType::Topic,
+            rooms,
+        });
+    }
+    graph
+}
+
 fn _cache_is_warm() -> bool {
     let cache = match _GRAPH_CACHE.read() {
         Ok(c) => c,
@@ -676,6 +771,110 @@ impl PalaceGraph {
 
         scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         scored.into_iter().take(n).map(|(room, _)| room).collect()
+    }
+
+    /// Personalized PageRank over the palace graph.
+    ///
+    /// Seeds: rooms matching query tokens via text similarity.
+    /// Teleport probability: 0.15 (standard for PPR).
+    /// Max iterations: 30 with tolerance 1e-6.
+    pub fn ppr_search(&self, query: &str, max_results: usize) -> Vec<(String, f64)> {
+        if self.nodes.is_empty() {
+            return Vec::new();
+        }
+
+        let rooms: Vec<String> = self.nodes.keys().cloned().collect();
+        let n = rooms.len();
+
+        let query_lower = query.to_lowercase();
+        let query_tokens: Vec<&str> = query_lower.split_whitespace().collect();
+
+        let mut seed_scores: Vec<f64> = vec![0.0; n];
+        for (i, room) in rooms.iter().enumerate() {
+            let room_lower = room.to_lowercase();
+            let mut score = 0.0_f64;
+            for token in &query_tokens {
+                if room_lower.contains(token) {
+                    score += 1.0;
+                }
+            }
+            if score > 0.0 {
+                seed_scores[i] = score;
+            }
+        }
+
+        let total_seed: f64 = seed_scores.iter().sum();
+        if total_seed > 0.0 {
+            for s in seed_scores.iter_mut() {
+                *s /= total_seed;
+            }
+        } else {
+            for s in seed_scores.iter_mut() {
+                *s = 1.0 / n as f64;
+            }
+        }
+
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (i, room_a) in rooms.iter().enumerate() {
+            for (j, room_b) in rooms.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let Some(node_a) = self.nodes.get(room_a) else {
+                    continue;
+                };
+                let Some(node_b) = self.nodes.get(room_b) else {
+                    continue;
+                };
+                let shared: Vec<&String> = node_a
+                    .wings
+                    .iter()
+                    .filter(|w| node_b.wings.contains(w))
+                    .collect();
+                if !shared.is_empty() {
+                    adj[i].push(j);
+                }
+            }
+        }
+
+        let teleport = 0.15_f64;
+        let tolerance = 1e-6_f64;
+        let mut prob = seed_scores.to_vec();
+        let damped = 1.0 - teleport;
+
+        for _ in 0..30 {
+            let mut next = vec![0.0_f64; n];
+            for i in 0..n {
+                if adj[i].is_empty() {
+                    continue;
+                }
+                let trans = 1.0 / adj[i].len() as f64;
+                for &j in &adj[i] {
+                    next[j] += damped * prob[i] * trans;
+                }
+            }
+            for i in 0..n {
+                next[i] += teleport * seed_scores[i];
+            }
+
+            let mut diff = 0.0_f64;
+            for i in 0..n {
+                diff += (next[i] - prob[i]).abs();
+            }
+            prob = next;
+            if diff < tolerance {
+                break;
+            }
+        }
+
+        let mut results: Vec<(String, f64)> = rooms
+            .iter()
+            .enumerate()
+            .map(|(i, room)| (room.clone(), prob[i]))
+            .collect();
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(max_results);
+        results
     }
 }
 

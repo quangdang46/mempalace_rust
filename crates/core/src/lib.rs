@@ -127,8 +127,8 @@ pub use event_capture::{
 
 pub mod palace;
 pub use palace::{
-    Drawer, DrawerId, DrawerKind, MemoryProvider, MemoryScope, Palace, PalaceBuilder, SearchHit,
-    SearchScope, StoreTier,
+    Drawer, DrawerId, DrawerKind, FusionMode, MemoryProvider, MemoryScope, Palace, PalaceBuilder,
+    SearchHit, SearchScope, StoreTier,
 };
 // PalaceConfig lives in the builder module; re-export from here for ergonomic public API.
 pub use palace::builder::PalaceConfig;

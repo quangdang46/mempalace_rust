@@ -258,6 +258,33 @@ impl Default for MemoryScope {
     }
 }
 
+/// Retrieval fusion mode for combining vector and graph-based search.
+///
+/// Determines how multiple retrieval signals are combined when searching
+/// across wings, rooms, and drawers. Following the architecture described
+/// in `docs/research/02_memory_architectures_papers.md` §7 (HippoRAG / HippoRAG2),
+/// PPR (Personalized PageRank) enables single-shot multi-hop retrieval by
+/// diffusing query seed probability mass through the palace graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum FusionMode {
+    /// Pure vector ANN retrieval — no graph diffusion.
+    /// Existing behavior, no PPR involvement.
+    #[default]
+    Vector,
+    /// Personalized PageRank over the wing/room/drawer graph.
+    /// Query entities are mapped to graph nodes, then PPR is run with
+    /// restart probability concentrated on seed nodes. Top rooms/drawers
+    /// are returned by accumulated node probability mass.
+    Ppr,
+    /// Hybrid: vector ANN candidates reranked by PPR score.
+    /// Fetches 3× results via ANN, then reorders by PPR probability mass
+    /// accumulated through the palace graph. Combines ANN recall with
+    /// graph traversal multi-hop capability. 70/30 weighting between
+    /// similarity and PPR mass in `combined_score` (per searcher.rs).
+    Hybrid,
+}
+
 // ---------------------------------------------------------------------------
 // PalaceStore — vector storage abstraction (ADR-2)
 // ---------------------------------------------------------------------------

@@ -182,6 +182,10 @@ enum Commands {
         /// Enable BM25 reranking for better relevance
         #[arg(long)]
         bm25: bool,
+
+        /// Fusion mode: vector (default), ppr, or hybrid
+        #[arg(long, value_name = "MODE")]
+        fusion_mode: Option<String>,
     },
 
     /// Show L0 + L1 wake-up context (~600-900 tokens).
@@ -966,7 +970,18 @@ fn cmd_search(
     results: usize,
     bm25: bool,
     palace_arg: Option<&str>,
+    fusion_mode: Option<&str>,
 ) -> Result<()> {
+    let fusion = match fusion_mode {
+        Some("ppr") => Some(crate::palace::FusionMode::Ppr),
+        Some("hybrid") => Some(crate::palace::FusionMode::Hybrid),
+        Some("vector") => Some(crate::palace::FusionMode::Vector),
+        None => None,
+        Some(other) => {
+            eprintln!("error: unknown fusion mode '{}' (expected: vector, ppr, hybrid)", other);
+            return Err(anyhow::anyhow!("invalid fusion mode"));
+        }
+    };
     let palace_path = resolve_palace_path(palace_arg)?;
     let response = runtime().block_on(searcher::search_memories_with_rerank(
         query,
@@ -977,6 +992,7 @@ fn cmd_search(
         None,
         bm25,
         None,
+        fusion,
     ))?;
     searcher::print_search_response(&response);
     Ok(())
@@ -1995,6 +2011,7 @@ pub fn run() -> Result<()> {
             room,
             results,
             bm25,
+            fusion_mode,
         } => cmd_search(
             query,
             wing.as_deref(),
@@ -2002,6 +2019,7 @@ pub fn run() -> Result<()> {
             *results,
             *bm25,
             palace_arg,
+            fusion_mode.as_deref(),
         )?,
         Commands::WakeUp { wing } => cmd_wakeup(wing.as_deref(), palace_arg)?,
         Commands::Compress {
