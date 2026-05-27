@@ -176,6 +176,9 @@ pub use palace::store::EmbedvecStore;
 #[cfg(feature = "embed-fastembed")]
 pub use embed::FastEmbedEmbedder;
 
+#[cfg(feature = "embed-model2vec")]
+pub use embed::Model2VecEmbedder;
+
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
     use std::sync::{Mutex, OnceLock};
