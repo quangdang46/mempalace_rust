@@ -277,6 +277,16 @@ enum Commands {
         #[arg(long)]
         palace: Option<String>,
     },
+
+    /// Export the palace to a directory of Markdown files (Obsidian-compatible).
+    Export {
+        /// Output directory for the exported vault.
+        output_dir: PathBuf,
+
+        /// Export format: "basic-memory" (Markdown/Obsidian, default) or "markdown".
+        #[arg(long, default_value = "basic-memory")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2047,6 +2057,20 @@ pub fn run() -> Result<()> {
             crate::mcp_server::run_server(palace_arg, *read_only)?;
         }
         Commands::Sweep { target, palace } => cmd_sweep(target, palace.as_deref())?,
+        Commands::Export { output_dir, format } => {
+            let output = std::path::PathBuf::from(&output_dir);
+            let format = format.as_str();
+            if format == "basic-memory" || format == "markdown" {
+                if let Some(ref p) = palace_arg {
+                    let path = std::path::PathBuf::from(p);
+                    crate::exporter::export_palace(Some(path.as_path()), &output)?;
+                } else {
+                    crate::exporter::export_palace(None, &output)?;
+                }
+            } else {
+                anyhow::bail!("unknown export format '{format}': use 'basic-memory' or 'markdown'");
+            }
+        }
     }
 
     Ok(())
