@@ -15,18 +15,18 @@
 //   which are not `Send + Sync`. Since we're wrapping it behind
 //   `Arc<dyn PalaceStore>` and the trait methods are async, we use
 //   `tokio::sync::Mutex` to make the inner mutable access safe across
-//   task boundaries. An async Mutex is appropriate here because
-//   PalaceStore methods are already async — callers `.await` the lock
-//   release rather than blocking a thread.
+//   task boundaries.
 //
 // Embedding contract:
 //   The store expects pre-embedded vectors passed to `search`.
 //   `Palace::search` embeds the query text and forwards the vector here.
 
 use async_trait::async_trait;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::embed::EmbeddingManifest;
 use crate::palace::{Drawer, DrawerId, PalaceStore, SearchHit, SearchScope, StoreTier};
 
 /// Wraps the existing `EmbeddingDb` (embedvec HNSW + VectorStorage) behind
@@ -44,25 +44,41 @@ use crate::palace::{Drawer, DrawerId, PalaceStore, SearchHit, SearchScope, Store
 /// own embedder while sharing the same `EmbedvecStore` instance.
 pub struct EmbedvecStore {
     inner: Arc<Mutex<crate::palace_db::EmbeddingDb>>,
+    palace_path: Option<PathBuf>,
+    model_name: Option<String>,
+    embedder: Arc<dyn crate::embed::Embedder>,
 }
 
 impl EmbedvecStore {
     /// Construct with an injected embedder.
     pub async fn new(embedder: Arc<dyn crate::embed::Embedder>) -> anyhow::Result<Self> {
-        let inner = crate::palace_db::EmbeddingDb::with_embedder(embedder)?;
+        let inner = crate::palace_db::EmbeddingDb::with_embedder(embedder.clone())?;
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
+            palace_path: None,
+            model_name: None,
+            embedder,
+        })
+    }
+
+    /// Construct with an embedder and a palace path, enabling automatic
+    /// `embedding.json` manifest writing on first embed (mp-015).
+    pub async fn new_with_path(
+        embedder: Arc<dyn crate::embed::Embedder>,
+        palace_path: PathBuf,
+        model_name: String,
+    ) -> anyhow::Result<Self> {
+        let inner = crate::palace_db::EmbeddingDb::with_embedder(embedder.clone())?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+            palace_path: Some(palace_path),
+            model_name: Some(model_name),
+            embedder,
         })
     }
 
     pub fn raw(&self) -> Arc<Mutex<crate::palace_db::EmbeddingDb>> {
         self.inner.clone()
-    }
-}
-
-impl Default for EmbedvecStore {
-    fn default() -> Self {
-        unimplemented!("EmbedvecStore::default requires an embedder; use EmbedvecStore::new(embedder).await")
     }
 }
 
@@ -72,6 +88,24 @@ impl PalaceStore for EmbedvecStore {
         if drawers.is_empty() {
             return Ok(());
         }
+
+        let needs_write = self.model_name.is_some()
+            && self.palace_path.is_some()
+            && {
+                let inner = self.inner.lock().await;
+                inner.len() == 0
+            };
+
+        if needs_write {
+            let manifest = EmbeddingManifest::from_embedder(
+                self.embedder.as_ref(),
+                self.model_name.as_deref().unwrap_or("unknown"),
+            );
+            if let Some(ref p) = self.palace_path {
+                let _ = EmbeddingManifest::write(p, &manifest);
+            }
+        }
+
         let mut inner = self.inner.lock().await;
         let items: Vec<(String, String)> = drawers
             .into_iter()
@@ -89,9 +123,6 @@ impl PalaceStore for EmbedvecStore {
     }
 
     async fn delete(&self, _ids: &[DrawerId]) -> anyhow::Result<usize> {
-        // Embedvec doesn't support delete by ID in the current implementation.
-        // This is a limitation tracked for Phase 5.
-        // For now, return 0 (no deletions performed).
         Ok(0)
     }
 
@@ -102,25 +133,17 @@ impl PalaceStore for EmbedvecStore {
         limit: usize,
     ) -> anyhow::Result<Vec<SearchHit>> {
         let inner = self.inner.lock().await;
-        // Normalize the query vector (same logic as EmbeddingDb::query).
         let normalized = normalize_embedding(query_vec);
         let raw_results = inner.query_by_vector(&normalized, limit)?;
 
         let mut hits = Vec::new();
         for (dist, idx) in raw_results {
-            // We need the drawer text and metadata. The EmbeddingDb
-            // stores (id, text) pairs in order. We retrieve by index.
-            // Note: if the store was opened from a file with existing
-            // drawers, those aren't re-embedded. This path is for new
-            // writes via add_batch only.
-            let text = inner.nth_text(idx).unwrap_or_default().to_string();
-            let similarity = 1.0 - dist;
             hits.push(SearchHit {
-                text,
+                text: inner.nth_text(idx).unwrap_or_default().to_string(),
                 wing: scope.wing.clone(),
                 room: scope.room.clone(),
                 source_file: String::new(),
-                similarity: similarity as f64,
+                similarity: (1.0 - dist) as f64,
                 bm25_score: None,
                 combined_score: None,
             });
@@ -134,8 +157,6 @@ impl PalaceStore for EmbedvecStore {
     }
 
     async fn flush(&self) -> anyhow::Result<()> {
-        // embedvec is in-memory; no flush needed. The PalaceDb JSON
-        // layer handles persistence of drawer content + metadata.
         Ok(())
     }
 

@@ -138,7 +138,9 @@ impl PalaceBuilder {
     /// if the embedder fails to load.
     pub async fn open(self) -> anyhow::Result<Palace> {
         let config = self.config.ok_or_else(|| {
-            anyhow::anyhow!("PalaceBuilder: config is mandatory. Call .config(PalaceConfig) before .open()")
+            anyhow::anyhow!(
+                "PalaceBuilder: config is mandatory. Call .config(PalaceConfig) before .open()"
+            )
         })?;
 
         // With embed-fastembed: auto-resolve from MEMPALACE_EMBED_MODEL if not set.
@@ -179,10 +181,8 @@ impl PalaceBuilder {
             }
             None => {
                 // First open: write the manifest so future opens can validate.
-                let manifest = EmbeddingManifest::from_embedder(
-                    embedder.as_ref(),
-                    &config.embed_model,
-                );
+                let manifest =
+                    EmbeddingManifest::from_embedder(embedder.as_ref(), &config.embed_model);
                 EmbeddingManifest::write(&config.palace_path, &manifest)?;
                 manifest
             }
@@ -191,9 +191,14 @@ impl PalaceBuilder {
         let store = if let Some(s) = self.store {
             s
         } else {
-            // Default: EmbedvecStore matching the embedder dimension.
-            // Dimension is validated above; if we reach here, dim matches.
-            Arc::new(crate::EmbedvecStore::new()?)
+            Arc::new(
+                crate::EmbedvecStore::new_with_path(
+                    embedder.clone(),
+                    config.palace_path.clone(),
+                    config.embed_model.clone(),
+                )
+                .await?,
+            )
         };
 
         Ok(Palace { embedder, store })
