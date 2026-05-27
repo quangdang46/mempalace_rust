@@ -13,6 +13,7 @@ description.workspace = true
 # default features to opt into a different embedder backend (e.g.
 # `embed-tract`, `embed-model2vec`) or `NullEmbedder` for tests.
 default = ["embed-fastembed"]
+store-usearch = ["dep:usearch"]
 # `fastembed-rs` 4.x. Loads BGE / multilingual-E5 / Nomic / MxBai / etc.
 # via the `ort` C++ ONNX Runtime. See `crates/core/src/embed/fastembed.rs`
 # for the `FastEmbedEmbedder` adapter and `crates/core/src/embed/mod.rs`
@@ -71,6 +72,10 @@ model2vec-rs = { version = "0.2", optional = true }
 tract-onnx = { version = "0.21", optional = true }
 tokenizers = { version = "0.21", optional = true }
 ndarray = { version = "0.16", optional = true }
+
+# `usearch` for `UsearchSqliteStore` behind feature `store-usearch` (mp-085).
+# mmap'd HNSW index with SIMD + optional PQ/SQ8 quantisation.
+usearch = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

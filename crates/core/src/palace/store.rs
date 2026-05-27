@@ -37,3 +37,8 @@ impl Default for StoreTier {
 // Re-export the concrete store implementations.
 pub mod embedvec;
 pub use embedvec::EmbedvecStore;
+
+#[cfg(feature = "store-usearch")]
+pub mod usearch_sqlite;
+#[cfg(feature = "store-usearch")]
+pub use usearch_sqlite::UsearchSqliteStore;
