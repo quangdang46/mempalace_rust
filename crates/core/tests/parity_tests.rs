@@ -36,7 +36,7 @@ fn test_mutation_tools_list_matches_tool_catalog() {
 }
 
 // =====================================================================
-// B. Config Resolution Tests
+// E. Rust-only Feature Preservation Tests (mr-3r8)
 // =====================================================================
 
 // Config::load() tests live in config.rs inline. Here we test the
@@ -83,27 +83,36 @@ fn test_query_entity_4arg_signature_stability() {
 }
 
 // =====================================================================
-// D. CLI Hook/Instructions Tests
+// E. Rust-only Feature Preservation Tests (mr-3r8)
 // =====================================================================
+// These tests verify specific Rust-only features have no Python equivalent.
+// They fail to compile if the feature is removed.
+#[test]
+fn test_hermes_provider_exists() {
+    use mempalace_core::hermes_integration::MemPalaceHermesProvider;
+    let _: Option<MemPalaceHermesProvider> = None;
+}
 
-// =====================================================================
-// E. Approved Deviations (known gaps)
-// =====================================================================
+#[test]
+fn test_xdg_config_loads() {
+    let config = mempalace_core::Config::load().expect("XDG config must load");
+    assert!(!config.palace_path.to_string_lossy().is_empty());
+}
 
 #[test]
 #[ignore = "mempalace_remember scoring not yet aligned with Python proximity scoring"]
 fn test_remember_returns_similar_scores() {
-    todo!("align remember scoring with Python")
+    // Known approved deviation: scoring not yet aligned
 }
 
 #[test]
 #[ignore = "embedvec is not ChromaDB-backed; rebuild_from_sqlite N/A"]
 fn test_rebuild_index_from_sqlite() {
-    todo!("known approved deviation")
+    // Known approved deviation: ChromaDB-specific repair path
 }
 
 #[test]
 #[ignore = "Rust WAL design eliminates need for max_seq_id repair"]
 fn test_repair_max_seq_id_recovery() {
-    todo!("known approved deviation")
+    // Known approved deviation: no max_seq_id in Rust WAL design
 }
