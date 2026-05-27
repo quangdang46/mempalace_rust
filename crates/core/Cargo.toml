@@ -23,6 +23,10 @@ embed-fastembed = ["dep:fastembed"]
 # Lightweight alternative to fastembed for low-power machines.
 # Sub-ms inference. See `crates/core/src/embed/model2vec.rs` (mp-013).
 embed-model2vec = ["dep:model2vec-rs"]
+# `tract-onnx` for TractEmbedder (mp-014). Pure-Rust ONNX inference
+# without the `ort` C++ library. Suitable for Model2Vec/SentenceTransformers
+# ONNX exports.
+embed-tract = ["dep:tract-onnx", "dep:tokenizers", "dep:ndarray"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -60,8 +64,13 @@ fastembed = { version = "4", optional = true }
 
 # `model2vec-rs` powers `Model2VecEmbedder` behind feature
 # `embed-model2vec` (mp-013). Pure-Rust static embedding models.
-# Lightweight fallback for low-power machines (sub-ms inference).
 model2vec-rs = { version = "0.2", optional = true }
+
+# `tract-onnx` for `TractEmbedder` behind feature `embed-tract` (mp-014).
+# Pure-Rust ONNX inference without the `ort` (ONNX Runtime) C++ lib.
+tract-onnx = { version = "0.21", optional = true }
+tokenizers = { version = "0.21", optional = true }
+ndarray = { version = "0.16", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -75,9 +84,6 @@ mockall = { workspace = true }
 tokio-test = { workspace = true }
 criterion = { version = "0.5", features = ["async_tokio"] }
 
-# Criterion benches for the production hot paths (mp-002 / Phase 0).
-# `cargo bench --no-run` keeps these compiling on every PR; the long-running
-# `cargo bench` is intentionally not wired into CI.
 [[bench]]
 name = "bench_search"
 harness = false

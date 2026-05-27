@@ -38,3 +38,8 @@ tempfile = "3.13"
 mockall = "0.13"
 tokio-test = "0.4"
 async-trait = "0.1"
+
+# Additional workspace dependencies for embed-tract feature
+tokenizers = "0.21"
+ndarray = "0.16"
+tract-onnx = "0.21"
