@@ -16,6 +16,7 @@ description = "Give your AI a memory — mine projects and conversations into a 
 
 [workspace.dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
+usearch = "2.25"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"

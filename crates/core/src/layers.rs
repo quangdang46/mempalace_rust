@@ -101,14 +101,21 @@ impl Layer1 {
         } else {
             scope
         };
-        let drawers = palace.get_drawers(Some(&scope), Some(self.max_drawers)).await.unwrap_or_default();
+        let drawers = palace
+            .get_drawers(Some(&scope), Some(self.max_drawers))
+            .await
+            .unwrap_or_default();
 
         // Convert Drawer to QueryResult-like entries for existing logic
         let mut entries: Vec<DrawerEntry> = Vec::new();
         for drawer in &drawers {
             let mut meta = drawer.metadata.clone();
-            if let Some(w) = &drawer.wing { meta.insert("wing".to_string(), serde_json::json!(w)); }
-            if let Some(r) = &drawer.room { meta.insert("room".to_string(), serde_json::json!(r)); }
+            if let Some(w) = &drawer.wing {
+                meta.insert("wing".to_string(), serde_json::json!(w));
+            }
+            if let Some(r) = &drawer.room {
+                meta.insert("room".to_string(), serde_json::json!(r));
+            }
             let importance = self.extract_importance(&meta);
             entries.push(DrawerEntry {
                 importance,
@@ -423,8 +430,13 @@ impl MemoryStack {
     /// Generate wake-up text: L0 (identity) + L1 (essential story).
     pub async fn wake_up(&mut self, wing: Option<&str>) -> String {
         let palace = match crate::palace::PalaceBuilder::new()
-            .config(crate::palace::builder::PalaceConfig { palace_path: self.palace_path.clone(), ..Default::default() })
-            .open().await {
+            .config(crate::palace::builder::PalaceConfig {
+                palace_path: self.palace_path.clone(),
+                ..Default::default()
+            })
+            .open()
+            .await
+        {
             Ok(p) => p,
             Err(_) => return format!("{}\n\n## L1 — No palace found.", self.l0.render()),
         };

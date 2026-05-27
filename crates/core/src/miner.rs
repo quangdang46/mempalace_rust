@@ -636,14 +636,19 @@ pub struct Miner {
 }
 
 impl Miner {
-    pub async fn new(palace_path: &Path, wing: &str, rooms: Vec<RoomMapping>) -> anyhow::Result<Self> {
+    pub async fn new(
+        palace_path: &Path,
+        wing: &str,
+        rooms: Vec<RoomMapping>,
+    ) -> anyhow::Result<Self> {
         let palace_db = PalaceDb::open(palace_path)?;
         let palace = crate::palace::PalaceBuilder::new()
             .config(crate::palace::builder::PalaceConfig {
                 palace_path: palace_path.to_path_buf(),
                 ..Default::default()
             })
-            .open().await?;
+            .open()
+            .await?;
         Ok(Self {
             palace_db,
             palace: std::sync::Arc::new(palace),
@@ -1060,8 +1065,9 @@ pub async fn mine_with_options(
         rooms
     };
 
-    let mut miner =
-        Miner::new(palace_path, wing, rooms_to_use).await?.with_max_chunks_per_file(max_chunks_per_file);
+    let mut miner = Miner::new(palace_path, wing, rooms_to_use)
+        .await?
+        .with_max_chunks_per_file(max_chunks_per_file);
 
     let file_paths = scan_project(project_dir, true, exclude_patterns);
     let mut files_processed = 0;
@@ -1100,7 +1106,11 @@ mod tests {
 
     #[test]
     fn test_chunk_text_basic() {
-        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(std::path::Path::new("/tmp"), "test", vec![]));
+        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            std::path::Path::new("/tmp"),
+            "test",
+            vec![],
+        ));
 
         let text = "This is a test paragraph.\n\nThis is another paragraph.\n\nAnd another one here with enough content to be a chunk.";
         let chunks = miner.chunk_text(text, "test.txt");
@@ -1110,7 +1120,11 @@ mod tests {
 
     #[test]
     fn test_chunk_text_respects_min_size() {
-        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(std::path::Path::new("/tmp"), "test", vec![]));
+        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            std::path::Path::new("/tmp"),
+            "test",
+            vec![],
+        ));
 
         let text = "Short text";
         let chunks = miner.chunk_text(text, "test.txt");
@@ -1125,7 +1139,11 @@ mod tests {
             description: "Backend code".to_string(),
             keywords: vec!["backend".to_string()],
         }];
-        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms));
+        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            std::path::Path::new("/tmp"),
+            "test",
+            rooms,
+        ));
 
         let room = miner.detect_room(std::path::Path::new("/tmp/unknown_file.txt"), "content");
         assert_eq!(room, "general");
@@ -1165,13 +1183,19 @@ mod tests {
             keywords: vec![],
         }];
 
-        let mut miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(&palace, "wing", rooms.clone()));
+        let mut miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            &palace,
+            "wing",
+            rooms.clone(),
+        ));
         let (first, skip) = miner.mine_file(&file).await.unwrap();
         assert!(first > 0);
         assert_eq!(skip, None);
         miner.palace_db.flush().unwrap();
 
-        let remine = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(&palace, "wing", rooms));
+        let remine = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(Miner::new(&palace, "wing", rooms));
         assert!(remine
             .palace_db
             .file_already_mined(&file.to_string_lossy(), true));
@@ -1212,7 +1236,11 @@ mod tests {
             description: "Backend code".to_string(),
             keywords: vec!["authentication".to_string(), "jwt".to_string()],
         }];
-        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms));
+        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            std::path::Path::new("/tmp"),
+            "test",
+            rooms,
+        ));
 
         let room = miner.detect_room(
             std::path::Path::new("/tmp/project/backend/auth.py"),
@@ -1246,7 +1274,11 @@ mod tests {
             description: "View templates".to_string(),
             keywords: vec![],
         }];
-        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms));
+        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            std::path::Path::new("/tmp"),
+            "test",
+            rooms,
+        ));
 
         let room = miner.detect_room(
             std::path::Path::new("/tmp/project/interviews/q1.py"),
@@ -1262,7 +1294,11 @@ mod tests {
             description: "Frontend code".to_string(),
             keywords: vec![],
         }];
-        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms));
+        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            std::path::Path::new("/tmp"),
+            "test",
+            rooms,
+        ));
 
         let room = miner.detect_room(
             std::path::Path::new("/tmp/project/frontend-app/index.tsx"),
@@ -1673,7 +1709,9 @@ mod tests {
             description: "General".to_string(),
             keywords: vec![],
         }];
-        let mut miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(&palace, "wing", rooms))
+        let mut miner = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(Miner::new(&palace, "wing", rooms))
             .with_max_chunks_per_file(Some(test_cap));
 
         // Sanity: the chunker really would emit > cap before the cap
@@ -1723,7 +1761,9 @@ mod tests {
             description: "General".to_string(),
             keywords: vec![],
         }];
-        let mut miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(&palace, "wing", rooms))
+        let mut miner = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(Miner::new(&palace, "wing", rooms))
             .expect("Miner::new should succeed in test")
             .with_max_chunks_per_file(Some(0));
 
@@ -1779,7 +1819,11 @@ mod tests {
 
     #[test]
     fn test_chunk_text_multibyte_utf8_boundary() {
-        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(std::path::Path::new("/tmp"), "test", vec![]));
+        let miner = tokio::runtime::Runtime::new().unwrap().block_on(Miner::new(
+            std::path::Path::new("/tmp"),
+            "test",
+            vec![],
+        ));
 
         let prefix = "a".repeat(CHUNK_SIZE - 1);
         let text = format!("{}this continues after the boundary", prefix);

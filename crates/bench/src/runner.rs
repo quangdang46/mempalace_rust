@@ -224,13 +224,7 @@ mod tests {
     #[tokio::test]
     async fn test_rank_corpus_returns_sorted_indices() {
         let embedder: Arc<dyn mempalace_core::embed::Embedder> =
-            match resolve_embedder("all-MiniLM-L6-v2").map_err(anyhow::Error::msg) {
-                Ok(e) => e.into(),
-                Err(e) => {
-                    eprintln!("embedder not available: {}", e);
-                    return;
-                }
-            };
+            Arc::new(*resolve_embedder("all-MiniLM-L6-v2").map_err(anyhow::Error::msg)?);
         let docs = vec![
             "I worked on the auth migration today".to_string(),
             "I still remember the happy high school experiences".to_string(),
