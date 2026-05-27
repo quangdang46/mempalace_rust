@@ -323,7 +323,9 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "memory_delete" | "memory_delete_drawer" => tool_delete_drawer(&state, args),
                 "memory_kg_query" | "memory_graph_query" => tool_kg_query(&state, args),
                 "memory_kg_add" | "memory_graph_add" => tool_kg_add(&state, args),
-                "memory_kg_invalidate" | "memory_graph_invalidate" => tool_kg_invalidate(&state, args),
+                "memory_kg_invalidate" | "memory_graph_invalidate" => {
+                    tool_kg_invalidate(&state, args)
+                }
                 "memory_kg_timeline" | "memory_graph_timeline" => tool_kg_timeline(&state, args),
                 "memory_kg_stats" | "memory_graph_stats" => tool_kg_stats(&state, args),
                 "memory_traverse" => tool_traverse(&state, args),
@@ -970,6 +972,7 @@ fn tool_kg_query(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
     struct Input {
         entity: String,
         as_of: Option<String>,
+        tt_as_of: Option<String>,
         direction: Option<String>,
     }
     let input: Input = parse_args(args)?;
@@ -977,12 +980,15 @@ fn tool_kg_query(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
     // silently produce empty result sets, indistinguishable from "no facts".
     let as_of = crate::config::sanitize_iso_temporal(input.as_of.as_deref(), "as_of")
         .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+    let tt_as_of = crate::config::sanitize_iso_temporal(input.tt_as_of.as_deref(), "tt_as_of")
+        .map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
     let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
         .map_err(|e| internal_error_safe(&e))?;
     let facts = kg
         .query_entity(
             &input.entity,
             as_of.as_deref(),
+            tt_as_of.as_deref(),
             input.direction.as_deref().unwrap_or("both"),
         )
         .map_err(|e| internal_error_safe(&e))?;
@@ -1408,7 +1414,9 @@ mod tests {
         let wal_dir = state.palace_path.join("wal");
         // Use try_current to detect if we're in a runtime
         match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(invoke_with_wal(name.to_string(), args, f, wal_dir.clone())),
+            Ok(handle) => {
+                handle.block_on(invoke_with_wal(name.to_string(), args, f, wal_dir.clone()))
+            }
             Err(_) => {
                 // No runtime: create one just for this call
                 let rt = Runtime::new().unwrap();

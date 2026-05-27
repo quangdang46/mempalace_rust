@@ -231,6 +231,10 @@ fn check_kg_contradictions(text: &str, palace_path: &Path) -> Vec<FactIssue> {
             if !objects_match(&fact.object, &claim.object) {
                 continue;
             }
+            // Skip facts superseded in transaction_time (t_expired = Some means a newer correction replaced this fact)
+            if fact.t_expired.is_some() {
+                continue;
+            }
             if let Some(valid_to) = &fact.valid_to {
                 if valid_to.as_str() < now.as_str() {
                     issues.push(FactIssue {
