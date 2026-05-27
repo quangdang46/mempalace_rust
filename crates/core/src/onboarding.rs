@@ -12,6 +12,8 @@
 
 use crate::entity_detector::{detect_entities, scan_for_detection, PersonEntity};
 use crate::entity_registry::{EntityRegistry, COMMON_ENGLISH_WORDS};
+use crate::llm_client::{default_model, get_provider};
+use crate::llm_refine::{refine_entities, DetectedEntities, EntityEntry};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -449,10 +451,53 @@ fn save_wing_config(config_dir: &Path, wings: &[String]) -> anyhow::Result<PathB
     Ok(wing_config_path)
 }
 
+/// Collect corpus text for LLM refinement context.
+/// Reads a sample of text files to provide contextual signals for entity classification.
+fn collect_corpus_for_refinement(directory: &Path) -> String {
+    const MAX_FILES: usize = 20;
+    const MAX_LINES_PER_FILE: usize = 50;
+    const PROSE_EXTENSIONS: &[&str] = &["md", "txt", "rst", "markdown"];
+
+    let mut corpus_lines = Vec::new();
+    let mut files_read = 0;
+
+    if let Ok(entries) = std::fs::read_dir(directory) {
+        for entry in entries.filter_map(Result::ok) {
+            if files_read >= MAX_FILES {
+                break;
+            }
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if PROSE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            for line in content.lines().take(MAX_LINES_PER_FILE) {
+                                let trimmed = line.trim();
+                                if !trimmed.is_empty() {
+                                    corpus_lines.push(format!("{}: {}", path.display(), trimmed));
+                                }
+                            }
+                            files_read += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    corpus_lines.join("\n")
+}
+
 pub fn run_onboarding(
     directory: &Path,
     config_dir: &Path,
     auto_detect: bool,
+    use_llm: bool,
+    llm_provider: Option<&str>,
+    llm_model: Option<&str>,
+    llm_endpoint: Option<&str>,
+    llm_api_key: Option<&str>,
+    _accept_external_llm: bool,
 ) -> anyhow::Result<EntityRegistry> {
     let mode = prompt_mode();
     let (mut people, aliases) = prompt_people(mode);
@@ -527,6 +572,74 @@ pub fn run_onboarding(
             "\n  Heads up — these names are also common English words:\n    {}\n\n  MemPalace will check the context before treating them as person names.\n  For example: \"I picked up Riley\" → person.\n               \"Have you ever tried\" → adverb.\n",
             ambiguous.join(", ")
         );
+    }
+
+    // LLM refinement: reclassify uncertain entities using an LLM
+    if use_llm {
+        let provider_name = llm_provider.unwrap_or("ollama");
+        let model = llm_model.unwrap_or_else(|| default_model(provider_name));
+        let endpoint = llm_endpoint.map(|s| s.to_string());
+        let api_key = llm_api_key.map(|s| s.to_string());
+
+        match get_provider(provider_name, model, endpoint.clone(), api_key.clone(), 120) {
+            Ok(provider) => {
+                println!(
+                    "\n  Refining entity classifications with LLM ({}/{})...",
+                    provider_name, model
+                );
+                // Collect corpus text for context
+                let corpus_text = collect_corpus_for_refinement(directory);
+                // Convert onboarding DetectedEntities to llm_refine DetectedEntities
+                let llm_detected = DetectedEntities {
+                    people: people
+                        .iter()
+                        .map(|p| EntityEntry {
+                            name: p.name.clone(),
+                            entry_type: "person".to_string(),
+                            signals: vec![],
+                        })
+                        .collect(),
+                    projects: projects
+                        .iter()
+                        .map(|n| EntityEntry {
+                            name: n.clone(),
+                            entry_type: "project".to_string(),
+                            signals: vec![],
+                        })
+                        .collect(),
+                    topics: vec![],
+                    uncertain: vec![],
+                };
+                let result = refine_entities(
+                    &llm_detected,
+                    &corpus_text,
+                    provider.as_ref(),
+                    25,
+                    true,
+                    true,
+                    None,
+                );
+                if result.reclassified > 0 {
+                    println!(
+                        "  LLM reclassified {} entities ({} dropped, {} errors)",
+                        result.reclassified,
+                        result.dropped,
+                        result.errors.len()
+                    );
+                } else if !result.errors.is_empty() {
+                    println!(
+                        "  LLM refinement completed with {} errors",
+                        result.errors.len()
+                    );
+                }
+            }
+            Err(e) => {
+                println!(
+                    "\n  LLM provider error: {}. Continuing without refinement.",
+                    e
+                );
+            }
+        }
     }
 
     let people_tuples = people

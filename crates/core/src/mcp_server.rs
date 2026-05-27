@@ -1038,6 +1038,7 @@ fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
             None,
         )
         .map_err(|e| internal_error_safe(&e))?;
+    crate::palace_graph::invalidate_cache();
     ok_json(
         serde_json::json!({ "success": true, "triple_id": triple_id, "fact": format!("{} → {} → {}", input.subject, input.predicate, input.object) }),
     )
@@ -1174,7 +1175,7 @@ fn tool_traverse(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
         max_hops: Option<usize>,
     }
     let input: Input = parse_args_with_integer_coercion(args, &["max_hops"])?;
-    let graph = build_graph_from_db(state);
+    let graph = crate::palace_graph::cached_graph(&state.palace_path);
     match graph.traverse(&input.start_room, input.max_hops.unwrap_or(2)) {
         crate::palace_graph::TraverseOutcome::Results(results) => ok_json(results),
         crate::palace_graph::TraverseOutcome::Error(error) => ok_json(error),
@@ -1191,7 +1192,7 @@ fn tool_find_tunnels(state: &AppState, args: JsonObject) -> Result<CallToolResul
         wing_b: Option<String>,
     }
     let input: Input = parse_args(args)?;
-    let graph = build_graph_from_db(state);
+    let graph = crate::palace_graph::cached_graph(&state.palace_path);
     let tunnels = graph.find_tunnels(input.wing_a.as_deref(), input.wing_b.as_deref());
     ok_json(tunnels)
 }
@@ -1200,7 +1201,7 @@ fn tool_graph_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResul
     if collection_missing(state) {
         return ok_json(no_palace());
     }
-    let graph = build_graph_from_db(state);
+    let graph = crate::palace_graph::cached_graph(&state.palace_path);
     let stats = graph.stats();
     ok_json(serde_json::json!({
         "total_rooms": stats.total_rooms,
@@ -1328,6 +1329,7 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
     )
     .map_err(|e| internal_error_safe(&e))?;
     db.flush().map_err(|e| internal_error_safe(&e))?;
+    crate::palace_graph::invalidate_cache();
     ok_json(serde_json::json!({
         "success": true,
         "entry_id": id,

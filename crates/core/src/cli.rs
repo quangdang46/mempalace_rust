@@ -446,14 +446,14 @@ fn cmd_init(
     dir: &PathBuf,
     palace_arg: Option<&str>,
     yes: bool,
-    _use_llm: bool,
-    _llm_provider: Option<&str>,
-    _llm_model: Option<&str>,
-    _llm_endpoint: Option<&str>,
-    _llm_api_key: Option<&str>,
-    _accept_external_llm: bool,
-    _auto_mine: bool,
-    _lang: Option<&str>,
+    use_llm: bool,
+    llm_provider: Option<&str>,
+    llm_model: Option<&str>,
+    llm_endpoint: Option<&str>,
+    llm_api_key: Option<&str>,
+    accept_external_llm: bool,
+    auto_mine: bool,
+    lang: Option<&str>,
 ) -> Result<()> {
     println!();
     println!("{}", "=".repeat(55));
@@ -520,7 +520,7 @@ fn cmd_init(
                     // Continue with entity detection but skip full init
                     let config_path = config.init()?;
 
-                    if let Some(lang_val) = _lang {
+                    if let Some(lang_val) = lang {
                         let languages: Vec<String> =
                             lang_val.split(',').map(|s| s.trim().to_string()).collect();
                         let mut config = Config::load()?;
@@ -583,7 +583,7 @@ fn cmd_init(
 
     let config_path = config.init()?;
 
-    if let Some(lang_val) = _lang {
+    if let Some(lang_val) = lang {
         let languages: Vec<String> = lang_val.split(',').map(|s| s.trim().to_string()).collect();
         config.languages = languages;
         config.save()?;
@@ -592,7 +592,17 @@ fn cmd_init(
     let config_dir = config_path.parent().unwrap_or(&config_path);
 
     if !yes {
-        let _registry = crate::onboarding::run_onboarding(dir, config_dir, true)?;
+        let _registry = crate::onboarding::run_onboarding(
+            dir,
+            config_dir,
+            true,
+            use_llm,
+            llm_provider,
+            llm_model,
+            llm_endpoint,
+            llm_api_key,
+            accept_external_llm,
+        )?;
 
         // Detect rooms from folder structure so `mpr mine` has something to read.
         let rooms = detect_rooms_from_folders(dir);
@@ -678,7 +688,7 @@ fn cmd_init(
     println!("  Project config saved: {:?}", project_config_path);
     println!("  Global config saved: {:?}", config_path);
 
-    if !yes && !_auto_mine {
+    if !yes && !auto_mine {
         println!();
         println!("  Mine this directory now? [Y/n]");
         let mut input = String::new();
@@ -698,7 +708,7 @@ fn cmd_init(
     println!();
     println!("{}", "=".repeat(55));
 
-    if _auto_mine {
+    if auto_mine {
         println!();
         println!("  Running mine automatically (--auto-mine set)...");
         if let Err(err) = cmd_mine(
