@@ -141,6 +141,10 @@ impl DeterministicRng {
     pub fn pick<'a, T>(&mut self, slice: &'a [T]) -> &'a T {
         &slice[self.gen_range(slice.len())]
     }
+
+    pub fn pick_str<'a>(&mut self, slice: &'a [&'a str]) -> &'a str {
+        slice[self.gen_range(slice.len())]
+    }
 }
 
 /// A single drawer record matching the production schema.
@@ -165,7 +169,7 @@ pub fn build_drawers(count: usize) -> Vec<DrawerFixture> {
             let token_count = 40 + rng.gen_range(40);
             let mut tokens = Vec::with_capacity(token_count);
             for _ in 0..token_count {
-                tokens.push(*rng.pick(TOKEN_POOL));
+                tokens.push(rng.pick_str(TOKEN_POOL));
             }
             let content = format!("drawer-{i:05} {}", tokens.join(" "));
             let source_file = format!("fixture/{wing}/{room}/{i:05}.md");
@@ -249,7 +253,7 @@ pub fn write_project_dir(
         let mut buf = String::with_capacity(chars_per_file + 32);
         buf.push_str(&format!("# bench-file-{i:04}\n\n"));
         while buf.len() < chars_per_file {
-            buf.push_str(rng.pick(TOKEN_POOL));
+            buf.push_str(rng.pick_str(TOKEN_POOL));
             buf.push(' ');
             // Insert paragraph breaks every ~120 chars so the chunker has
             // legitimate split points.
