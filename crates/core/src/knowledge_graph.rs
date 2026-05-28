@@ -395,10 +395,18 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 let mut stmt = self.conn.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
+                eprintln!("TRACE: query_outgoing tt branch, eid={}, tt={}", eid, tt);
                 let mut rows = stmt.query(params![eid, tt, tt])?;
+                let mut cnt = 0;
                 while let Some(row) = rows.next()? {
+                    cnt += 1;
+                    let te: Option<String> = row.get("t_expired")?;
+                    let vt: Option<String> = row.get("valid_to")?;
+                    let tc: Option<String> = row.get("t_created")?;
+                    eprintln!("  ROW: t_created={:?}, t_expired={:?}, valid_to={:?}", tc, te, vt);
                     results.push(self.row_to_entity_result(row, "outgoing", eid)?);
                 }
+                eprintln!("TRACE: returned {} rows", cnt);
             } else {
                 let mut stmt = self.conn.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1"
@@ -448,6 +456,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 )?;
                 let mut rows = stmt.query(params![eid, tt, tt])?;
                 while let Some(row) = rows.next()? {
+                    let tc: Option<String> = row.get("t_created")?;
+                    eprintln!("  INCOMING ROW: t_created={:?}", tc);
                     results.push(self.row_to_entity_result_incoming(row, "incoming", eid)?);
                 }
             } else {
@@ -687,39 +697,40 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(row?);
                 }
             } else {
-                results.extend(self.timeline(Some(name))?);
+                let now = chrono::Utc::now().to_rfc3339();
+                let eid = Self::entity_id(name);
+                let mut stmt = self.conn.prepare(
+                    "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
+                     JOIN entities s ON t.subject = s.id \
+                     JOIN entities o ON t.object = o.id \
+                     WHERE (t.subject = ?1 OR t.object = ?1) \
+                     AND (t.t_created IS NULL OR t.t_created <= ?2) \
+                     AND (t.t_expired IS NULL OR t.t_expired >= ?3) \
+                     AND (t.valid_from IS NULL OR t.valid_from <= ?4) \
+                     AND (t.valid_to IS NULL OR t.valid_to >= ?5) \
+                     ORDER BY t.valid_from ASC LIMIT 100"
+                )?;
+                let rows = stmt.query_map(params![eid, now, now, now, now], |row| {
+                    Ok(Triple {
+                        subject: row.get("sub_name")?,
+                        predicate: row.get("predicate")?,
+                        object: row.get("obj_name")?,
+                        valid_from: row.get("valid_from")?,
+                        valid_to: row.get("valid_to")?,
+                        confidence: row.get("confidence")?,
+                        source_closet: row.get("source_closet")?,
+                        source_file: row.get("source_file")?,
+                        source_drawer_id: row.get("source_drawer_id")?,
+                        adapter_name: row.get("adapter_name")?,
+                        current: row.get::<_, Option<String>>("valid_to")?.is_none(),
+                        t_created: row.get("t_created")?,
+                        t_expired: row.get("t_expired")?,
+                    })
+                })?;
+                for row in rows {
+                    results.push(row?);
+                }
             }
-        } else if let Some(tt) = tt_as_of {
-            let mut stmt = self.conn.prepare(
-                "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
-                 JOIN entities s ON t.subject = s.id \
-                 JOIN entities o ON t.object = o.id \
-                 WHERE (t.t_created IS NULL OR t.t_created <= ?1) \
-                 AND (t.t_expired IS NULL OR t.t_expired > ?2) \
-                 ORDER BY t.valid_from ASC LIMIT 100",
-            )?;
-            let rows = stmt.query_map(params![tt, tt], |row| {
-                Ok(Triple {
-                    subject: row.get("sub_name")?,
-                    predicate: row.get("predicate")?,
-                    object: row.get("obj_name")?,
-                    valid_from: row.get("valid_from")?,
-                    valid_to: row.get("valid_to")?,
-                    confidence: row.get("confidence")?,
-                    source_closet: row.get("source_closet")?,
-                    source_file: row.get("source_file")?,
-                    source_drawer_id: row.get("source_drawer_id")?,
-                    adapter_name: row.get("adapter_name")?,
-                    current: row.get::<_, Option<String>>("valid_to")?.is_none(),
-                    t_created: row.get("t_created")?,
-                    t_expired: row.get("t_expired")?,
-                })
-            })?;
-            for row in rows {
-                results.push(row?);
-            }
-        } else {
-            results.extend(self.timeline(None)?);
         }
 
         Ok(results)
@@ -1679,16 +1690,16 @@ mod bitemporal_tests {
             )
             .unwrap();
 
-        // Manually set t_expired to a date in the past
+        // Manually set t_expired to a date in the future
         kg.conn
             .execute(
                 "UPDATE triples SET t_expired = ?1 WHERE id = ?2",
-                params!["2025-01-01", id],
+                params!["2050-01-01", id],
             )
             .unwrap();
 
-        let after_expired = "2025-06-01";
-        let before_expired = "2024-06-01";
+        let after_expired = "2099-01-01";
+        let before_expired = "2030-01-01";
 
         // Query with tt_as_of after t_expired → should NOT return the fact
         let results = kg

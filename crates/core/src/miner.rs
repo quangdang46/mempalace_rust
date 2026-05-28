@@ -936,21 +936,7 @@ impl Miner {
             metadata.push(chunk_metadata);
         }
         let metadata_refs: Vec<&[(&str, &str)]> = metadata.iter().map(|v| v.as_slice()).collect();
-
-        // Build Drawer objects from ids_and_docs and metadata
-        let mut drawers = Vec::new();
-        for (i, (id, doc)) in ids_and_docs.iter().enumerate() {
-            let mut drawer = crate::palace::Drawer::new(*doc);
-            drawer.id = Some(crate::palace::DrawerId::new(id.to_string()));
-            drawer.wing = Some(self.wing.clone());
-            drawer.room = Some(room.clone());
-            // Convert metadata slice to HashMap
-            for (k, v) in metadata_refs[i] {
-                drawer.metadata.insert(k.to_string(), serde_json::json!(v));
-            }
-            drawers.push(drawer);
-        }
-        self.palace.add_drawers(drawers).await?;
+        self.palace_db.add(&ids_and_docs, &metadata_refs)?;
 
         Ok((chunks_added, None))
     }
@@ -1180,18 +1166,16 @@ mod tests {
             keywords: vec![],
         }];
 
-        let mut miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(&palace, "wing", rooms.clone()))
+        let mut miner = Miner::new(&palace, "wing", rooms.clone())
+            .await
             .expect("failed to create miner");
         let (first, skip) = miner.mine_file(&file).await.unwrap();
         assert!(first > 0);
         assert_eq!(skip, None);
         miner.palace_db.flush().unwrap();
 
-        let remine = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(&palace, "wing", rooms))
+        let remine = Miner::new(&palace, "wing", rooms)
+            .await
             .expect("failed to create miner");
         assert!(remine
             .palace_db
@@ -1703,9 +1687,8 @@ mod tests {
             description: "General".to_string(),
             keywords: vec![],
         }];
-        let mut miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(&palace, "wing", rooms))
+        let mut miner = Miner::new(&palace, "wing", rooms)
+            .await
             .expect("failed to create miner")
             .with_max_chunks_per_file(Some(test_cap));
 
@@ -1756,9 +1739,8 @@ mod tests {
             description: "General".to_string(),
             keywords: vec![],
         }];
-        let mut miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(&palace, "wing", rooms))
+        let mut miner = Miner::new(&palace, "wing", rooms)
+            .await
             .expect("Miner::new should succeed in test")
             .with_max_chunks_per_file(Some(0));
 
