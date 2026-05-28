@@ -1109,6 +1109,7 @@ fn tool_kg_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, 
     }))
 }
 
+#[allow(dead_code)]
 fn build_graph_from_db(state: &AppState) -> crate::palace_graph::PalaceGraph {
     use crate::palace_graph::{HallType, PalaceGraph, Room, Wing, WingType};
     let mut by_wing: HashMap<String, Vec<Room>> = HashMap::new();
@@ -1309,7 +1310,7 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
         "diary_{}_{}_{}",
         wing,
         now.format("%Y%m%d_%H%M%S"),
-        &short_hash(&input.entry, 12)
+        short_hash(&input.entry, 12)
     );
     let mut db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;

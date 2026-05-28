@@ -17,8 +17,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum StoreTier {
     /// embedvec (≤5 k drawers). The default today.
+    #[default]
     Embedvec,
     /// hnsw_rs + sqlite (≤20 k drawers). Phase 2 default.
     HnswRs,
@@ -26,12 +28,6 @@ pub enum StoreTier {
     Usearch,
     /// lancedb (100 k+). Phase 5.
     Lancedb,
-}
-
-impl Default for StoreTier {
-    fn default() -> Self {
-        Self::Embedvec
-    }
 }
 
 // Re-export the concrete store implementations.

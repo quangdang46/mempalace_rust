@@ -626,6 +626,7 @@ pub struct Miner {
     /// For PalaceDb-specific operations (file_already_mined mtime dedup)
     palace_db: PalaceDb,
     /// The memory provider facade for Palace operations
+    #[allow(dead_code)]
     palace: std::sync::Arc<dyn crate::palace::MemoryProvider>,
     wing: String,
     rooms: Vec<RoomMapping>,

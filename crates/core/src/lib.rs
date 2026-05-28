@@ -1,6 +1,8 @@
 // =====================================================================
 // Public API surface
 // =====================================================================
+
+#![allow(deprecated)]
 //
 // These modules form the curated public API rendered on docs.rs.
 // Adding a module here is a SemVer commitment — see docs/research/04

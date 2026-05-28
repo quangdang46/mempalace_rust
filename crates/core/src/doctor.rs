@@ -317,11 +317,11 @@ fn check_knowledge_graph(palace_path: &Path) -> anyhow::Result<CheckResult> {
 /// Outcomes:
 ///   * ✅ `Pass`  — manifest matches the active embedder.
 ///   * ⚠️ `Warn` — manifest absent (will be written on next write),
-///                 manifest present but no active embedder, or
-///                 `--no-network` mode without a manifest.
+///     manifest present but no active embedder, or
+///     `--no-network` mode without a manifest.
 ///   * ❌ `Fail` — manifest disagrees with the active embedder; the
-///                 message tells the user to run
-///                 `mpr migrate --re-embed`.
+///     message tells the user to run
+///     `mpr migrate --re-embed`.
 ///
 /// `--no-network` (`no_network = true`) skips inspection of the live
 /// embedder so a `doctor` run on a fresh machine can still surface

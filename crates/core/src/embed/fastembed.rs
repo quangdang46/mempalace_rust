@@ -267,8 +267,7 @@ mod tests {
         let e =
             FastEmbedEmbedder::with_model(EmbeddingModel::BGESmallENV15).expect("BGE-small loads");
         let inputs = ["hello world", "rust is fast", "memory palace"];
-        let vectors = e
-            .embed_batch(&inputs.iter().map(|s| *s).collect::<Vec<_>>())
+        let vectors = e.embed_batch(&inputs[..])
             .await
             .expect("embed_batch succeeds");
 

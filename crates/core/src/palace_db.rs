@@ -606,7 +606,7 @@ impl PalaceDb {
     pub fn compute_synonymy_edges(&self, threshold: f64) -> Vec<(String, String, String, f64)> {
         let mut by_room: std::collections::HashMap<(String, String), Vec<&str>> =
             std::collections::HashMap::new();
-        for (_id, entry) in &self.documents {
+        for entry in self.documents.values() {
             let wing = entry
                 .metadata
                 .get("wing")

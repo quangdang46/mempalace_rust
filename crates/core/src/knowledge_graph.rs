@@ -1387,7 +1387,7 @@ mod bitemporal_tests {
         let parsed = parse_ts(ts);
         let now = chrono::Utc::now();
         let diff = (now - parsed).num_seconds();
-        diff >= 0 && diff <= 5
+        (0..=5).contains(&diff)
     }
 
     // -------------------------------------------------------------------------
@@ -1600,7 +1600,7 @@ mod bitemporal_tests {
             .unwrap();
         // After auto-conflict resolution, only B is current; A got a valid_to set
         assert!(
-            results_after.len() >= 1,
+            !results_after.is_empty(),
             "Should return at least 1 fact after B added"
         );
         let current = results_after
