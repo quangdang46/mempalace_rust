@@ -22,7 +22,7 @@ impl Inner {
 
         let index = if index_path.exists() {
             unsafe {
-                usearch::Index::restore(&index_path)
+                usearch::Index::restore(index_path.to_string_lossy().as_ref())
                     .map_err(|e| anyhow::anyhow!("usearch restore: {e}"))?
             }
         } else {
