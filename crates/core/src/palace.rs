@@ -44,7 +44,6 @@ pub mod builder;
 pub mod store;
 
 pub use builder::PalaceBuilder;
-#[cfg(feature = "embed-embedvec")]
 pub use store::embedvec::EmbedvecStore;
 pub use store::StoreTier;
 
@@ -89,7 +88,7 @@ impl std::fmt::Display for DrawerId {
 ///
 /// `Raw` drawers bypass AAAK compression and are stored verbatim. All
 /// other kinds go through the compressor before the drawer is filed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 #[serde(rename_all = "lowercase")]
 pub enum DrawerKind {
@@ -104,13 +103,8 @@ pub enum DrawerKind {
     /// A recommendation or solved problem.
     Advice,
     /// Raw verbatim content — no hall, no AAAK compression.
+    #[default]
     Raw,
-}
-
-impl Default for DrawerKind {
-    fn default() -> Self {
-        Self::Raw
-    }
 }
 
 /// Memory tier — lifecycle stage of a drawer (ADR-13 / mp-051).
@@ -126,11 +120,12 @@ impl Default for DrawerKind {
 ///
 /// Default on ingest is `Working` or `Episodic` (set by the caller based on source).
 /// Promotion through tiers happens in sleep-time consolidation (mp-091).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryTier {
     /// Raw observation — verbatim content, not yet consolidated.
+    #[default]
     Working,
     /// Episodic summary of a session or batch ingest.
     Episodic,
@@ -138,12 +133,6 @@ pub enum MemoryTier {
     Semantic,
     /// Learned procedure/skill (Phase 5).
     Procedural,
-}
-
-impl Default for MemoryTier {
-    fn default() -> Self {
-        Self::Working
-    }
 }
 
 /// Scope constraints on a search or memory operation.
@@ -188,24 +177,13 @@ pub struct SearchScope {
 ///   | `t_valid_to` | When the fact stopped being true in the world |
 ///
 /// Not yet wired to the KG — placeholder for mp-080.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct BiTemporalRange {
     pub t_created: Option<String>,
     pub t_expired: Option<String>,
     pub t_valid_from: Option<String>,
     pub t_valid_to: Option<String>,
-}
-
-impl Default for BiTemporalRange {
-    fn default() -> Self {
-        Self {
-            t_created: None,
-            t_expired: None,
-            t_valid_from: None,
-            t_valid_to: None,
-        }
-    }
 }
 
 impl SearchScope {
@@ -239,7 +217,7 @@ impl SearchScope {
 ///
 /// Used by the library API to disambiguate reads that could touch either
 /// the global palace or the project-local palace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum MemoryScope {
     /// Read/write only the project-local palace (from
@@ -249,13 +227,8 @@ pub enum MemoryScope {
     Global,
     /// Try local first; fall back to global if local is empty or absent.
     /// Default for standalone CLI usage.
+    #[default]
     Auto,
-}
-
-impl Default for MemoryScope {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Retrieval fusion mode for combining vector and graph-based search.
@@ -628,7 +601,7 @@ impl MemoryProvider for Palace {
     }
 
     async fn forget(&self, id: &DrawerId) -> anyhow::Result<bool> {
-        let n = self.store.delete(&[id.clone()]).await?;
+        let n = self.store.delete(std::slice::from_ref(id)).await?;
         Ok(n > 0)
     }
 

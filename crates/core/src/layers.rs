@@ -6,6 +6,7 @@
 //! Layer 3: Deep Search (unlimited) — Full semantic search.
 
 use crate::config::Config;
+#[allow(unused_imports)]
 use crate::palace::{Drawer, MemoryProvider};
 use crate::palace_db::PalaceDb;
 use std::collections::HashMap;
@@ -565,7 +566,6 @@ pub struct DeepSearchStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::embed::Embedder;
     use crate::palace::{
         DrawerId, DrawerKind, MemoryScope, MemoryTier, PalaceStore, SearchHit, SearchScope,
     };
