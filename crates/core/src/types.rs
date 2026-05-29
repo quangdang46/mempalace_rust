@@ -335,6 +335,32 @@ pub enum SignalType {
     Handoff,
 }
 
+impl std::fmt::Display for SignalType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Info => write!(f, "info"),
+            Self::Request => write!(f, "request"),
+            Self::Response => write!(f, "response"),
+            Self::Alert => write!(f, "alert"),
+            Self::Handoff => write!(f, "handoff"),
+        }
+    }
+}
+
+impl std::str::FromStr for SignalType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "info" => Ok(Self::Info),
+            "request" => Ok(Self::Request),
+            "response" => Ok(Self::Response),
+            "alert" => Ok(Self::Alert),
+            "handoff" => Ok(Self::Handoff),
+            _ => Err(format!("unknown SignalType: {s}")),
+        }
+    }
+}
+
 /// Types of checkpoints for blocking conditions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -346,6 +372,32 @@ pub enum CheckpointType {
     Manual,
 }
 
+impl std::fmt::Display for CheckpointType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ci => write!(f, "ci"),
+            Self::Approval => write!(f, "approval"),
+            Self::Deploy => write!(f, "deploy"),
+            Self::Timer => write!(f, "timer"),
+            Self::Manual => write!(f, "manual"),
+        }
+    }
+}
+
+impl std::str::FromStr for CheckpointType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ci" => Ok(Self::Ci),
+            "approval" => Ok(Self::Approval),
+            "deploy" => Ok(Self::Deploy),
+            "timer" => Ok(Self::Timer),
+            "manual" => Ok(Self::Manual),
+            _ => Err(format!("unknown CheckpointType: {s}")),
+        }
+    }
+}
+
 /// Status of a checkpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -354,6 +406,30 @@ pub enum CheckpointStatus {
     Passed,
     Failed,
     Skipped,
+}
+
+impl std::fmt::Display for CheckpointStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Passed => write!(f, "passed"),
+            Self::Failed => write!(f, "failed"),
+            Self::Skipped => write!(f, "skipped"),
+        }
+    }
+}
+
+impl std::str::FromStr for CheckpointStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "passed" => Ok(Self::Passed),
+            "failed" => Ok(Self::Failed),
+            "skipped" => Ok(Self::Skipped),
+            _ => Err(format!("unknown CheckpointStatus: {s}")),
+        }
+    }
 }
 
 /// Types of sentinels (watch triggers).
