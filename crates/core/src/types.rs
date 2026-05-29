@@ -828,10 +828,18 @@ pub struct ProjectProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshPeer {
     pub id: String,
+    pub url: String,
     pub name: String,
-    pub address: String,
-    pub capabilities: Vec<String>,
-    pub last_seen: DateTime<Utc>,
+    pub status: String,
+    pub shared_scopes: Vec<String>,
+    pub sync_filter: Option<SyncFilter>,
+    pub last_sync_at: Option<DateTime<Utc>>,
+}
+
+/// Filter for mesh sync scope.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SyncFilter {
+    pub project: Option<String>,
 }
 
 /// Audit trail entry for operations.
@@ -840,10 +848,30 @@ pub struct AuditEntry {
     pub id: String,
     pub timestamp: DateTime<Utc>,
     pub operation: String,
-    pub actor: String,
-    pub target_id: String,
+    pub user_id: Option<String>,
+    pub function_id: String,
+    pub target_ids: Vec<String>,
     pub details: HashMap<String, serde_json::Value>,
-    pub project: String,
+    pub quality_score: Option<f64>,
+}
+
+/// Team profile with aggregated concepts/files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamProfile {
+    pub team_id: String,
+    pub members: Vec<String>,
+    pub top_concepts: Vec<FrequencyEntry>,
+    pub top_files: Vec<FrequencyEntry>,
+    pub shared_patterns: Vec<String>,
+    pub total_shared_items: usize,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A frequency-counted entry (concept or file).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrequencyEntry {
+    pub key: String,
+    pub frequency: usize,
 }
 
 /// Export/import data container.
@@ -941,10 +969,177 @@ pub struct HybridSearchResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamConfig {
     pub team_id: String,
+    pub user_id: String,
     pub mode: TeamMode,
-    pub namespace: String,
-    pub members: Vec<String>,
-    pub shared_memory_id: String,
+}
+
+/// Type of item shared in team memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedItemType {
+    Memory,
+    Pattern,
+    Observation,
+}
+
+/// Visibility of a shared item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemVisibility {
+    Shared,
+    Private,
+}
+
+/// An item shared between team members.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamSharedItem {
+    pub id: String,
+    pub shared_by: String,
+    pub shared_at: DateTime<Utc>,
+    pub item_type: SharedItemType,
+    pub content: serde_json::Value,
+    pub project: String,
+    pub visibility: ItemVisibility,
+}
+
+/// Audit operation types (~60 types from agentmemory).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditOperation {
+    // Session operations
+    SessionCreate,
+    SessionUpdate,
+    SessionClose,
+    SessionDelete,
+    // Observation operations
+    ObservationCreate,
+    ObservationUpdate,
+    ObservationDelete,
+    ObservationCompress,
+    // Memory operations
+    MemoryCreate,
+    MemoryUpdate,
+    MemoryDelete,
+    MemorySearch,
+    MemoryConsolidate,
+    // Action operations
+    ActionCreate,
+    ActionUpdate,
+    ActionDelete,
+    ActionComplete,
+    ActionBlock,
+    ActionUnblock,
+    // Graph operations
+    GraphNodeCreate,
+    GraphNodeUpdate,
+    GraphNodeDelete,
+    GraphEdgeCreate,
+    GraphEdgeUpdate,
+    GraphEdgeDelete,
+    // Team operations
+    TeamShare,
+    TeamProfileUpdate,
+    // Mesh operations
+    MeshSync,
+    MeshPeerAdd,
+    MeshPeerRemove,
+    // Slot operations
+    SlotCreate,
+    SlotUpdate,
+    SlotDelete,
+    SlotPin,
+    SlotUnpin,
+    // Lease operations
+    LeaseAcquire,
+    LeaseRelease,
+    LeaseExpire,
+    // Signal operations
+    SignalCreate,
+    SignalUpdate,
+    SignalDelete,
+    // Routine operations
+    RoutineCreate,
+    RoutineUpdate,
+    RoutineDelete,
+    RoutineRun,
+    // Profile operations
+    ProfileUpdate,
+    // Lesson operations
+    LessonCreate,
+    LessonUpdate,
+    LessonDelete,
+    // Export/Import
+    Export,
+    Import,
+    // Governance
+    GovernanceCheck,
+    GovernanceUpdate,
+    // Context
+    ContextBuild,
+    // Other
+    Unknown,
+}
+
+impl std::fmt::Display for AuditOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SessionCreate => write!(f, "session_create"),
+            Self::SessionUpdate => write!(f, "session_update"),
+            Self::SessionClose => write!(f, "session_close"),
+            Self::SessionDelete => write!(f, "session_delete"),
+            Self::ObservationCreate => write!(f, "observation_create"),
+            Self::ObservationUpdate => write!(f, "observation_update"),
+            Self::ObservationDelete => write!(f, "observation_delete"),
+            Self::ObservationCompress => write!(f, "observation_compress"),
+            Self::MemoryCreate => write!(f, "memory_create"),
+            Self::MemoryUpdate => write!(f, "memory_update"),
+            Self::MemoryDelete => write!(f, "memory_delete"),
+            Self::MemorySearch => write!(f, "memory_search"),
+            Self::MemoryConsolidate => write!(f, "memory_consolidate"),
+            Self::ActionCreate => write!(f, "action_create"),
+            Self::ActionUpdate => write!(f, "action_update"),
+            Self::ActionDelete => write!(f, "action_delete"),
+            Self::ActionComplete => write!(f, "action_complete"),
+            Self::ActionBlock => write!(f, "action_block"),
+            Self::ActionUnblock => write!(f, "action_unblock"),
+            Self::GraphNodeCreate => write!(f, "graph_node_create"),
+            Self::GraphNodeUpdate => write!(f, "graph_node_update"),
+            Self::GraphNodeDelete => write!(f, "graph_node_delete"),
+            Self::GraphEdgeCreate => write!(f, "graph_edge_create"),
+            Self::GraphEdgeUpdate => write!(f, "graph_edge_update"),
+            Self::GraphEdgeDelete => write!(f, "graph_edge_delete"),
+            Self::TeamShare => write!(f, "team_share"),
+            Self::TeamProfileUpdate => write!(f, "team_profile_update"),
+            Self::MeshSync => write!(f, "mesh_sync"),
+            Self::MeshPeerAdd => write!(f, "mesh_peer_add"),
+            Self::MeshPeerRemove => write!(f, "mesh_peer_remove"),
+            Self::SlotCreate => write!(f, "slot_create"),
+            Self::SlotUpdate => write!(f, "slot_update"),
+            Self::SlotDelete => write!(f, "slot_delete"),
+            Self::SlotPin => write!(f, "slot_pin"),
+            Self::SlotUnpin => write!(f, "slot_unpin"),
+            Self::LeaseAcquire => write!(f, "lease_acquire"),
+            Self::LeaseRelease => write!(f, "lease_release"),
+            Self::LeaseExpire => write!(f, "lease_expire"),
+            Self::SignalCreate => write!(f, "signal_create"),
+            Self::SignalUpdate => write!(f, "signal_update"),
+            Self::SignalDelete => write!(f, "signal_delete"),
+            Self::RoutineCreate => write!(f, "routine_create"),
+            Self::RoutineUpdate => write!(f, "routine_update"),
+            Self::RoutineDelete => write!(f, "routine_delete"),
+            Self::RoutineRun => write!(f, "routine_run"),
+            Self::ProfileUpdate => write!(f, "profile_update"),
+            Self::LessonCreate => write!(f, "lesson_create"),
+            Self::LessonUpdate => write!(f, "lesson_update"),
+            Self::LessonDelete => write!(f, "lesson_delete"),
+            Self::Export => write!(f, "export"),
+            Self::Import => write!(f, "import"),
+            Self::GovernanceCheck => write!(f, "governance_check"),
+            Self::GovernanceUpdate => write!(f, "governance_update"),
+            Self::ContextBuild => write!(f, "context_build"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
 }
 
 /// State for the circuit breaker pattern.

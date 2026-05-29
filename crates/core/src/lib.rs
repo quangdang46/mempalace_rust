@@ -130,6 +130,7 @@ pub mod context;
 pub mod summarize;
 pub mod working_memory;
 pub mod slots;
+pub mod audit;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod privacy;
