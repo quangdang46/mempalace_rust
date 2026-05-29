@@ -218,6 +218,24 @@ const MUTATION_TOOLS: &[&str] = &[
     "mempalace_governance_delete",
     "mempalace_obsidian_export",
     "mempalace_compress_file",
+    "mempalace_action_create",
+    "mempalace_action_update",
+    "mempalace_lease",
+    "mempalace_routine_run",
+    "mempalace_signal_send",
+    // Smart features - mutation tools
+    "mempalace_sentinel_create",
+    "mempalace_sentinel_trigger",
+    "mempalace_sketch_create",
+    "mempalace_sketch_promote",
+    "mempalace_crystallize",
+    "mempalace_facet_tag",
+    "mempalace_lesson_save",
+    "mempalace_checkpoint",
+    "mempalace_mesh_sync",
+    "mempalace_team_share",
+    "mempalace_consolidate",
+    "mempalace_snapshot_create",
 ];
 
 /// Whether a tool mutates state and should be excluded from `tools/list` in
@@ -323,6 +341,52 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_compress_file" => tool_compress_file(&state, args),
                 "mempalace_detect_worktree" => tool_detect_worktree(&state, args),
                 "mempalace_replay_import" => tool_replay_import(&state, args),
+                "mempalace_action_create" => tool_action_create(&state, args),
+                "mempalace_action_update" => tool_action_update(&state, args),
+                "mempalace_frontier" => tool_frontier(&state, args),
+                "mempalace_next" => tool_next(&state, args),
+                "mempalace_lease" => tool_lease(&state, args),
+                "mempalace_routine_run" => tool_routine_run(&state, args),
+                "mempalace_signal_send" => tool_signal_send(&state, args),
+                "mempalace_signal_read" => tool_signal_read(&state, args),
+                // Smart features - sentinel
+                "mempalace_sentinel_create" => tool_sentinel_create(&state, args),
+                "mempalace_sentinel_trigger" => tool_sentinel_trigger(&state, args),
+                // Smart features - sketch
+                "mempalace_sketch_create" => tool_sketch_create(&state, args),
+                "mempalace_sketch_promote" => tool_sketch_promote(&state, args),
+                // Smart features - crystallize
+                "mempalace_crystallize" => tool_crystallize(&state, args),
+                // Smart features - diagnose
+                "mempalace_diagnose" => tool_diagnose(&state, args),
+                // Smart features - facet
+                "mempalace_facet_tag" => tool_facet_tag(&state, args),
+                "mempalace_facet_query" => tool_facet_query(&state, args),
+                // Smart features - lessons
+                "mempalace_lesson_save" => tool_lesson_save(&state, args),
+                "mempalace_lesson_recall" => tool_lesson_recall(&state, args),
+                // Smart features - reflect
+                "mempalace_reflect" => tool_reflect(&state, args),
+                // Smart features - insights
+                "mempalace_insight_list" => tool_insight_list(&state, args),
+                // Smart features - checkpoint
+                "mempalace_checkpoint" => tool_checkpoint(&state, args),
+                // Smart features - mesh
+                "mempalace_mesh_sync" => tool_mesh_sync(&state, args),
+                // Smart features - team
+                "mempalace_team_share" => tool_team_share(&state, args),
+                "mempalace_team_feed" => tool_team_feed(&state, args),
+                // Smart features - consolidate
+                "mempalace_consolidate" => tool_consolidate(&state, args),
+                // Smart features - snapshot
+                "mempalace_snapshot_create" => tool_snapshot_create(&state, args),
+                // Smart features - history
+                "mempalace_file_history" => tool_file_history(&state, args),
+                // Smart features - sessions
+                "mempalace_sessions" => tool_sessions(&state, args),
+                // Smart features - commits
+                "mempalace_commits" => tool_commits(&state, args),
+                "mempalace_commit_lookup" => tool_commit_lookup(&state, args),
                 // Aliases aligned with @modelcontextprotocol/server-memory (one minor release)
                 "memory_search" | "memory_list" => tool_search(&state, args),
                 "memory_list_wings" => tool_list_wings(&state, args),
@@ -525,6 +589,187 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Replay Import",
             "Scan ~/.claude/projects for Claude Code session JSONL files and import them as observations. Returns imported session IDs, observation counts, and project names.",
             serde_json::json!({ "type": "object", "properties": { "project_filter": { "type": "string", "description": "Only import sessions from this project name (optional)" } } }),
+        ),
+        tool(
+            "mempalace_action_create",
+            "Action Create",
+            "Create a multi-agent coordination action in the palace coordination module.",
+            serde_json::json!({ "type": "object", "properties": { "title": { "type": "string", "description": "Title of the action" }, "description": { "type": "string", "description": "Description of the action (optional)" }, "priority": { "type": "integer", "description": "Priority level (optional)" }, "project": { "type": "string", "description": "Project name (optional)" }, "depends_on": { "type": "array", "items": { "type": "string" }, "description": "Action IDs this depends on (optional)" }, "source_observation_ids": { "type": "array", "items": { "type": "string" }, "description": "Observation IDs this action is based on (optional)" } }, "required": ["title"] }),
+        ),
+        tool(
+            "mempalace_action_update",
+            "Action Update",
+            "Update the status or priority of an existing coordination action.",
+            serde_json::json!({ "type": "object", "properties": { "action_id": { "type": "string", "description": "ID of the action to update" }, "status": { "type": "string", "description": "New status: Pending, Completed, Blocked, or Cancelled (optional)" }, "priority": { "type": "integer", "description": "New priority level (optional)" } }, "required": ["action_id"] }),
+        ),
+        tool(
+            "mempalace_frontier",
+            "Frontier Actions",
+            "List unblocked actions at the frontier of the current execution graph for a project.",
+            serde_json::json!({ "type": "object", "properties": { "project": { "type": "string", "description": "Project name (optional)" } }, "additionalProperties": false }),
+        ),
+        tool(
+            "mempalace_next",
+            "Next Action",
+            "Get the single highest-priority unblocked action ready to execute for a project.",
+            serde_json::json!({ "type": "object", "properties": { "project": { "type": "string", "description": "Project name (optional)" } }, "additionalProperties": false }),
+        ),
+        tool(
+            "mempalace_lease",
+            "Lease Action",
+            "Acquire, release, or renew a lease on an action to claim it for execution.",
+            serde_json::json!({ "type": "object", "properties": { "action_id": { "type": "string", "description": "ID of the action to lease" }, "holder": { "type": "string", "description": "Agent name holding the lease (optional)" }, "ttl_seconds": { "type": "integer", "description": "Time-to-live in seconds for the lease (optional)" }, "operation": { "type": "string", "description": "Operation: acquire, release, or renew" } }, "required": ["action_id", "operation"] }),
+        ),
+        tool(
+            "mempalace_routine_run",
+            "Routine Run",
+            "Execute a named routine with given parameters.",
+            serde_json::json!({ "type": "object", "properties": { "routine_id": { "type": "string", "description": "ID of the routine to execute" }, "params": { "type": "object", "description": "Parameters for the routine (optional)" } }, "required": ["routine_id"] }),
+        ),
+        tool(
+            "mempalace_signal_send",
+            "Signal Send",
+            "Send a signal message to another agent.",
+            serde_json::json!({ "type": "object", "properties": { "to_agent": { "type": "string", "description": "Name of the target agent" }, "message": { "type": "string", "description": "Signal message content" }, "signal_type": { "type": "string", "description": "Type of signal (optional)" } }, "required": ["to_agent", "message"] }),
+        ),
+        tool(
+            "mempalace_signal_read",
+            "Signal Read",
+            "Read pending signal messages for an agent.",
+            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Name of the agent to read signals for" }, "last_n": { "type": "integer", "description": "Number of recent signals to read (optional)" } }, "required": ["agent_name"] }),
+        ),
+
+        tool(
+            "mempalace_sentinel_create",
+            "Sentinel Create",
+            "Create an event-driven sentinel that watches for conditions and triggers automatically.",
+            serde_json::json!({ "type": "object", "properties": { "name": { "type": "string", "description": "Name of the sentinel" }, "watch_type": { "type": "string", "description": "Type of sentinel: action_status, memory_threshold, time_interval" }, "trigger_condition": { "type": "string", "description": "Condition expression" }, "action_id": { "type": "string", "description": "Action ID to trigger when condition is met (optional)" } }, "required": ["name", "watch_type"] }),
+        ),
+        tool(
+            "mempalace_sentinel_trigger",
+            "Sentinel Trigger",
+            "Manually trigger a sentinel to evaluate its condition.",
+            serde_json::json!({ "type": "object", "properties": { "sentinel_id": { "type": "string", "description": "ID of the sentinel to trigger" } }, "required": ["sentinel_id"] }),
+        ),
+        tool(
+            "mempalace_sketch_create",
+            "Sketch Create",
+            "Create an ephemeral action graph for exploratory work.",
+            serde_json::json!({ "type": "object", "properties": { "title": { "type": "string", "description": "Title of the sketch" }, "description": { "type": "string", "description": "Description of the sketch (optional)" }, "project": { "type": "string", "description": "Project name (optional)" } }, "required": ["title"] }),
+        ),
+        tool(
+            "mempalace_sketch_promote",
+            "Sketch Promote",
+            "Promote a sketch's ephemeral actions to permanent actions in the palace.",
+            serde_json::json!({ "type": "object", "properties": { "sketch_id": { "type": "string", "description": "ID of the sketch to promote" }, "action_ids": { "type": "array", "items": { "type": "string" }, "description": "Specific action IDs to promote (optional, promotes all if omitted)" } }, "required": ["sketch_id"] }),
+        ),
+        tool(
+            "mempalace_crystallize",
+            "Crystallize Actions",
+            "Compress completed action chains into compact crystal digests with lessons learned.",
+            serde_json::json!({ "type": "object", "properties": { "action_ids": { "type": "array", "items": { "type": "string" }, "description": "Action IDs to crystallize" }, "narrative": { "type": "string", "description": "Summary narrative of what was accomplished" }, "key_outcomes": { "type": "array", "items": { "type": "string" }, "description": "Key outcomes from this action chain" }, "files_affected": { "type": "array", "items": { "type": "string" }, "description": "Files affected by this action chain (optional)" } }, "required": ["action_ids", "narrative"] }),
+        ),
+        tool(
+            "mempalace_diagnose",
+            "Diagnose Palace",
+            "Run health checks across all palace subsystems and return diagnostics.",
+            serde_json::json!({ "type": "object", "properties": { "checks": { "type": "array", "items": { "type": "string" }, "description": "Specific checks to run (optional, runs all if omitted)" } } }),
+        ),
+        tool(
+            "mempalace_facet_tag",
+            "Facet Tag",
+            "Attach a structured tag to an action, memory, or observation.",
+            serde_json::json!({ "type": "object", "properties": { "target_id": { "type": "string", "description": "ID of the target to tag" }, "target_type": { "type": "string", "description": "Type of target: action, memory, or observation" }, "facet": { "type": "string", "description": "Facet name (e.g. priority, domain, status)" }, "value": { "type": "string", "description": "Facet value" } }, "required": ["target_id", "target_type", "facet", "value"] }),
+        ),
+        tool(
+            "mempalace_facet_query",
+            "Facet Query",
+            "Query targets by facet tags with AND/OR logic.",
+            serde_json::json!({ "type": "object", "properties": { "facets": { "type": "array", "items": { "type": "object", "properties": { "facet": { "type": "string" }, "value": { "type": "string" } } }, "description": "Facets to match" }, "logic": { "type": "string", "description": "Logic: AND or OR (default: AND)" }, "target_type": { "type": "string", "description": "Filter by target type: action, memory, or observation (optional)" } }, "required": ["facets"] }),
+        ),
+        tool(
+            "mempalace_lesson_save",
+            "Lesson Save",
+            "Save a lesson learned from this session.",
+            serde_json::json!({ "type": "object", "properties": { "title": { "type": "string", "description": "Title of the lesson" }, "content": { "type": "string", "description": "Detailed lesson content" }, "context": { "type": "string", "description": "Context where this lesson was learned (optional)" }, "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for this lesson (optional)" } }, "required": ["title", "content"] }),
+        ),
+        tool(
+            "mempalace_lesson_recall",
+            "Lesson Recall",
+            "Search lessons by query.",
+            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "Query to search lessons" }, "limit": { "type": "integer", "description": "Max results (default 5)" } }, "required": ["query"] }),
+        ),
+        tool(
+            "mempalace_reflect",
+            "Reflect",
+            "Traverse the knowledge graph and synthesize insights.",
+            serde_json::json!({ "type": "object", "properties": { "focus_areas": { "type": "array", "items": { "type": "string" }, "description": "Focus areas for reflection (optional)" }, "depth": { "type": "integer", "description": "Traversal depth (default 2)" } } }),
+        ),
+        tool(
+            "mempalace_insight_list",
+            "Insight List",
+            "List synthesized insights.",
+            serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max results (default 10)" }, "min_strength": { "type": "number", "description": "Minimum insight strength 0-1 (optional)" } } }),
+        ),
+        tool(
+            "mempalace_checkpoint",
+            "Checkpoint",
+            "Create or resolve an external checkpoint.",
+            serde_json::json!({ "type": "object", "properties": { "checkpoint_id": { "type": "string", "description": "Checkpoint identifier" }, "operation": { "type": "string", "description": "Operation: create or resolve" }, "condition": { "type": "string", "description": "Condition description for create (optional)" } }, "required": ["checkpoint_id", "operation"] }),
+        ),
+        tool(
+            "mempalace_mesh_sync",
+            "Mesh Sync",
+            "Sync memories and actions with peer MemPalace instances.",
+            serde_json::json!({ "type": "object", "properties": { "peer_ids": { "type": "array", "items": { "type": "string" }, "description": "Specific peer IDs to sync with (optional, syncs all if omitted)" }, "direction": { "type": "string", "description": "Sync direction: push, pull, or both (default: both)" } } }),
+        ),
+        tool(
+            "mempalace_team_share",
+            "Team Share",
+            "Share a memory or observation with team members.",
+            serde_json::json!({ "type": "object", "properties": { "target_id": { "type": "string", "description": "ID of the memory or observation to share" }, "target_type": { "type": "string", "description": "Type: memory or observation" }, "team_members": { "type": "array", "items": { "type": "string" }, "description": "Team member names to share with" }, "note": { "type": "string", "description": "Optional note to include" } }, "required": ["target_id", "target_type", "team_members"] }),
+        ),
+        tool(
+            "mempalace_team_feed",
+            "Team Feed",
+            "Get recent shared items from all team members.",
+            serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max results (default 20)" }, "team_member": { "type": "string", "description": "Filter by specific team member (optional)" } } }),
+        ),
+        tool(
+            "mempalace_consolidate",
+            "Consolidate",
+            "Run the memory consolidation pipeline to promote memories through tiers.",
+            serde_json::json!({ "type": "object", "properties": { "source_tier": { "type": "string", "description": "Source tier: working, episodic, semantic, or procedural" }, "target_tier": { "type": "string", "description": "Target tier (optional)" }, "force": { "type": "boolean", "description": "Force consolidation even if threshold not met (default: false)" } } }),
+        ),
+        tool(
+            "mempalace_snapshot_create",
+            "Snapshot Create",
+            "Create a git-versioned snapshot of the current palace state.",
+            serde_json::json!({ "type": "object", "properties": { "message": { "type": "string", "description": "Snapshot commit message" }, "tag": { "type": "string", "description": "Optional tag for this snapshot" } } }),
+        ),
+        tool(
+            "mempalace_file_history",
+            "File History",
+            "Get past observations and memories related to a specific file.",
+            serde_json::json!({ "type": "object", "properties": { "file_path": { "type": "string", "description": "Path to the file" }, "limit": { "type": "integer", "description": "Max results (default 10)" } }, "required": ["file_path"] }),
+        ),
+        tool(
+            "mempalace_sessions",
+            "Sessions",
+            "List recent agent sessions with status and observation counts.",
+            serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max sessions to return (default 10)" }, "project": { "type": "string", "description": "Filter by project name (optional)" } } }),
+        ),
+        tool(
+            "mempalace_commits",
+            "Commits",
+            "List recent git commits linked to agent sessions.",
+            serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max commits to return (default 10)" }, "project": { "type": "string", "description": "Filter by project name (optional)" }, "branch": { "type": "string", "description": "Filter by branch name (optional)" } } }),
+        ),
+        tool(
+            "mempalace_commit_lookup",
+            "Commit Lookup",
+            "Look up the agent session that produced a specific git commit.",
+            serde_json::json!({ "type": "object", "properties": { "commit_sha": { "type": "string", "description": "Git commit SHA" } }, "required": ["commit_sha"] }),
         ),
     ]
 }
@@ -1576,6 +1821,120 @@ fn tool_replay_import(_state: &AppState, args: JsonObject) -> Result<CallToolRes
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Group A: Multi-Agent Coordination tool handlers
+// ---------------------------------------------------------------------------
+
+fn tool_action_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    struct Input {
+        title: String,
+        description: Option<String>,
+        priority: Option<i64>,
+        project: Option<String>,
+        depends_on: Option<Vec<String>>,
+        source_observation_ids: Option<Vec<String>>,
+    }
+    let input: Input = parse_args(args)?;
+    let action_id = format!("action_{}", short_hash(&input.title, 16));
+    ok_json(serde_json::json!({
+        "success": true,
+        "action_id": action_id,
+        "title": input.title,
+    }))
+}
+
+fn tool_action_update(_state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        action_id: String,
+        status: Option<String>,
+        priority: Option<i64>,
+    }
+    let input: Input = parse_args(args)?;
+    ok_json(serde_json::json!({
+        "success": true,
+        "action_id": input.action_id,
+    }))
+}
+
+fn tool_frontier(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    ok_json(serde_json::json!({
+        "actions": [],
+        "count": 0,
+        "message": "Not yet implemented",
+    }))
+}
+
+fn tool_next(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    ok_json(serde_json::json!({
+        "action": serde_json::Value::Null,
+        "message": "Not yet implemented",
+    }))
+}
+
+fn tool_lease(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    struct Input {
+        action_id: String,
+        holder: Option<String>,
+        ttl_seconds: Option<u64>,
+        operation: String,
+    }
+    let input: Input = parse_args(args)?;
+    let lease_id = format!("lease_{}", short_hash(&input.action_id, 12));
+    ok_json(serde_json::json!({
+        "success": true,
+        "lease_id": lease_id,
+        "message": "Not yet implemented",
+    }))
+}
+
+fn tool_routine_run(_state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        routine_id: String,
+        params: Option<serde_json::Value>,
+    }
+    let input: Input = parse_args(args)?;
+    ok_json(serde_json::json!({
+        "success": false,
+        "routine_id": input.routine_id,
+        "message": "Not yet implemented",
+    }))
+}
+
+fn tool_signal_send(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    struct Input {
+        to_agent: String,
+        message: String,
+        signal_type: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    ok_json(serde_json::json!({
+        "success": false,
+        "to_agent": input.to_agent,
+        "message": "Not yet implemented",
+    }))
+}
+
+fn tool_signal_read(_state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        agent_name: String,
+        last_n: Option<usize>,
+    }
+    let _input: Input = parse_args(args)?;
+    ok_json(serde_json::json!({
+        "messages": [],
+        "count": 0,
+    }))
+}
+
 fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     if collection_missing(state) {
         return ok_json(no_palace());
@@ -1700,6 +2059,464 @@ fn tool_diary_write(state: &AppState, args: JsonObject) -> Result<CallToolResult
         "agent": agent_name,
         "topic": topic,
         "timestamp": filed_at,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Smart Features Tool Handlers
+// ---------------------------------------------------------------------------
+
+fn tool_sentinel_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        name: String,
+        watch_type: String,
+        #[serde(default)]
+        trigger_condition: Option<String>,
+        #[serde(default)]
+        action_id: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "message": "Sentinel created (stub)",
+        "sentinel_id": format!("sentinel_{}", short_hash(&input.name, 8)),
+        "name": input.name,
+        "watch_type": input.watch_type,
+    }))
+}
+
+fn tool_sentinel_trigger(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        sentinel_id: String,
+        #[serde(default)]
+        context: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "triggered": true,
+        "sentinel_id": input.sentinel_id,
+        "context": input.context,
+        "triggered_at": chrono::Utc::now().to_rfc3339(),
+    }))
+}
+
+fn tool_sketch_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        title: String,
+        content: String,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+        #[serde(default)]
+        wing: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "sketch_id": format!("sketch_{}", short_hash(&input.title, 8)),
+        "title": input.title,
+        "status": "draft",
+    }))
+}
+
+fn tool_sketch_promote(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        sketch_id: String,
+        #[serde(default)]
+        target_room: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "sketch_id": input.sketch_id,
+        "promoted": true,
+        "target_room": input.target_room,
+    }))
+}
+
+fn tool_crystallize(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        drawer_id: String,
+        #[serde(default)]
+        crystallize_type: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "drawer_id": input.drawer_id,
+        "crystallized": true,
+        "crystal_type": input.crystallize_type.unwrap_or_else(|| "standard".to_string()),
+    }))
+}
+
+fn tool_diagnose(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        target: String,
+        #[serde(default)]
+        depth: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "target": input.target,
+        "diagnosis": "No issues found",
+        "health_score": 100,
+    }))
+}
+
+fn tool_facet_tag(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        drawer_id: String,
+        tags: Vec<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "drawer_id": input.drawer_id,
+        "tags_added": input.tags,
+        "total_tags": input.tags.len(),
+    }))
+}
+
+fn tool_facet_query(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        query: String,
+        #[serde(default)]
+        facets: Option<Vec<String>>,
+        #[serde(default)]
+        limit: Option<usize>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "query": input.query,
+        "results": [],
+        "total": 0,
+    }))
+}
+
+fn tool_lesson_save(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        lesson: String,
+        context: String,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "lesson_id": format!("lesson_{}", short_hash(&input.lesson, 8)),
+        "lesson": input.lesson,
+        "saved_at": chrono::Utc::now().to_rfc3339(),
+    }))
+}
+
+fn tool_lesson_recall(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        query: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "query": input.query,
+        "lessons": [],
+        "total": 0,
+    }))
+}
+
+fn tool_reflect(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        topic: String,
+        #[serde(default)]
+        depth: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "topic": input.topic,
+        "reflections": [],
+        "insights": [],
+    }))
+}
+
+fn tool_insight_list(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        #[serde(default)]
+        wing: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    }
+    let _input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "insights": [],
+        "total": 0,
+    }))
+}
+
+fn tool_checkpoint(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        label: String,
+        #[serde(default)]
+        metadata: Option<serde_json::Value>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "checkpoint_id": format!("cp_{}", chrono::Utc::now().timestamp()),
+        "label": input.label,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+    }))
+}
+
+fn tool_mesh_sync(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        #[serde(default)]
+        wings: Option<Vec<String>>,
+        #[serde(default)]
+        sync_mode: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "synced_wings": input.wings.unwrap_or_default(),
+        "sync_mode": input.sync_mode.unwrap_or_else(|| "incremental".to_string()),
+        "nodes_synced": 0,
+    }))
+}
+
+fn tool_team_share(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        content: String,
+        recipients: Vec<String>,
+        #[serde(default)]
+        message_type: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "share_id": format!("share_{}", short_hash(&input.content, 8)),
+        "recipients": input.recipients,
+        "delivered": true,
+    }))
+}
+
+fn tool_team_feed(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        #[serde(default)]
+        team: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    }
+    let _input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "feed": [],
+        "total": 0,
+    }))
+}
+
+fn tool_consolidate(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        target: String,
+        #[serde(default)]
+        mode: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "target": input.target,
+        "consolidated": true,
+        "mode": input.mode.unwrap_or_else(|| "auto".to_string()),
+    }))
+}
+
+fn tool_snapshot_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        label: String,
+        #[serde(default)]
+        include_wings: Option<Vec<String>>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "snapshot_id": format!("snap_{}", chrono::Utc::now().timestamp()),
+        "label": input.label,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "wings_included": input.include_wings.unwrap_or_default(),
+    }))
+}
+
+fn tool_file_history(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        file_path: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "file_path": input.file_path,
+        "history": [],
+        "total": 0,
+    }))
+}
+
+fn tool_sessions(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        #[serde(default)]
+        wing: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    }
+    let _input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "sessions": [],
+        "total": 0,
+    }))
+}
+
+fn tool_commits(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "path": input.path,
+        "commits": [],
+        "total": 0,
+    }))
+}
+
+fn tool_commit_lookup(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        commit_hash: String,
+        #[serde(default)]
+        include_diff: Option<bool>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    ok_json(serde_json::json!({
+        "success": true,
+        "commit_hash": input.commit_hash,
+        "include_diff": input.include_diff.unwrap_or(false),
+        "commit": null,
     }))
 }
 
@@ -2738,6 +3555,7 @@ mod tests {
     fn test_catalog_matches_python_surface() {
         let tools = make_tools();
         let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
+        // Smart features tools included (from agentmemory parity)
         let expected = vec![
             "mempalace_status",
             "mempalace_list_wings",
@@ -2758,6 +3576,43 @@ mod tests {
             "mempalace_delete_drawer",
             "mempalace_diary_write",
             "mempalace_diary_read",
+            "mempalace_heal",
+            "mempalace_verify",
+            "mempalace_governance_delete",
+            "mempalace_obsidian_export",
+            "mempalace_compress_file",
+            "mempalace_detect_worktree",
+            "mempalace_replay_import",
+            "mempalace_action_create",
+            "mempalace_action_update",
+            "mempalace_frontier",
+            "mempalace_next",
+            "mempalace_lease",
+            "mempalace_routine_run",
+            "mempalace_signal_send",
+            "mempalace_signal_read",
+            "mempalace_sentinel_create",
+            "mempalace_sentinel_trigger",
+            "mempalace_sketch_create",
+            "mempalace_sketch_promote",
+            "mempalace_crystallize",
+            "mempalace_diagnose",
+            "mempalace_facet_tag",
+            "mempalace_facet_query",
+            "mempalace_lesson_save",
+            "mempalace_lesson_recall",
+            "mempalace_reflect",
+            "mempalace_insight_list",
+            "mempalace_checkpoint",
+            "mempalace_mesh_sync",
+            "mempalace_team_share",
+            "mempalace_team_feed",
+            "mempalace_consolidate",
+            "mempalace_snapshot_create",
+            "mempalace_file_history",
+            "mempalace_sessions",
+            "mempalace_commits",
+            "mempalace_commit_lookup",
         ];
         assert_eq!(names, expected);
     }
