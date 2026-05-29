@@ -1,4 +1,4 @@
-use crate::types::{CompressedObservation, ContextBlock, MemorySlot, ProjectProfile, Session};
+use crate::types::{CompressedObservation, ContextBlock, FrequencyEntry, MemorySlot, ProjectProfile, Session};
 use anyhow::Result;
 
 pub const DEFAULT_TOKEN_BUDGET: usize = 8000;
@@ -70,11 +70,13 @@ impl ContextBuilder {
 
         // 2. Project profile (top concepts and files)
         if let Some(profile) = &self.project_profile {
+            let concepts: Vec<&str> = profile.top_concepts.iter().map(|e| e.key.as_str()).collect();
+            let files: Vec<&str> = profile.top_files.iter().map(|e| e.key.as_str()).collect();
             let profile_content = format!(
                 "Project: {}\nTop Concepts: {}\nTop Files: {}\nLanguage: {}\nFramework: {}",
                 profile.project,
-                profile.top_concepts.join(", "),
-                profile.top_files.join(", "),
+                concepts.join(", "),
+                files.join(", "),
                 profile.language.as_deref().unwrap_or("unknown"),
                 profile.framework.as_deref().unwrap_or("unknown"),
             );
@@ -177,9 +179,19 @@ mod tests {
     fn test_profile() -> ProjectProfile {
         ProjectProfile {
             project: "test-project".to_string(),
-            top_concepts: vec!["auth".to_string(), "api".to_string()],
-            top_files: vec!["src/main.rs".to_string()],
+            top_concepts: vec![
+                FrequencyEntry { key: "auth".to_string(), frequency: 2 },
+                FrequencyEntry { key: "api".to_string(), frequency: 1 },
+            ],
+            top_files: vec![
+                FrequencyEntry { key: "src/main.rs".to_string(), frequency: 1 },
+            ],
             top_patterns: vec![],
+            conventions: vec![],
+            common_errors: vec![],
+            recent_activity: vec![],
+            session_count: 5,
+            total_observations: 20,
             language: Some("rust".to_string()),
             framework: Some("actix".to_string()),
             updated_at: Utc::now(),

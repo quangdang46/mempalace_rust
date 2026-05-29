@@ -130,6 +130,11 @@ pub mod context;
 pub mod summarize;
 pub mod working_memory;
 pub mod slots;
+pub mod profile;
+pub mod timeline;
+pub mod patterns;
+pub mod reflect;
+pub mod crystallize;
 pub mod audit;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]

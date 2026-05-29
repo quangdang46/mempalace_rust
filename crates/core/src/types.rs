@@ -754,6 +754,11 @@ pub struct Crystal {
     pub id: String,
     pub action_ids: Vec<String>,
     pub narrative: String,
+    pub key_outcomes: Vec<String>,
+    pub files_affected: Vec<String>,
+    pub lessons: Vec<String>,
+    pub session_id: Option<String>,
+    pub project: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -763,8 +768,15 @@ pub struct Lesson {
     pub id: String,
     pub content: String,
     pub retention: f64,
+    pub tags: Vec<String>,
+    pub confidence: f64,
+    pub project: Option<String>,
+    pub source: Option<String>,
+    pub source_ids: Vec<String>,
     pub last_reinforced: Option<DateTime<Utc>>,
     pub reinforcement_count: usize,
+    pub updated_at: DateTime<Utc>,
+    pub deleted: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -772,9 +784,22 @@ pub struct Lesson {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Insight {
     pub id: String,
+    pub title: String,
     pub content: String,
     pub confidence: f64,
+    pub reinforcements: usize,
     pub source_observation_id: Option<String>,
+    pub source_concept_cluster: Option<String>,
+    pub source_memory_ids: Vec<String>,
+    pub source_lesson_ids: Vec<String>,
+    pub source_crystal_ids: Vec<String>,
+    pub project: Option<String>,
+    pub tags: Vec<String>,
+    pub decay_rate: f64,
+    pub last_reinforced_at: Option<DateTime<Utc>>,
+    pub last_decayed_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+    pub deleted: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -816,9 +841,14 @@ pub struct MemorySlot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectProfile {
     pub project: String,
-    pub top_concepts: Vec<String>,
-    pub top_files: Vec<String>,
-    pub top_patterns: Vec<String>,
+    pub top_concepts: Vec<FrequencyEntry>,
+    pub top_files: Vec<FrequencyEntry>,
+    pub top_patterns: Vec<FrequencyEntry>,
+    pub conventions: Vec<String>,
+    pub common_errors: Vec<String>,
+    pub recent_activity: Vec<String>,
+    pub session_count: usize,
+    pub total_observations: usize,
     pub language: Option<String>,
     pub framework: Option<String>,
     pub updated_at: DateTime<Utc>,
@@ -872,6 +902,29 @@ pub struct TeamProfile {
 pub struct FrequencyEntry {
     pub key: String,
     pub frequency: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEntry {
+    pub id: String,
+    pub observation_id: String,
+    pub session_id: String,
+    pub timestamp: DateTime<Utc>,
+    pub title: String,
+    pub narrative: String,
+    pub relative_position: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Pattern {
+    pub id: String,
+    pub pattern_type: String,
+    pub description: String,
+    pub files: Vec<String>,
+    pub frequency: usize,
+    pub sessions: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Export/import data container.
