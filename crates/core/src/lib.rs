@@ -130,6 +130,7 @@ pub mod context;
 pub mod summarize;
 pub mod working_memory;
 pub mod slots;
+pub mod vision;
 pub mod profile;
 pub mod timeline;
 pub mod patterns;

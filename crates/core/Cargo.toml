@@ -55,6 +55,9 @@ edgebert = "0.4"
 unicode-script = "0.5"
 signal-hook = "0.3"
 async-trait = { workspace = true }
+base64 = { workspace = true }
+dirs = { workspace = true }
+filetime = { workspace = true }
 
 # `fastembed-rs` powers `FastEmbedEmbedder` behind feature
 # `embed-fastembed` (mp-012). Pulls in `ort` (C++ ONNX Runtime) and
