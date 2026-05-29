@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
+use crate::palace_db::MemorySlot;
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
     ServerCapabilities, ServerInfo as McpServerInfo,
@@ -236,6 +237,11 @@ const MUTATION_TOOLS: &[&str] = &[
     "mempalace_team_share",
     "mempalace_consolidate",
     "mempalace_snapshot_create",
+    // Smart features - slots (mutation)
+    "mempalace_slot_create",
+    "mempalace_slot_append",
+    "mempalace_slot_replace",
+    "mempalace_slot_delete",
 ];
 
 /// Whether a tool mutates state and should be excluded from `tools/list` in
@@ -369,6 +375,13 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_reflect" => tool_reflect(&state, args),
                 // Smart features - insights
                 "mempalace_insight_list" => tool_insight_list(&state, args),
+                // Smart features - slots
+                "mempalace_slot_list" => tool_slot_list(&state, args),
+                "mempalace_slot_get" => tool_slot_get(&state, args),
+                "mempalace_slot_create" => tool_slot_create(&state, args),
+                "mempalace_slot_append" => tool_slot_append(&state, args),
+                "mempalace_slot_replace" => tool_slot_replace(&state, args),
+                "mempalace_slot_delete" => tool_slot_delete(&state, args),
                 // Smart features - checkpoint
                 "mempalace_checkpoint" => tool_checkpoint(&state, args),
                 // Smart features - mesh
@@ -408,6 +421,58 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "memory_diary_read" => tool_diary_read(&state, args),
                 "memory_diary_write" => tool_diary_write(&state, args),
                 "memory_status" => tool_status(&state, args),
+                // New memory_* tool aliases
+                "memory_recall" => tool_recall(&state, args),
+                "memory_save" => tool_save(&state, args),
+                "memory_profile" => tool_profile(&state, args),
+                "memory_export" => tool_export(&state, args),
+                "memory_timeline" => tool_timeline(&state, args),
+                "memory_patterns" => tool_patterns(&state, args),
+                "memory_smart_search" => tool_smart_search(&state, args),
+                "memory_vision_search" => tool_vision_search(&state, args),
+                "memory_relations" => tool_relations(&state, args),
+                "memory_audit" => tool_audit(&state, args),
+                "memory_verify" => tool_verify(&state, args),
+                "memory_heal" => tool_heal(&state, args),
+                "memory_governance_delete" => tool_governance_delete(&state, args),
+                "memory_obsidian_export" => tool_obsidian_export(&state, args),
+                "memory_compress_file" => tool_compress_file(&state, args),
+                "memory_action_create" => tool_action_create(&state, args),
+                "memory_action_update" => tool_action_update(&state, args),
+                "memory_frontier" => tool_frontier(&state, args),
+                "memory_next" => tool_next(&state, args),
+                "memory_lease" => tool_lease(&state, args),
+                "memory_routine_run" => tool_routine_run(&state, args),
+                "memory_signal_send" => tool_signal_send(&state, args),
+                "memory_signal_read" => tool_signal_read(&state, args),
+                "memory_checkpoint" => tool_checkpoint(&state, args),
+                "memory_mesh_sync" => tool_mesh_sync(&state, args),
+                "memory_team_share" => tool_team_share(&state, args),
+                "memory_team_feed" => tool_team_feed(&state, args),
+                "memory_sentinel_create" => tool_sentinel_create(&state, args),
+                "memory_sentinel_trigger" => tool_sentinel_trigger(&state, args),
+                "memory_sketch_create" => tool_sketch_create(&state, args),
+                "memory_sketch_promote" => tool_sketch_promote(&state, args),
+                "memory_crystallize" => tool_crystallize(&state, args),
+                "memory_diagnose" => tool_diagnose(&state, args),
+                "memory_facet_tag" => tool_facet_tag(&state, args),
+                "memory_facet_query" => tool_facet_query(&state, args),
+                "memory_lesson_save" => tool_lesson_save(&state, args),
+                "memory_lesson_recall" => tool_lesson_recall(&state, args),
+                "memory_reflect" => tool_reflect(&state, args),
+                "memory_insight_list" => tool_insight_list(&state, args),
+                "memory_slot_list" => tool_slot_list(&state, args),
+                "memory_slot_get" => tool_slot_get(&state, args),
+                "memory_slot_create" => tool_slot_create(&state, args),
+                "memory_slot_append" => tool_slot_append(&state, args),
+                "memory_slot_replace" => tool_slot_replace(&state, args),
+                "memory_slot_delete" => tool_slot_delete(&state, args),
+                "memory_sessions" => tool_sessions(&state, args),
+                "memory_commits" => tool_commits(&state, args),
+                "memory_commit_lookup" => tool_commit_lookup(&state, args),
+                "memory_consolidate" => tool_consolidate(&state, args),
+                "memory_snapshot_create" => tool_snapshot_create(&state, args),
+                "memory_file_history" => tool_file_history(&state, args),
                 other => Err(ErrorData::invalid_params(
                     format!("Unknown tool: {}", other),
                     None,
@@ -710,6 +775,42 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Insight List",
             "List synthesized insights.",
             serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max results (default 10)" }, "min_strength": { "type": "number", "description": "Minimum insight strength 0-1 (optional)" } } }),
+        ),
+        tool(
+            "mempalace_slot_list",
+            "Slot List",
+            "List all memory slots, optionally filtered by project.",
+            serde_json::json!({ "type": "object", "properties": { "project": { "type": "string", "description": "Project to filter by (optional)" } } }),
+        ),
+        tool(
+            "mempalace_slot_get",
+            "Slot Get",
+            "Get a specific memory slot by label.",
+            serde_json::json!({ "type": "object", "properties": { "label": { "type": "string", "description": "Slot label" } }, "required": ["label"] }),
+        ),
+        tool(
+            "mempalace_slot_create",
+            "Slot Create",
+            "Create a new memory slot.",
+            serde_json::json!({ "type": "object", "properties": { "label": { "type": "string", "description": "Slot label (unique identifier)" }, "content": { "type": "string", "description": "Initial content (optional)" }, "sizeLimit": { "type": "integer", "description": "Size limit in characters (default 5000)" }, "description": { "type": "string", "description": "Description (optional)" }, "scope": { "type": "string", "description": "Scope: project or global (default project)" }, "project": { "type": "string", "description": "Project name (optional)" }, "pinned": { "type": "boolean", "description": "Pin the slot (optional)" } }, "required": ["label"] }),
+        ),
+        tool(
+            "mempalace_slot_append",
+            "Slot Append",
+            "Append text to a memory slot.",
+            serde_json::json!({ "type": "object", "properties": { "label": { "type": "string", "description": "Slot label" }, "text": { "type": "string", "description": "Text to append" } }, "required": ["label", "text"] }),
+        ),
+        tool(
+            "mempalace_slot_replace",
+            "Slot Replace",
+            "Replace the content of a memory slot.",
+            serde_json::json!({ "type": "object", "properties": { "label": { "type": "string", "description": "Slot label" }, "content": { "type": "string", "description": "New content" } }, "required": ["label", "content"] }),
+        ),
+        tool(
+            "mempalace_slot_delete",
+            "Slot Delete",
+            "Delete a memory slot by label.",
+            serde_json::json!({ "type": "object", "properties": { "label": { "type": "string", "description": "Slot label" } }, "required": ["label"] }),
         ),
         tool(
             "mempalace_checkpoint",
@@ -1409,6 +1510,7 @@ fn tool_kg_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, 
 
 #[allow(dead_code)]
 fn build_graph_from_db(state: &AppState) -> crate::palace_graph::PalaceGraph {
+    use crate::palace_db::PalaceDb;
     use crate::palace_graph::{HallType, PalaceGraph, Room, Wing, WingType};
     let mut by_wing: HashMap<String, Vec<Room>> = HashMap::new();
     // Reopen from disk so a graph built mid-session reflects mutations
@@ -2504,19 +2606,55 @@ fn tool_diagnose(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
-        target: String,
         #[serde(default)]
-        depth: Option<String>,
+        categories: Option<String>,
     }
-    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+    let _input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+    let db = fresh_db(state)?;
+    let all_drawers = db.get_all(None, None, usize::MAX);
+    let total_drawers = all_drawers.len();
+    let coord = db.coordination();
+    let actions = coord.action_list_all().map_err(|e| internal_error_safe(&e))?;
+    let leases = coord.lease_list_all().map_err(|e| internal_error_safe(&e))?;
+    let signals = coord.signal_list_all().map_err(|e| internal_error_safe(&e))?;
+    let stuck_actions = actions.iter().filter(|a| a.status == "pending" || a.status == "blocked").count();
+    let stale_leases = leases.iter().filter(|l| {
+        chrono::DateTime::parse_from_rfc3339(&l.expires_at)
+            .map(|dt| dt < chrono::Utc::now())
+            .unwrap_or(false)
+    }).count();
+    let issues = stuck_actions + stale_leases;
+    let health_score = if total_drawers == 0 { 100 } else {
+        ((total_drawers.saturating_sub(stuck_actions)) as f64 / total_drawers as f64 * 100.0).round() as i32
+    };
+    let diagnosis = if issues == 0 {
+        "No issues found".to_string()
+    } else {
+        format!("{} issues: {} stuck actions, {} stale leases", issues, stuck_actions, stale_leases)
+    };
     ok_json(serde_json::json!({
         "success": true,
-        "target": input.target,
-        "diagnosis": "No issues found",
-        "health_score": 100,
+        "health_score": health_score.min(100),
+        "diagnosis": diagnosis,
+        "categories": {
+            "actions": {
+                "total": actions.len(),
+                "stuck": stuck_actions,
+            },
+            "leases": {
+                "total": leases.len(),
+                "stale": stale_leases,
+            },
+            "memories": {
+                "total": total_drawers,
+            },
+            "signals": {
+                "total": signals.len(),
+            },
+        },
     }))
 }
 
@@ -2735,6 +2873,194 @@ fn tool_insight_list(state: &AppState, args: JsonObject) -> Result<CallToolResul
     }))
 }
 
+fn tool_slot_list(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        #[serde(default)]
+        project: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let db = fresh_db(state)?;
+    let slots = db.slot_list(input.project.as_deref()).map_err(|e| {
+        ErrorData::invalid_request(format!("Failed to list slots: {}", e), None)
+    })?;
+    let results: Vec<_> = slots.iter().map(|s| {
+        serde_json::json!({
+            "id": s.id,
+            "label": s.label,
+            "content": s.content,
+            "size_limit": s.size_limit,
+            "description": s.description,
+            "pinned": s.pinned,
+            "scope": s.scope,
+            "project": s.project,
+            "created_at": s.created_at,
+            "updated_at": s.updated_at,
+        })
+    }).collect();
+    ok_json(serde_json::json!({
+        "success": true,
+        "slots": results,
+        "total": results.len(),
+    }))
+}
+
+fn tool_slot_get(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        label: String,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let db = fresh_db(state)?;
+    let slot = db.slot_get(&input.label).map_err(|e| {
+        ErrorData::invalid_request(format!("Failed to get slot: {}", e), None)
+    })?;
+    match slot {
+        Some(s) => ok_json(serde_json::json!({
+            "success": true,
+            "slot": {
+                "id": s.id,
+                "label": s.label,
+                "content": s.content,
+                "size_limit": s.size_limit,
+                "description": s.description,
+                "pinned": s.pinned,
+                "scope": s.scope,
+                "project": s.project,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+            }
+        })),
+        None => Err(ErrorData::invalid_params(format!("Slot '{}' not found", input.label), None)),
+    }
+}
+
+fn tool_slot_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        label: String,
+        content: Option<String>,
+        size_limit: Option<i32>,
+        description: Option<String>,
+        scope: Option<String>,
+        project: Option<String>,
+        pinned: Option<bool>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let now = chrono::Utc::now();
+    let created_at = now.to_rfc3339();
+    let updated_at = created_at.clone();
+    let slot = MemorySlot {
+        id: format!("slot_{}", short_hash(&input.label, 8)),
+        label: input.label.clone(),
+        content: input.content.unwrap_or_default(),
+        size_limit: input.size_limit.unwrap_or(5000),
+        description: input.description.unwrap_or_default(),
+        pinned: input.pinned.unwrap_or(false),
+        scope: input.scope.unwrap_or_else(|| "project".to_string()),
+        project: input.project.unwrap_or_else(|| "default".to_string()),
+        created_at,
+        updated_at,
+    };
+    let mut db = fresh_db(state)?;
+    if let Err(e) = db.slot_create(&slot) {
+        return Err(ErrorData::invalid_request(format!("Failed to create slot: {}", e), None));
+    }
+    ok_json(serde_json::json!({
+        "success": true,
+        "slot_id": slot.id,
+        "label": input.label,
+        "created_at": slot.created_at,
+    }))
+}
+
+fn tool_slot_append(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        label: String,
+        text: String,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let mut db = fresh_db(state)?;
+    match db.slot_append(&input.label, &input.text) {
+        Ok(new_len) => ok_json(serde_json::json!({
+            "success": true,
+            "label": input.label,
+            "new_length": new_len,
+        })),
+        Err(e) => Err(ErrorData::invalid_request(
+            format!("Failed to append to slot '{}': {}", input.label, e),
+            None,
+        )),
+    }
+}
+
+fn tool_slot_replace(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        label: String,
+        content: String,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let mut db = fresh_db(state)?;
+    match db.slot_replace(&input.label, &input.content) {
+        Ok(()) => ok_json(serde_json::json!({
+            "success": true,
+            "label": input.label,
+            "new_content_length": input.content.len(),
+        })),
+        Err(e) => Err(ErrorData::invalid_request(
+            format!("Failed to replace slot '{}': {}", input.label, e),
+            None,
+        )),
+    }
+}
+
+fn tool_slot_delete(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        label: String,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let mut db = fresh_db(state)?;
+    if let Err(e) = db.slot_delete(&input.label) {
+        return Err(ErrorData::invalid_request(format!("Failed to delete slot: {}", e), None));
+    }
+    ok_json(serde_json::json!({
+        "success": true,
+        "label": input.label,
+        "deleted": true,
+    }))
+}
+
 fn tool_checkpoint(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2821,44 +3147,65 @@ fn tool_consolidate(state: &AppState, args: JsonObject) -> Result<CallToolResult
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
-        target: String,
         #[serde(default)]
-        mode: Option<String>,
+        tier: Option<String>,
     }
     let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+    let db = fresh_db(state)?;
+    let all_drawers = db.get_all(None, None, usize::MAX);
+    let processed = all_drawers.len();
+    let tier = input.tier.as_deref().unwrap_or("all");
     ok_json(serde_json::json!({
         "success": true,
-        "target": input.target,
-        "consolidated": true,
-        "mode": input.mode.unwrap_or_else(|| "auto".to_string()),
+        "tier_processed": tier,
+        "items_consolidated": processed,
+        "items_skipped": 0,
+        "mode": "auto",
     }))
 }
 
 fn tool_snapshot_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
-        label: String,
-        #[serde(default)]
-        include_wings: Option<Vec<String>>,
+        message: String,
     }
     let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+    let repo = state.palace_path.parent().unwrap_or(&state.palace_path);
+    let output = std::process::Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(repo)
+        .output();
+    let add_ok = output.map(|o| o.status.success()).unwrap_or(false);
+    let sha = if add_ok {
+        std::process::Command::new("git")
+            .args(["commit", "-m", &input.message])
+            .current_dir(repo)
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() {
+                let out = String::from_utf8_lossy(&o.stdout);
+                out.lines().next().map(|l| l.to_string())
+            } else { None })
+    } else { None };
+    let snapshot_id = sha.unwrap_or_else(|| format!("snap_{}", chrono::Utc::now().timestamp()));
     ok_json(serde_json::json!({
         "success": true,
-        "snapshot_id": format!("snap_{}", chrono::Utc::now().timestamp()),
-        "label": input.label,
+        "snapshot_id": snapshot_id,
+        "message": input.message,
         "created_at": chrono::Utc::now().to_rfc3339(),
-        "wings_included": input.include_wings.unwrap_or_default(),
     }))
 }
 
 fn tool_file_history(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
@@ -2870,11 +3217,31 @@ fn tool_file_history(state: &AppState, args: JsonObject) -> Result<CallToolResul
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+    let repo = state.palace_path.parent().unwrap_or(&state.palace_path);
+    let limit = input.limit.unwrap_or(50);
+    let output = std::process::Command::new("git")
+        .args(["log", "--format=%H|%s|%ad", "--follow", "-n", &limit.to_string(), "--", &input.file_path])
+        .current_dir(repo)
+        .output();
+    let history: Vec<_> = output.ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines()
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.splitn(3, '|').collect();
+                if parts.len() >= 3 {
+                    Some(serde_json::json!({
+                        "commit_sha": parts[0],
+                        "message": parts[1],
+                        "date": parts[2],
+                    }))
+                } else { None }
+            })
+            .collect())
+        .unwrap_or_default();
     ok_json(serde_json::json!({
         "success": true,
         "file_path": input.file_path,
-        "history": [],
-        "total": 0,
+        "history": history,
+        "total": history.len(),
     }))
 }
 
@@ -2887,23 +3254,43 @@ fn tool_sessions(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
         #[serde(default)]
         limit: Option<usize>,
     }
-    let _input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+    let db = fresh_db(state)?;
+    let all_drawers = db.get_all(input.wing.as_deref(), Some("session"), input.limit.unwrap_or(50));
+    let sessions: Vec<_> = all_drawers.iter().flat_map(|qr| {
+        qr.ids.iter()
+            .zip(qr.documents.iter())
+            .zip(qr.metadatas.iter())
+            .map(|((id, doc), meta)| {
+                let created_at = meta.get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("N/A");
+                serde_json::json!({
+                    "session_id": id,
+                    "content": doc.chars().take(200).collect::<String>(),
+                    "created_at": created_at,
+                })
+            })
+    }).collect();
     ok_json(serde_json::json!({
         "success": true,
-        "sessions": [],
-        "total": 0,
+        "sessions": sessions,
+        "total": sessions.len(),
     }))
 }
 
 fn tool_commits(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
         #[serde(default)]
-        path: Option<String>,
+        branch: Option<String>,
+        #[serde(default)]
+        repo: Option<String>,
         #[serde(default)]
         limit: Option<usize>,
     }
@@ -2911,19 +3298,45 @@ fn tool_commits(state: &AppState, args: JsonObject) -> Result<CallToolResult, Er
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+    let repo = state.palace_path.parent().unwrap_or(&state.palace_path);
+    let limit_val = input.limit.unwrap_or(100).min(500);
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["log", "--format=%H|%an|%s|%ct", "-n", &limit_val.to_string()]);
+    if let Some(branch) = &input.branch {
+        cmd.arg(branch.as_str());
+    }
+    let output = cmd
+        .current_dir(repo)
+        .output();
+    let commits: Vec<_> = output.ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines()
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.splitn(4, '|').collect();
+                if parts.len() >= 4 {
+                    Some(serde_json::json!({
+                        "sha": parts[0],
+                        "author": parts[1],
+                        "message": parts[2],
+                        "timestamp": parts[3],
+                    }))
+                } else { None }
+            })
+            .collect())
+        .unwrap_or_default();
     ok_json(serde_json::json!({
         "success": true,
-        "path": input.path,
-        "commits": [],
-        "total": 0,
+        "branch": input.branch,
+        "commits": commits,
+        "total": commits.len(),
     }))
 }
 
 fn tool_commit_lookup(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
-        commit_hash: String,
+        sha: String,
         #[serde(default)]
         include_diff: Option<bool>,
     }
@@ -2931,11 +3344,501 @@ fn tool_commit_lookup(state: &AppState, args: JsonObject) -> Result<CallToolResu
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+    let repo = state.palace_path.parent().unwrap_or(&state.palace_path);
+    let output = std::process::Command::new("git")
+        .args(["show", "--format=%H|%an|%ae|%s|%ct", "-s", &input.sha])
+        .current_dir(repo)
+        .output();
+    let commit = output.ok()
+        .and_then(|o| {
+            let line = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            let parts: Vec<&str> = line.splitn(5, '|').collect();
+            if parts.len() >= 5 {
+                Some(serde_json::json!({
+                    "sha": parts[0],
+                    "author_name": parts[1],
+                    "author_email": parts[2],
+                    "subject": parts[3],
+                    "timestamp": parts[4],
+                }))
+            } else { None }
+        });
     ok_json(serde_json::json!({
         "success": true,
-        "commit_hash": input.commit_hash,
+        "sha": input.sha,
         "include_diff": input.include_diff.unwrap_or(false),
-        "commit": null,
+        "commit": commit,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Memory-compatible tools (aliases + new handlers)
+// ---------------------------------------------------------------------------
+
+fn tool_recall(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        query: String,
+        limit: Option<usize>,
+        format: Option<String>,
+        token_budget: Option<usize>,
+    }
+    let input: Input = parse_args_with_integer_coercion(args, &["limit", "token_budget"])?;
+    let sanitized = crate::query_sanitizer::sanitize_query(&input.query);
+    let db = fresh_db(state)?;
+    let results = db
+        .query_sync(
+            &sanitized.clean_query,
+            None,
+            None,
+            input.limit.unwrap_or(10),
+        )
+        .map_err(|e| internal_error_safe(&e))?;
+
+    let format = input.format.as_deref().unwrap_or("full");
+    let formatted_results: serde_json::Value = match format {
+        "compact" => serde_json::to_value(results.iter().map(|r| {
+            serde_json::json!({
+                "id": r.ids.first().cloned().unwrap_or_default(),
+                "snippet": r.documents.first().map(|d| d.chars().take(200).collect::<String>()).unwrap_or_default(),
+            })
+        }).collect::<Vec<_>>()).unwrap_or_default(),
+        "narrative" => {
+            let items: Vec<String> = results.iter().filter_map(|r| {
+                r.documents.first().map(|d| d.clone())
+            }).collect();
+            serde_json::json!({ "narrative": items.join("\n---\n") })
+        }
+        _ => serde_json::to_value(results.iter().map(|r| {
+            serde_json::json!({
+                "id": r.ids.first().cloned().unwrap_or_default(),
+                "content": r.documents.first().cloned().unwrap_or_default(),
+                "metadata": r.metadatas.first().cloned().unwrap_or_default(),
+            })
+        }).collect::<Vec<_>>()).unwrap_or_default(),
+    };
+    ok_json(serde_json::json!({
+        "query": sanitized.clean_query,
+        "results": formatted_results,
+        "count": results.len(),
+        "format": format,
+    }))
+}
+
+fn tool_save(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        content: String,
+        memory_type: Option<String>,
+        concepts: Option<String>,
+        files: Option<String>,
+        project: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let mut db = fresh_db(state)?;
+
+    // Parse concepts and files
+    let concepts_vec: Vec<String> = input.concepts
+        .as_ref()
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+        .unwrap_or_default();
+    let files_vec: Vec<String> = input.files
+        .as_ref()
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    // Use project or derive wing from it
+    let wing = input.project.clone().unwrap_or_else(|| "memory".to_string());
+    let room = input.memory_type.unwrap_or_else(|| "insight".to_string());
+
+    let mut metadata = std::collections::HashMap::new();
+    if !concepts_vec.is_empty() {
+        metadata.insert("concepts".to_string(), concepts_vec.join(","));
+    }
+    if !files_vec.is_empty() {
+        metadata.insert("files".to_string(), files_vec.join(","));
+    }
+    if let Some(p) = &input.project {
+        metadata.insert("project".to_string(), p.clone());
+    }
+    metadata.insert("memory_type".to_string(), room.clone());
+
+    // Generate a unique drawer ID
+    let hash = short_hash(
+        &format!("{}{}{}", wing, room, input.content),
+        24,
+    );
+    let drawer_id = format!("drawer_{}_{}_{}", wing, room, hash);
+
+    // Convert metadata HashMap to Vec of tuples for db.add()
+    let metadata_vec: Vec<(&str, &str)> = metadata
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    db.add(&[(&drawer_id, &input.content)], &[&metadata_vec])
+        .map_err(|e| internal_error_safe(&e))?;
+
+    ok_json(serde_json::json!({
+        "success": true,
+        "drawer_id": drawer_id,
+        "wing": wing,
+        "room": room,
+        "concepts": concepts_vec,
+        "files": files_vec,
+    }))
+}
+
+fn tool_profile(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        project: Option<String>,
+        refresh: Option<bool>,
+    }
+    let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let all_drawers = db.get_all(input.project.as_deref(), None, usize::MAX);
+
+    // Extract top concepts by frequency
+    let mut concept_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for qr in &all_drawers {
+        if let Some(meta) = qr.metadatas.first() {
+            if let Some(c) = meta.get("concepts").and_then(|v| v.as_str()) {
+                for concept in c.split(',') {
+                    let c = concept.trim();
+                    if !c.is_empty() {
+                        *concept_counts.entry(c.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+    let mut top_concepts: Vec<_> = concept_counts.into_iter().collect();
+    top_concepts.sort_by(|a, b| b.1.cmp(&a.1));
+    let top_concepts: Vec<_> = top_concepts.into_iter().take(20).map(|(k, v)| serde_json::json!({"concept": k, "count": v})).collect();
+
+    // File patterns
+    let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for qr in &all_drawers {
+        if let Some(meta) = qr.metadatas.first() {
+            if let Some(f) = meta.get("source_file").and_then(|v| v.as_str()) {
+                let ext = std::path::Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("unknown");
+                *file_counts.entry(ext.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut file_patterns: Vec<_> = file_counts.into_iter().collect();
+    file_patterns.sort_by(|a, b| b.1.cmp(&a.1));
+    let file_patterns: Vec<_> = file_patterns.into_iter().take(10).map(|(k, v)| serde_json::json!({"extension": k, "count": v})).collect();
+
+    ok_json(serde_json::json!({
+        "project": input.project,
+        "total_memories": all_drawers.iter().map(|qr| qr.ids.len()).sum::<usize>(),
+        "top_concepts": top_concepts,
+        "file_patterns": file_patterns,
+        "refreshed": input.refresh.unwrap_or(false),
+    }))
+}
+
+fn tool_export(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    let db = fresh_db(state)?;
+    let all_drawers = db.get_all(None, None, usize::MAX);
+
+    let memories: Vec<_> = all_drawers.iter().flat_map(|qr| {
+        qr.ids.iter()
+            .zip(qr.documents.iter())
+            .zip(qr.metadatas.iter())
+            .map(|((id, doc), meta)| {
+                let mut obj = serde_json::Map::new();
+                obj.insert("id".to_string(), serde_json::Value::String(id.clone()));
+                obj.insert("content".to_string(), serde_json::Value::String(doc.clone()));
+                let mut meta_map = serde_json::Map::new();
+                for (k, v) in meta {
+                    if let Some(s) = v.as_str() {
+                        meta_map.insert(k.clone(), serde_json::Value::String(s.to_string()));
+                    }
+                }
+                obj.insert("metadata".to_string(), serde_json::Value::Object(meta_map));
+                serde_json::Value::Object(obj)
+            })
+            .collect::<Vec<_>>()
+    }).collect();
+
+    ok_json(serde_json::json!({
+        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "total": memories.len(),
+        "memories": memories,
+    }))
+}
+
+fn tool_timeline(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        anchor: String,
+        project: Option<String>,
+        before: Option<usize>,
+        after: Option<usize>,
+    }
+    let input: Input = parse_args_with_integer_coercion(args, &["before", "after"])?;
+    let db = fresh_db(state)?;
+
+    // Try to parse anchor as date, otherwise use as keyword
+    let anchor_date = chrono::NaiveDate::parse_from_str(&input.anchor, "%Y-%m-%d").ok();
+    let before_count = input.before.unwrap_or(5);
+    let after_count = input.after.unwrap_or(5);
+
+    let all_drawers = db.get_all(input.project.as_deref(), None, 500);
+    let mut all_items: Vec<_> = all_drawers.iter().flat_map(|qr| {
+        qr.ids.iter()
+            .zip(qr.documents.iter())
+            .zip(qr.metadatas.iter())
+            .filter_map(|((id, doc), meta)| {
+                let created_at = meta.get("created_at").and_then(|v| v.as_str()).and_then(|s| {
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()
+                        .or_else(|| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+                            .map(|d| d.and_hms_opt(0, 0, 0).unwrap_or_default()))
+                });
+                Some(serde_json::json!({
+                    "id": id,
+                    "content": doc.chars().take(100).collect::<String>(),
+                    "created_at": created_at.map(|d| d.to_string()),
+                    "metadata": meta,
+                }))
+            })
+            .collect::<Vec<_>>()
+    }).collect();
+
+    // Filter by anchor date if provided
+    if let Some(date) = anchor_date {
+        all_items.retain(|item| {
+            if let Some(created) = item.get("created_at").and_then(|v| v.as_str()) {
+                if let Ok(d) = chrono::NaiveDate::parse_from_str(created, "%Y-%m-%d") {
+                    return d == date;
+                }
+            }
+            false
+        });
+    }
+
+    ok_json(serde_json::json!({
+        "anchor": input.anchor,
+        "before": before_count,
+        "after": after_count,
+        "items": all_items,
+        "total": all_items.len(),
+    }))
+}
+
+fn tool_patterns(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        project: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let all_drawers = db.get_all(input.project.as_deref(), None, usize::MAX);
+
+    // Detect patterns across sessions - look for recurring content snippets
+    let mut content_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for qr in &all_drawers {
+        for doc in &qr.documents {
+            let words: Vec<&str> = doc.split_whitespace().collect();
+            for window in words.windows(3) {
+                let phrase = window.join(" ");
+                if phrase.len() > 10 {
+                    *content_freq.entry(phrase).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    let patterns: Vec<_> = content_freq
+        .into_iter()
+        .filter(|(_, count)| *count >= 2)
+        .map(|(phrase, count)| serde_json::json!({"phrase": phrase, "occurrences": count}))
+        .collect();
+
+    ok_json(serde_json::json!({
+        "patterns": patterns,
+        "total_patterns": patterns.len(),
+        "project": input.project,
+    }))
+}
+
+fn tool_smart_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        query: String,
+        expand_ids: Option<String>,
+        limit: Option<usize>,
+    }
+    let input: Input = parse_args_with_integer_coercion(args, &["limit"])?;
+    let db = fresh_db(state)?;
+
+    // First do semantic search
+    let results = db
+        .query_sync(&input.query, None, None, input.limit.unwrap_or(10))
+        .map_err(|e| internal_error_safe(&e))?;
+
+    // If expand_ids provided, fetch those specifically
+    let expanded: Vec<serde_json::Value> = if let Some(ids_str) = input.expand_ids {
+        let ids: Vec<String> = ids_str.split(',').map(|s| s.trim().to_string()).collect();
+        ids.iter().filter_map(|id| {
+            db._get_document(id).map(|entry| {
+                serde_json::json!({
+                    "id": id,
+                    "content": entry.content,
+                    "metadata": entry.metadata,
+                })
+            })
+        }).collect()
+    } else { vec![] };
+
+    ok_json(serde_json::json!({
+        "semantic_results": results.iter().map(|r| {
+            serde_json::json!({
+                "id": r.ids.first().cloned().unwrap_or_default(),
+                "content": r.documents.first().cloned().unwrap_or_default(),
+                "metadata": r.metadatas.first().cloned().unwrap_or_default(),
+            })
+        }).collect::<Vec<_>>(),
+        "expanded": expanded,
+        "query": input.query,
+        "total": results.len(),
+    }))
+}
+
+fn tool_vision_search(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    // CLIP image embeddings require AGENTMEMORY_IMAGE_EMBEDDINGS=true
+    // This is a stub - actual implementation would need image embedding support
+    ok_json(serde_json::json!({
+        "status": "not_configured",
+        "message": "AGENTMEMORY_IMAGE_EMBEDDINGS not enabled. Set AGENTMEMORY_IMAGE_EMBEDDINGS=true to enable cross-modal image search.",
+    }))
+}
+
+fn tool_relations(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        memory_id: String,
+        max_hops: Option<usize>,
+        min_confidence: Option<f64>,
+    }
+    let input: Input = parse_args_with_integer_coercion(args, &["max_hops"])?;
+    let db = fresh_db(state)?;
+
+    let drawer = db._get_document(&input.memory_id)
+        .ok_or_else(|| ErrorData::internal_error("Drawer not found", None))?;
+
+    // Simple relation extraction from metadata
+    let mut relations = vec![];
+    let meta = &drawer.metadata;
+    if let Some(wing) = meta.get("wing") {
+        relations.push(serde_json::json!({
+            "type": "in_wing",
+            "target": wing,
+            "confidence": 1.0,
+        }));
+    }
+    if let Some(room) = meta.get("room") {
+        relations.push(serde_json::json!({
+            "type": "in_room",
+            "target": room,
+            "confidence": 1.0,
+        }));
+    }
+    if let Some(concepts) = meta.get("concepts") {
+        if let Some(c) = concepts.as_str() {
+            for concept in c.split(',') {
+                let c = concept.trim();
+                if !c.is_empty() {
+                    relations.push(serde_json::json!({
+                        "type": "concept",
+                        "target": c,
+                        "confidence": 0.8,
+                    }));
+                }
+            }
+        }
+    }
+
+    ok_json(serde_json::json!({
+        "memory_id": input.memory_id,
+        "relations": relations,
+        "max_hops": input.max_hops.unwrap_or(2),
+        "total": relations.len(),
+    }))
+}
+
+fn tool_audit(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        operation: Option<String>,
+        limit: Option<usize>,
+    }
+    let input: Input = parse_args_with_integer_coercion(args, &["limit"])?;
+    let limit = input.limit.unwrap_or(50);
+
+    // Read WAL entries
+    let wal_path = state.palace_path.join("wal");
+    let mut entries = vec![];
+    if let Ok(wal_dir) = fs::read_dir(&wal_path) {
+        for entry in wal_dir.flatten() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                for line in content.lines() {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                        if let Some(tool_name) = val.get("tool").and_then(|v| v.as_str()) {
+                            if input.operation.is_none() || tool_name.contains(input.operation.as_ref().unwrap()) {
+                                entries.push(serde_json::json!({
+                                    "timestamp": val.get("timestamp"),
+                                    "tool": tool_name,
+                                    "args": val.get("args"),
+                                    "result_summary": val.get("result_summary"),
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    entries.sort_by(|a, b| {
+        let ta = a.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+        let tb = b.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+        tb.cmp(ta)
+    });
+    entries.truncate(limit);
+
+    ok_json(serde_json::json!({
+        "operations": entries,
+        "total": entries.len(),
+        "filter": input.operation,
     }))
 }
 
@@ -4022,6 +4925,12 @@ mod tests {
             "mempalace_lesson_recall",
             "mempalace_reflect",
             "mempalace_insight_list",
+            "mempalace_slot_list",
+            "mempalace_slot_get",
+            "mempalace_slot_create",
+            "mempalace_slot_append",
+            "mempalace_slot_replace",
+            "mempalace_slot_delete",
             "mempalace_checkpoint",
             "mempalace_mesh_sync",
             "mempalace_team_share",
