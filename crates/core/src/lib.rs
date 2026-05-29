@@ -135,6 +135,11 @@ pub mod timeline;
 pub mod patterns;
 pub mod reflect;
 pub mod crystallize;
+pub mod lessons;
+pub mod insight_store;
+pub mod sketches;
+pub mod facets;
+pub mod sentinels;
 pub mod audit;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]

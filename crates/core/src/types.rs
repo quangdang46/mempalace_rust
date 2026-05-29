@@ -744,8 +744,13 @@ pub struct Sketch {
     pub id: String,
     pub title: String,
     pub description: String,
+    pub status: String,
+    pub action_ids: Vec<String>,
+    pub project: Option<String>,
     pub created_at: DateTime<Utc>,
-    pub promoted_to: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub promoted_at: Option<DateTime<Utc>>,
+    pub discarded_at: Option<DateTime<Utc>>,
 }
 
 /// Narrative summary of completed action sequences.
@@ -767,6 +772,7 @@ pub struct Crystal {
 pub struct Lesson {
     pub id: String,
     pub content: String,
+    pub context: Option<String>,
     pub retention: f64,
     pub tags: Vec<String>,
     pub confidence: f64,
@@ -775,6 +781,8 @@ pub struct Lesson {
     pub source_ids: Vec<String>,
     pub last_reinforced: Option<DateTime<Utc>>,
     pub reinforcement_count: usize,
+    pub decay_rate: f64,
+    pub last_decayed_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
     pub deleted: bool,
     pub created_at: DateTime<Utc>,
@@ -811,19 +819,27 @@ pub struct Facet {
     pub value: String,
     pub target_id: String,
     pub target_type: String,
+    pub dimension: String,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Watch trigger for automated responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sentinel {
     pub id: String,
-    pub sentinel_type: SentinelType,
     pub name: String,
+    pub sentinel_type: SentinelType,
+    pub status: String,
+    pub config: HashMap<String, serde_json::Value>,
     pub condition: String,
     pub action: String,
     pub active: bool,
+    pub linked_action_ids: Vec<String>,
     pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub triggered_at: Option<DateTime<Utc>>,
     pub last_triggered: Option<DateTime<Utc>>,
+    pub result: Option<serde_json::Value>,
 }
 
 /// A slot for context injection with token budget.
