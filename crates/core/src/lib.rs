@@ -25,6 +25,9 @@ pub mod session;
 pub mod prompts;
 pub mod compress;
 pub mod compress_synthetic;
+pub mod consolidation;
+pub mod consolidation_pipeline;
+pub mod memory_lifecycle;
 
 // =====================================================================
 // Internal modules — hidden from docs.rs (mp-006)
