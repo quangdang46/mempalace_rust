@@ -287,6 +287,152 @@ enum Commands {
         #[arg(long, default_value = "basic-memory")]
         format: String,
     },
+
+    /// Consolidate memories using consolidation pipeline.
+    Consolidate {
+        /// Run in dry-run mode
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Maximum memories to consolidate
+        #[arg(long)]
+        max_memories: Option<usize>,
+    },
+
+    /// Show context/breadcrumbs for current session.
+    Context {
+        /// Number of context levels to show
+        #[arg(long, default_value = "3")]
+        levels: usize,
+    },
+
+    /// List recent sessions.
+    Sessions {
+        /// Wing to filter by
+        #[arg(long)]
+        wing: Option<String>,
+
+        /// Limit results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// List active actions.
+    Actions {
+        /// Filter by status (pending, running, completed, failed)
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Limit results
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+
+    /// Show frontier tasks (pending work items).
+    Frontier {
+        /// Agent to filter by
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Show completed items too
+        #[arg(long)]
+        include_completed: bool,
+    },
+
+    /// Read/send signals between agents.
+    Signals {
+        /// Signal operation: read, send, list
+        operation: String,
+
+        /// Target agent (for send)
+        #[arg(long)]
+        to: Option<String>,
+
+        /// Signal payload (for send)
+        #[arg(long)]
+        payload: Option<String>,
+    },
+
+    /// Import data from external sources.
+    Import {
+        /// Import format: json, csv, markdown
+        format: String,
+
+        /// Input file or directory
+        input: PathBuf,
+    },
+
+    /// Create memory snapshot.
+    Snapshot {
+        /// Snapshot name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Include embeddings
+        #[arg(long)]
+        with_embeddings: bool,
+    },
+
+    /// Show project/profile insights.
+    Profile {
+        /// Project/wing name
+        #[arg(long)]
+        wing: Option<String>,
+
+        /// Refresh profile data
+        #[arg(long)]
+        refresh: bool,
+    },
+
+    /// Diagnose palace health issues.
+    Diagnose {
+        /// Run deep diagnostics
+        #[arg(long)]
+        deep: bool,
+    },
+
+    /// Forget/evict specific memories.
+    Forget {
+        /// Forget by age
+        #[arg(long)]
+        older_than_days: Option<usize>,
+
+        /// Forget by memory type
+        #[arg(long)]
+        memory_type: Option<String>,
+
+        /// Dry run
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Evolve/refine memories using LLM.
+    Evolve {
+        /// Wing to evolve
+        #[arg(long)]
+        wing: Option<String>,
+
+        /// Number to evolve
+        #[arg(long, default_value = "10")]
+        count: usize,
+    },
+
+    /// Sync mesh between agents.
+    Mesh {
+        /// Sync operation: sync, status, peers
+        #[arg(long)]
+        operation: Option<String>,
+    },
+
+    /// Vision search for images.
+    Vision {
+        /// Search query
+        query: String,
+
+        /// Max results
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2073,6 +2219,48 @@ pub fn run() -> Result<()> {
             } else {
                 anyhow::bail!("unknown export format '{format}': use 'basic-memory' or 'markdown'");
             }
+        }
+        Commands::Consolidate { dry_run, max_memories } => {
+            println!("Feature coming soon: consolidate (dry_run={}, max_memories={:?})", dry_run, max_memories);
+        }
+        Commands::Context { levels } => {
+            println!("Feature coming soon: context (levels={})", levels);
+        }
+        Commands::Sessions { wing, limit } => {
+            println!("Feature coming soon: sessions (wing={:?}, limit={})", wing, limit);
+        }
+        Commands::Actions { status, limit } => {
+            println!("Feature coming soon: actions (status={:?}, limit={})", status, limit);
+        }
+        Commands::Frontier { agent, include_completed } => {
+            println!("Feature coming soon: frontier (agent={:?}, include_completed={})", agent, include_completed);
+        }
+        Commands::Signals { operation, to, payload } => {
+            println!("Feature coming soon: signals (operation={}, to={:?}, payload={:?})", operation, to, payload);
+        }
+        Commands::Import { format, input } => {
+            println!("Feature coming soon: import (format={}, input={})", format, input.display());
+        }
+        Commands::Snapshot { name, with_embeddings } => {
+            println!("Feature coming soon: snapshot (name={:?}, with_embeddings={})", name, with_embeddings);
+        }
+        Commands::Profile { wing, refresh } => {
+            println!("Feature coming soon: profile (wing={:?}, refresh={})", wing, refresh);
+        }
+        Commands::Diagnose { deep } => {
+            println!("Feature coming soon: diagnose (deep={})", deep);
+        }
+        Commands::Forget { older_than_days, memory_type, dry_run } => {
+            println!("Feature coming soon: forget (older_than_days={:?}, memory_type={:?}, dry_run={})", older_than_days, memory_type, dry_run);
+        }
+        Commands::Evolve { wing, count } => {
+            println!("Feature coming soon: evolve (wing={:?}, count={})", wing, count);
+        }
+        Commands::Mesh { operation } => {
+            println!("Feature coming soon: mesh (operation={:?})", operation);
+        }
+        Commands::Vision { query, limit } => {
+            println!("Feature coming soon: vision (query={}, limit={})", query, limit);
         }
     }
 
