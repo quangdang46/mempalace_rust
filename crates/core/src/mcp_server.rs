@@ -1538,7 +1538,7 @@ fn tool_detect_worktree(state: &AppState, args: JsonObject) -> Result<CallToolRe
     }))
 }
 
-fn tool_replay_import(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_replay_import(_state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
     struct Input {
         project_filter: Option<String>,
