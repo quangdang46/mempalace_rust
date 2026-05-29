@@ -23,6 +23,8 @@ pub mod types;
 pub mod llm;
 pub mod session;
 pub mod prompts;
+pub mod compress;
+pub mod compress_synthetic;
 
 // =====================================================================
 // Internal modules — hidden from docs.rs (mp-006)

@@ -25,4 +25,5 @@ pub use consolidation::{
 };
 pub use graph_extraction::{GRAPH_EXTRACTION_SYSTEM, build_graph_extraction_prompt};
 pub use vision::VISION_DESCRIPTION_SYSTEM;
+pub use vision::VISION_DESCRIPTION_PROMPT;
 pub use xml::{get_xml_children, get_xml_tag};

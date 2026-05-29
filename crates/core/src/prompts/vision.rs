@@ -13,6 +13,9 @@ Focus on:
 
 Be concise but thorough. Output a single paragraph description."#;
 
+/// User prompt sent along with the image to trigger description.
+pub const VISION_DESCRIPTION_PROMPT: &str = "Describe this image in detail.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
