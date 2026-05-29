@@ -442,6 +442,11 @@ impl Drawer {
             .insert(key.into(), serde_json::to_value(value).unwrap_or_default());
         self
     }
+
+    pub fn derived_from(mut self, ids: Vec<DrawerId>) -> Self {
+        self.derived_from = ids;
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -586,18 +591,70 @@ impl std::fmt::Debug for Palace {
 // Palace is the canonical MemoryProvider
 // ---------------------------------------------------------------------------
 
-#[async_trait]
-impl MemoryProvider for Palace {
-    async fn add_drawer(&self, drawer: Drawer) -> anyhow::Result<DrawerId> {
-        // Extract content for ID derivation before moving drawer into upsert.
-        let content = drawer.content.clone();
-        self.store.upsert(vec![drawer]).await?;
-        // TODO: extract triples from content and add to KG (mp-061)
+impl Palace {
+    fn derive_drawer_id(content: &str) -> DrawerId {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut h = DefaultHasher::new();
         content.hash(&mut h);
-        let id = DrawerId::new(format!("drawer-{:x}", h.finish()));
+        DrawerId::new(format!("drawer-{:x}", h.finish()))
+    }
+
+    fn make_raw_observation(&self, content: &str) -> crate::types::RawObservation {
+        use chrono::Utc;
+        crate::types::RawObservation {
+            id: String::new(),
+            session_id: String::new(),
+            timestamp: Utc::now(),
+            hook_type: crate::types::HookType::PostToolUse,
+            tool_name: None,
+            tool_input: None,
+            tool_output: Some(content.to_string()),
+            user_prompt: None,
+            assistant_response: None,
+            raw: None,
+            modality: "text".to_string(),
+            image_data: None,
+            agent_id: None,
+        }
+    }
+}
+
+#[async_trait]
+impl MemoryProvider for Palace {
+    async fn add_drawer(&self, drawer: Drawer) -> anyhow::Result<DrawerId> {
+        let content = drawer.content.clone();
+        let kind = drawer.kind;
+        let id = Self::derive_drawer_id(&content);
+
+        // Compress Raw drawers into Fact drawers when LLM is available
+        if kind == DrawerKind::Raw {
+            if let Some(ref llm) = self.llm {
+                let raw_obs = self.make_raw_observation(&content);
+                let compressed = crate::compress::compress_observation(llm.as_ref(), &raw_obs).await;
+                let fact_drawer = Drawer::new(compressed.narrative)
+                    .kind(DrawerKind::Fact)
+                    .derived_from(vec![id.clone()]);
+                self.store.upsert(vec![fact_drawer]).await?;
+            } else {
+                let compressed = crate::compress_synthetic::build_synthetic_compression(
+                    None,
+                    &crate::types::HookType::PostToolUse,
+                    None,
+                    None,
+                    Some(&content),
+                    None,
+                    None,
+                    None,
+                );
+                let fact_drawer = Drawer::new(compressed.narrative)
+                    .kind(DrawerKind::Fact)
+                    .derived_from(vec![id.clone()]);
+                self.store.upsert(vec![fact_drawer]).await?;
+            }
+        }
+
+        self.store.upsert(vec![drawer]).await?;
         Ok(id)
     }
 
