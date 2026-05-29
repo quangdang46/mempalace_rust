@@ -600,43 +600,43 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "mempalace_action_update",
             "Action Update",
             "Update the status or priority of an existing coordination action.",
-            serde_json::json!({ "type": "object", "properties": { "action_id": { "type": "string", "description": "ID of the action to update" }, "status": { "type": "string", "description": "New status: Pending, Completed, Blocked, or Cancelled (optional)" }, "priority": { "type": "integer", "description": "New priority level (optional)" } }, "required": ["action_id"] }),
+            serde_json::json!({ "type": "object", "properties": { "actionId": { "type": "string", "description": "ID of the action to update" }, "status": { "type": "string", "description": "New status: Pending, Active, Done, Blocked, or Cancelled (optional)" }, "result": { "type": "string", "description": "Result or description update (optional)" }, "priority": { "type": "integer", "description": "New priority level (optional)" } }, "required": ["actionId"] }),
         ),
         tool(
             "mempalace_frontier",
             "Frontier Actions",
             "List unblocked actions at the frontier of the current execution graph for a project.",
-            serde_json::json!({ "type": "object", "properties": { "project": { "type": "string", "description": "Project name (optional)" } }, "additionalProperties": false }),
+            serde_json::json!({ "type": "object", "properties": { "project": { "type": "string", "description": "Project name (optional)" }, "agentId": { "type": "string", "description": "Agent ID (optional)" }, "limit": { "type": "integer", "description": "Maximum number of actions to return (optional)" } }, "additionalProperties": false }),
         ),
         tool(
             "mempalace_next",
             "Next Action",
             "Get the single highest-priority unblocked action ready to execute for a project.",
-            serde_json::json!({ "type": "object", "properties": { "project": { "type": "string", "description": "Project name (optional)" } }, "additionalProperties": false }),
+            serde_json::json!({ "type": "object", "properties": { "project": { "type": "string", "description": "Project name (optional)" }, "agentId": { "type": "string", "description": "Agent ID (optional)" } }, "additionalProperties": false }),
         ),
         tool(
             "mempalace_lease",
             "Lease Action",
             "Acquire, release, or renew a lease on an action to claim it for execution.",
-            serde_json::json!({ "type": "object", "properties": { "action_id": { "type": "string", "description": "ID of the action to lease" }, "holder": { "type": "string", "description": "Agent name holding the lease (optional)" }, "ttl_seconds": { "type": "integer", "description": "Time-to-live in seconds for the lease (optional)" }, "operation": { "type": "string", "description": "Operation: acquire, release, or renew" } }, "required": ["action_id", "operation"] }),
+            serde_json::json!({ "type": "object", "properties": { "actionId": { "type": "string", "description": "ID of the action to lease" }, "holder": { "type": "string", "description": "Agent name holding the lease (optional)" }, "ttlMs": { "type": "integer", "description": "Time-to-live in milliseconds for the lease (optional)" }, "operation": { "type": "string", "description": "Operation: acquire, release, or renew" }, "result": { "type": "string", "description": "Result or notes about the lease (optional)" } }, "required": ["actionId", "operation"] }),
         ),
         tool(
             "mempalace_routine_run",
             "Routine Run",
             "Execute a named routine with given parameters.",
-            serde_json::json!({ "type": "object", "properties": { "routine_id": { "type": "string", "description": "ID of the routine to execute" }, "params": { "type": "object", "description": "Parameters for the routine (optional)" } }, "required": ["routine_id"] }),
+            serde_json::json!({ "type": "object", "properties": { "routineId": { "type": "string", "description": "ID of the routine to execute" }, "project": { "type": "string", "description": "Project name (optional)" }, "initiatedBy": { "type": "string", "description": "Agent that initiated the routine (optional)" } }, "required": ["routineId"] }),
         ),
         tool(
             "mempalace_signal_send",
             "Signal Send",
             "Send a signal message to another agent.",
-            serde_json::json!({ "type": "object", "properties": { "to_agent": { "type": "string", "description": "Name of the target agent" }, "message": { "type": "string", "description": "Signal message content" }, "signal_type": { "type": "string", "description": "Type of signal (optional)" } }, "required": ["to_agent", "message"] }),
+            serde_json::json!({ "type": "object", "properties": { "from": { "type": "string", "description": "Name of the sending agent (optional)" }, "to": { "type": "string", "description": "Name of the target agent" }, "content": { "type": "string", "description": "Signal message content" }, "signalType": { "type": "string", "description": "Type of signal: info, request, response, alert, handoff (optional)" }, "replyTo": { "type": "string", "description": "Thread ID to reply to (optional)" } }, "required": ["to", "content"] }),
         ),
         tool(
             "mempalace_signal_read",
             "Signal Read",
             "Read pending signal messages for an agent.",
-            serde_json::json!({ "type": "object", "properties": { "agent_name": { "type": "string", "description": "Name of the agent to read signals for" }, "last_n": { "type": "integer", "description": "Number of recent signals to read (optional)" } }, "required": ["agent_name"] }),
+            serde_json::json!({ "type": "object", "properties": { "agentId": { "type": "string", "description": "Name of the agent to read signals for" }, "unreadOnly": { "type": "boolean", "description": "Only return unread messages (optional)" }, "threadId": { "type": "string", "description": "Filter by thread ID (optional)" }, "limit": { "type": "integer", "description": "Maximum number of signals to return (optional)" } }, "required": ["agentId"] }),
         ),
 
         tool(
@@ -1828,16 +1828,41 @@ fn tool_replay_import(_state: &AppState, args: JsonObject) -> Result<CallToolRes
 fn tool_action_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     read_only_guard(state)?;
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Input {
         title: String,
         description: Option<String>,
         priority: Option<i64>,
         project: Option<String>,
         depends_on: Option<Vec<String>>,
-        source_observation_ids: Option<Vec<String>>,
     }
     let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let now = chrono::Utc::now().to_rfc3339();
     let action_id = format!("action_{}", short_hash(&input.title, 16));
+    let action = crate::palace_db::Action {
+        id: action_id.clone(),
+        title: input.title.clone(),
+        description: input.description.unwrap_or_default(),
+        status: "pending".to_string(),
+        priority: input.priority.unwrap_or(5),
+        project: input.project.unwrap_or_default(),
+        tags: String::new(),
+        parent_id: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    if let Err(e) = db.coordination().action_create(&action) {
+        return Err(internal_error_safe(&e));
+    }
+    if let Some(deps) = &input.depends_on {
+        let mut coord = db.coordination();
+        for dep_id in deps {
+            if let Err(e) = coord.action_add_dependency(&action_id, dep_id) {
+                tracing::warn!("Failed to add dependency: {}", e);
+            }
+        }
+    }
     ok_json(serde_json::json!({
         "success": true,
         "action_id": action_id,
@@ -1845,93 +1870,337 @@ fn tool_action_create(state: &AppState, args: JsonObject) -> Result<CallToolResu
     }))
 }
 
-fn tool_action_update(_state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_action_update(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Input {
         action_id: String,
         status: Option<String>,
+        result: Option<String>,
         priority: Option<i64>,
     }
     let input: Input = parse_args(args)?;
+    let mut db = fresh_db(state)?;
+    let mut coord = db.coordination();
+    let existing = coord.action_get(&input.action_id).map_err(|e| internal_error_safe(&e))?;
+        if existing.is_none() {
+            return Err(ErrorData::invalid_params(
+                format!("Action {} not found", input.action_id),
+                None,
+            ));
+        }
+    coord
+        .action_update(&input.action_id, input.status.as_deref(), input.result.as_deref(), input.priority)
+        .map_err(|e| internal_error_safe(&e))?;
     ok_json(serde_json::json!({
         "success": true,
         "action_id": input.action_id,
     }))
 }
 
-fn tool_frontier(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_frontier(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        project: Option<String>,
+        agent_id: Option<String>,
+        limit: Option<usize>,
+    }
+    let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let limit = input.limit.unwrap_or(20);
+    let actions = db
+        .coordination()
+        .action_list_unblocked(input.project.as_deref(), limit)
+        .map_err(|e| internal_error_safe(&e))?;
+    let count = actions.len();
+    let action_summaries: Vec<serde_json::Value> = actions
+        .into_iter()
+        .map(|a| {
+            serde_json::json!({
+                "id": a.id,
+                "title": a.title,
+                "status": a.status,
+                "priority": a.priority,
+                "project": a.project,
+            })
+        })
+        .collect();
     ok_json(serde_json::json!({
-        "actions": [],
-        "count": 0,
-        "message": "Not yet implemented",
+        "actions": action_summaries,
+        "count": count,
     }))
 }
 
-fn tool_next(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_next(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        project: Option<String>,
+        agent_id: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let mut actions = db
+        .coordination()
+        .action_list_unblocked(input.project.as_deref(), 1)
+        .map_err(|e| internal_error_safe(&e))?;
+    if actions.is_empty() {
+        return ok_json(serde_json::json!({
+            "action": serde_json::Value::Null,
+            "message": "No unblocked actions available",
+        }));
+    }
+    let action = actions.remove(0);
     ok_json(serde_json::json!({
-        "action": serde_json::Value::Null,
-        "message": "Not yet implemented",
+        "action": {
+            "id": action.id,
+            "title": action.title,
+            "description": action.description,
+            "status": action.status,
+            "priority": action.priority,
+            "project": action.project,
+            "tags": action.tags,
+        },
     }))
 }
 
 fn tool_lease(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     read_only_guard(state)?;
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Input {
         action_id: String,
         holder: Option<String>,
-        ttl_seconds: Option<u64>,
+        ttl_ms: Option<i64>,
         operation: String,
+        result: Option<String>,
     }
     let input: Input = parse_args(args)?;
-    let lease_id = format!("lease_{}", short_hash(&input.action_id, 12));
-    ok_json(serde_json::json!({
-        "success": true,
-        "lease_id": lease_id,
-        "message": "Not yet implemented",
-    }))
+    let mut db = fresh_db(state)?;
+    let mut coord = db.coordination();
+    match input.operation.as_str() {
+        "acquire" => {
+            let existing = coord
+                .lease_get_active(&input.action_id)
+                .map_err(|e| internal_error_safe(&e))?;
+            if existing.is_some() {
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "message": "Action already has an active lease",
+                }));
+            }
+            let holder = input.holder.unwrap_or_else(|| "unknown".to_string());
+            let ttl = input.ttl_ms.unwrap_or(300000);
+            let now = chrono::Utc::now();
+            let expires = (now + chrono::Duration::milliseconds(ttl)).to_rfc3339();
+            let lease_id = format!("lease_{}", short_hash(&format!("{}{}", input.action_id, now), 12));
+            let lease = crate::palace_db::Lease {
+                id: lease_id.clone(),
+                action_id: input.action_id,
+                agent_id: holder,
+                status: "active".to_string(),
+                result: input.result,
+                ttl_ms: ttl,
+                created_at: now.to_rfc3339(),
+                expires_at: expires,
+            };
+            if let Err(e) = coord.lease_create(&lease) {
+                return Err(internal_error_safe(&e));
+            }
+            ok_json(serde_json::json!({
+                "success": true,
+                "lease_id": lease_id,
+            }))
+        }
+        "release" => {
+            if let Some(holder) = &input.holder {
+                let existing = coord
+                    .lease_get_active(&input.action_id)
+                    .map_err(|e| internal_error_safe(&e))?;
+                if let Some(lease) = existing {
+                    if lease.agent_id != *holder {
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "message": "Lease held by different agent",
+                        }));
+                    }
+                    coord
+                        .lease_release(&lease.id)
+                        .map_err(|e| internal_error_safe(&e))?;
+                }
+            }
+            ok_json(serde_json::json!({
+                "success": true,
+            }))
+        }
+        "renew" => {
+            let ttl = input.ttl_ms.unwrap_or(300000);
+            if let Some(holder) = &input.holder {
+                let existing = coord
+                    .lease_get_active(&input.action_id)
+                    .map_err(|e| internal_error_safe(&e))?;
+                if let Some(lease) = existing {
+                    if lease.agent_id != *holder {
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "message": "Lease held by different agent",
+                        }));
+                    }
+                    coord
+                        .lease_renew(&lease.id, ttl)
+                        .map_err(|e| internal_error_safe(&e))?;
+                }
+            }
+            ok_json(serde_json::json!({
+                "success": true,
+            }))
+        }
+        _ => Err(ErrorData::invalid_params(
+            format!("Unknown operation: {}", input.operation),
+            None,
+        )),
+    }
 }
 
-fn tool_routine_run(_state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_routine_run(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Input {
         routine_id: String,
-        params: Option<serde_json::Value>,
+        project: Option<String>,
+        initiated_by: Option<String>,
     }
     let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let mut coord = db.coordination();
+    let routine = coord
+        .routine_get(&input.routine_id)
+        .map_err(|e| internal_error_safe(&e))?;
+    let routine = match routine {
+        Some(r) => r,
+        None => {
+            return ok_json(serde_json::json!({
+                "success": false,
+                "message": format!("Routine {} not found", input.routine_id),
+            }));
+        }
+    };
+    let steps: Vec<serde_json::Value> = serde_json::from_str(&routine.steps).unwrap_or_default();
+    let mut created_actions = Vec::new();
+    let now = chrono::Utc::now().to_rfc3339();
+    for (i, step) in steps.iter().enumerate() {
+        let title = step
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&routine.name)
+            .to_string();
+        let description = step
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let priority = step
+            .get("priority")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(5);
+        let action_id = format!("{}_step_{}", input.routine_id, i);
+        let action = crate::palace_db::Action {
+            id: action_id.clone(),
+            title,
+            description,
+            status: "pending".to_string(),
+            priority,
+            project: input.project.clone().unwrap_or_default(),
+            tags: String::new(),
+            parent_id: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        if let Err(e) = coord.action_create(&action) {
+            tracing::warn!("Failed to create action for routine step: {}", e);
+            continue;
+        }
+        created_actions.push(action_id);
+    }
     ok_json(serde_json::json!({
-        "success": false,
+        "success": true,
         "routine_id": input.routine_id,
-        "message": "Not yet implemented",
+        "created_actions": created_actions,
     }))
 }
 
 fn tool_signal_send(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     read_only_guard(state)?;
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Input {
-        to_agent: String,
-        message: String,
+        from: Option<String>,
+        to: String,
+        content: String,
         signal_type: Option<String>,
+        reply_to: Option<String>,
     }
     let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let now = chrono::Utc::now();
+    let signal_id = format!("sig_{}", short_hash(&format!("{}{}", input.to, now), 16));
+    let signal = crate::palace_db::Signal {
+        id: signal_id,
+        from_agent: input.from.unwrap_or_else(|| "unknown".to_string()),
+        to_agent: input.to,
+        content: input.content,
+        signal_type: input.signal_type.unwrap_or_else(|| "info".to_string()),
+        reply_to: input.reply_to,
+        read: false,
+        created_at: now.to_rfc3339(),
+    };
+    if let Err(e) = db.coordination().signal_create(&signal) {
+        return Err(internal_error_safe(&e));
+    }
     ok_json(serde_json::json!({
-        "success": false,
-        "to_agent": input.to_agent,
-        "message": "Not yet implemented",
+        "success": true,
+        "signal_id": signal.id,
     }))
 }
 
-fn tool_signal_read(_state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_signal_read(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Input {
-        agent_name: String,
-        last_n: Option<usize>,
+        agent_id: String,
+        unread_only: Option<bool>,
+        thread_id: Option<String>,
+        limit: Option<usize>,
     }
-    let _input: Input = parse_args(args)?;
+    let input: Input = parse_args(args)?;
+    let db = fresh_db(state)?;
+    let limit = input.limit.unwrap_or(50);
+    let signals = db
+        .coordination()
+        .signal_list(&input.agent_id, input.unread_only.unwrap_or(false), input.thread_id.as_deref(), limit)
+        .map_err(|e| internal_error_safe(&e))?;
+    let count = signals.len();
+    let messages: Vec<serde_json::Value> = signals
+        .into_iter()
+        .map(|s| {
+            serde_json::json!({
+                "id": s.id,
+                "from": s.from_agent,
+                "to": s.to_agent,
+                "content": s.content,
+                "type": s.signal_type,
+                "reply_to": s.reply_to,
+                "read": s.read,
+                "created_at": s.created_at,
+            })
+        })
+        .collect();
     ok_json(serde_json::json!({
-        "messages": [],
-        "count": 0,
+        "messages": messages,
+        "count": count,
     }))
 }
 
@@ -4014,9 +4283,6 @@ mod tests {
 
     #[test]
     fn test_add_drawer_accepts_unknown_custom_metadata_keys() {
-        // `mempalace_add_drawer` uses `#[serde(flatten)] custom_metadata`,
-        // so callers may supply arbitrary string-valued metadata keys —
-        // those must not be rejected as unknown parameters.
         let state = test_state();
         let result = dispatch(
             &state,
@@ -4034,5 +4300,648 @@ mod tests {
             "add_drawer custom metadata should pass through: {:?}",
             result
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Group A: Multi-Agent Coordination handler tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_action_create_stores_action() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({
+                "title": "Test Action",
+                "description": "A test action",
+                "priority": 7,
+                "project": "test-project"
+            }),
+        )
+        .expect("action_create should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+        assert!(parsed.get("action_id").and_then(|v| v.as_str()).unwrap().starts_with("action_"));
+    }
+
+    #[test]
+    fn test_action_create_with_dependencies() {
+        let state = test_state();
+        dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Parent Action", "priority": 8}),
+        )
+        .expect("parent action should be created");
+        let result = dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({
+                "title": "Child Action",
+                "depends_on": ["action_parent"]
+            }),
+        )
+        .expect("child action with dependency should be created");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn test_action_update_modifies_status() {
+        let state = test_state();
+        let create_result = dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Updatable Action"}),
+        )
+        .expect("action should be created");
+        let action_id = serde_json::from_str::<Value>(
+            &serde_json::to_value(&create_result.content[0])
+                .unwrap()
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap(),
+        )
+        .unwrap()
+        .get("action_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+        let update_result = dispatch(
+            &state,
+            "mempalace_action_update",
+            json!({
+                "actionId": action_id,
+                "status": "active",
+                "priority": 3
+            }),
+        )
+        .expect("action_update should succeed");
+        let text = serde_json::to_value(&update_result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn test_action_update_nonexistent_returns_error() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_action_update",
+            json!({
+                "actionId": "nonexistent_action",
+                "status": "active"
+            }),
+        );
+        assert!(result.is_err(), "Updating nonexistent action should fail");
+    }
+
+    #[test]
+    fn test_frontier_returns_unblocked_actions() {
+        let state = test_state();
+        dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Frontier Action 1", "priority": 9}),
+        )
+        .expect("action should be created");
+        dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Frontier Action 2", "priority": 5}),
+        )
+        .expect("action should be created");
+
+        let result = dispatch(
+            &state,
+            "mempalace_frontier",
+            json!({"limit": 10}),
+        )
+        .expect("frontier should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let count = parsed.get("count").and_then(|v| v.as_u64()).unwrap();
+        assert!(count >= 2, "Should have at least 2 unblocked actions");
+    }
+
+    #[test]
+    fn test_frontier_respects_project_filter() {
+        let state = test_state();
+        dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Alpha Action", "project": "alpha"}),
+        )
+        .expect("alpha action should be created");
+        dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Beta Action", "project": "beta"}),
+        )
+        .expect("beta action should be created");
+
+        let result = dispatch(
+            &state,
+            "mempalace_frontier",
+            json!({"project": "alpha"}),
+        )
+        .expect("frontier with project filter should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let actions = parsed.get("actions").and_then(|v| v.as_array()).unwrap();
+        for action in actions {
+            assert_eq!(
+                action.get("project").and_then(|v| v.as_str()),
+                Some("alpha"),
+                "All returned actions should be from alpha project"
+            );
+        }
+    }
+
+    #[test]
+    fn test_next_returns_highest_priority_action() {
+        let state = test_state();
+        dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Low Priority", "priority": 1}),
+        )
+        .expect("low priority action should be created");
+        dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "High Priority", "priority": 10}),
+        )
+        .expect("high priority action should be created");
+
+        let result = dispatch(&state, "mempalace_next", json!({}))
+            .expect("next should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let action = parsed.get("action").unwrap();
+        assert_eq!(
+            action.get("title").and_then(|v| v.as_str()),
+            Some("High Priority"),
+            "Should return highest priority action"
+        );
+    }
+
+    #[test]
+    fn test_next_returns_null_when_empty() {
+        let state = test_state();
+        let result = dispatch(&state, "mempalace_next", json!({}))
+            .expect("next on empty frontier should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed.get("action").and_then(|v| v.as_null()),
+            Some(()),
+            "Should return null when no actions available"
+        );
+    }
+
+    #[test]
+    fn test_lease_acquire_creates_lease() {
+        let state = test_state();
+        let create_result = dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Leased Action"}),
+        )
+        .expect("action should be created");
+        let action_id = serde_json::from_str::<Value>(
+            &serde_json::to_value(&create_result.content[0])
+                .unwrap()
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap(),
+        )
+        .unwrap()
+        .get("action_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+        let result = dispatch(
+            &state,
+            "mempalace_lease",
+            json!({
+                "actionId": action_id,
+                "holder": "agent_1",
+                "operation": "acquire",
+                "ttlMs": 60000
+            }),
+        )
+        .expect("lease acquire should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+        assert!(parsed.get("lease_id").and_then(|v| v.as_str()).unwrap().starts_with("lease_"));
+    }
+
+    #[test]
+    fn test_lease_acquire_fails_when_already_active() {
+        let state = test_state();
+        let create_result = dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Double Lease Action"}),
+        )
+        .expect("action should be created");
+        let action_id = serde_json::from_str::<Value>(
+            &serde_json::to_value(&create_result.content[0])
+                .unwrap()
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap(),
+        )
+        .unwrap()
+        .get("action_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+        dispatch(
+            &state,
+            "mempalace_lease",
+            json!({
+                "actionId": action_id,
+                "holder": "agent_1",
+                "operation": "acquire"
+            }),
+        )
+        .expect("first lease should succeed");
+
+        let result = dispatch(
+            &state,
+            "mempalace_lease",
+            json!({
+                "actionId": action_id,
+                "holder": "agent_2",
+                "operation": "acquire"
+            }),
+        )
+        .expect("second lease attempt should return failure");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed.get("success").and_then(|v| v.as_bool()),
+            Some(false),
+            "Second lease acquire should fail"
+        );
+    }
+
+    #[test]
+    fn test_lease_release_frees_lease() {
+        let state = test_state();
+        let create_result = dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Release Test Action"}),
+        )
+        .expect("action should be created");
+        let action_id = serde_json::from_str::<Value>(
+            &serde_json::to_value(&create_result.content[0])
+                .unwrap()
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap(),
+        )
+        .unwrap()
+        .get("action_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+        dispatch(
+            &state,
+            "mempalace_lease",
+            json!({
+                "actionId": action_id,
+                "holder": "agent_release",
+                "operation": "acquire"
+            }),
+        )
+        .expect("lease should be acquired");
+
+        let release_result = dispatch(
+            &state,
+            "mempalace_lease",
+            json!({
+                "actionId": action_id,
+                "holder": "agent_release",
+                "operation": "release"
+            }),
+        )
+        .expect("lease release should succeed");
+        let text = serde_json::to_value(&release_result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn test_signal_send_creates_signal() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_signal_send",
+            json!({
+                "from": "agent_sender",
+                "to": "agent_receiver",
+                "content": "Hello agent!",
+                "signalType": "info"
+            }),
+        )
+        .expect("signal send should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+        assert!(parsed.get("signal_id").and_then(|v| v.as_str()).unwrap().starts_with("sig_"));
+    }
+
+    #[test]
+    fn test_signal_read_returns_messages() {
+        let state = test_state();
+        dispatch(
+            &state,
+            "mempalace_signal_send",
+            json!({
+                "from": "sender",
+                "to": "reader_agent",
+                "content": "Test message",
+                "signalType": "request"
+            }),
+        )
+        .expect("signal should be sent");
+
+        let result = dispatch(
+            &state,
+            "mempalace_signal_read",
+            json!({
+                "agentId": "reader_agent",
+                "unreadOnly": false,
+                "limit": 10
+            }),
+        )
+        .expect("signal read should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let count = parsed.get("count").and_then(|v| v.as_u64()).unwrap();
+        assert!(count >= 1, "Should have at least 1 message");
+        let messages = parsed.get("messages").and_then(|v| v.as_array()).unwrap();
+        assert!(!messages.is_empty());
+        assert_eq!(
+            messages[0].get("to").and_then(|v| v.as_str()),
+            Some("reader_agent"),
+            "Message should be addressed to correct agent"
+        );
+    }
+
+    #[test]
+    fn test_signal_read_unread_only() {
+        let state = test_state();
+        dispatch(
+            &state,
+            "mempalace_signal_send",
+            json!({
+                "to": "unread_test_agent",
+                "content": "Unread message",
+            }),
+        )
+        .expect("signal should be sent");
+
+        let result = dispatch(
+            &state,
+            "mempalace_signal_read",
+            json!({
+                "agentId": "unread_test_agent",
+                "unreadOnly": true
+            }),
+        )
+        .expect("unread filter should work");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        let messages = parsed.get("messages").and_then(|v| v.as_array()).unwrap();
+        for msg in messages {
+            assert_eq!(
+                msg.get("read").and_then(|v| v.as_bool()),
+                Some(false),
+                "All returned messages should be unread"
+            );
+        }
+    }
+
+    #[test]
+    fn test_routine_run_creates_actions() {
+        let state = test_state();
+        let routine_id = "test_routine_1";
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            let mut coord = db.coordination();
+            coord
+                .routine_create(&crate::palace_db::Routine {
+                    id: routine_id.to_string(),
+                    name: "Test Routine".to_string(),
+                    steps: serde_json::to_string(&[
+                        serde_json::json!({"title": "Step 1", "description": "First step", "priority": 5}),
+                        serde_json::json!({"title": "Step 2", "description": "Second step", "priority": 3}),
+                    ])
+                    .unwrap(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                })
+                .unwrap();
+        }
+
+        let result = dispatch(
+            &state,
+            "mempalace_routine_run",
+            json!({
+                "routineId": routine_id,
+                "project": "routine-project"
+            }),
+        )
+        .expect("routine run should succeed");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
+        let actions = parsed.get("created_actions").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(actions.len(), 2, "Should create 2 actions from routine steps");
+    }
+
+    #[test]
+    fn test_routine_run_nonexistent_returns_error() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_routine_run",
+            json!({
+                "routineId": "nonexistent_routine"
+            }),
+        )
+        .expect("routine run should return error response");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed.get("success").and_then(|v| v.as_bool()),
+            Some(false),
+            "Should fail for nonexistent routine"
+        );
+    }
+
+    #[test]
+    fn test_read_only_blocks_action_create() {
+        let state = {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let config = crate::Config {
+                palace_path: temp_dir.path().join("palace"),
+                collection_name: "test_ro_coord".to_string(),
+                people_map: Default::default(),
+                topic_wings: vec![],
+                hall_keywords: Default::default(),
+                embedding_model: "naive".to_string(),
+                languages: vec![],
+            };
+            std::fs::create_dir_all(&config.palace_path).unwrap();
+            AppState::new(config, true).unwrap()
+        };
+        let result = dispatch(
+            &state,
+            "mempalace_action_create",
+            json!({"title": "Should be blocked"}),
+        );
+        assert!(result.is_err(), "action_create should be blocked in read-only mode");
+    }
+
+    #[test]
+    fn test_read_only_blocks_signal_send() {
+        let state = {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let config = crate::Config {
+                palace_path: temp_dir.path().join("palace"),
+                collection_name: "test_ro_signal".to_string(),
+                people_map: Default::default(),
+                topic_wings: vec![],
+                hall_keywords: Default::default(),
+                embedding_model: "naive".to_string(),
+                languages: vec![],
+            };
+            std::fs::create_dir_all(&config.palace_path).unwrap();
+            AppState::new(config, true).unwrap()
+        };
+        let result = dispatch(
+            &state,
+            "mempalace_signal_send",
+            json!({
+                "to": "someone",
+                "content": "Should be blocked"
+            }),
+        );
+        assert!(result.is_err(), "signal_send should be blocked in read-only mode");
+    }
+
+    #[test]
+    fn test_read_only_blocks_lease_operations() {
+        let state = {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let config = crate::Config {
+                palace_path: temp_dir.path().join("palace"),
+                collection_name: "test_ro_lease".to_string(),
+                people_map: Default::default(),
+                topic_wings: vec![],
+                hall_keywords: Default::default(),
+                embedding_model: "naive".to_string(),
+                languages: vec![],
+            };
+            std::fs::create_dir_all(&config.palace_path).unwrap();
+            AppState::new(config, true).unwrap()
+        };
+        let result = dispatch(
+            &state,
+            "mempalace_lease",
+            json!({
+                "actionId": "any_action",
+                "operation": "acquire"
+            }),
+        );
+        assert!(result.is_err(), "lease should be blocked in read-only mode");
     }
 }

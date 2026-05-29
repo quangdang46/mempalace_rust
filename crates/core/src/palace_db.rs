@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use rusqlite::{params, Connection};
+use std::sync::Mutex;
+
 use crate::dedup_window::{DedupVerdict, WindowedDedup};
 
 pub const DEFAULT_COLLECTION_NAME: &str = "mempalace_drawers";
@@ -118,6 +121,7 @@ pub struct PalaceDb {
     documents: HashMap<String, DocumentEntry>,
     palace_path: PathBuf,
     collection_name: String,
+    coordination: Arc<Mutex<CoordinationDb>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -141,6 +145,393 @@ pub struct EmbeddingDb {
     #[allow(dead_code)]
     documents: Vec<(String, String)>,
     storage: embedvec::VectorStorage,
+}
+
+// ---------------------------------------------------------------------------
+// Coordination database (actions, leases, routines, signals)
+// ---------------------------------------------------------------------------
+
+pub struct CoordinationDb {
+    conn: Connection,
+}
+
+unsafe impl Send for CoordinationDb {}
+unsafe impl Sync for CoordinationDb {}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Action {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub priority: i64,
+    pub project: String,
+    pub tags: String,
+    pub parent_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Lease {
+    pub id: String,
+    pub action_id: String,
+    pub agent_id: String,
+    pub status: String,
+    pub result: Option<String>,
+    pub ttl_ms: i64,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Routine {
+    pub id: String,
+    pub name: String,
+    pub steps: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Signal {
+    pub id: String,
+    pub from_agent: String,
+    pub to_agent: String,
+    pub content: String,
+    pub signal_type: String,
+    pub reply_to: Option<String>,
+    pub read: bool,
+    pub created_at: String,
+}
+
+impl CoordinationDb {
+    pub fn open(path: &std::path::Path) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(path)?;
+        let db_path = path.join("coordination.db");
+        let conn = Connection::open(&db_path)?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS actions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                priority INTEGER NOT NULL DEFAULT 5,
+                project TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
+                parent_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS action_dependencies (
+                action_id TEXT NOT NULL,
+                depends_on_action_id TEXT NOT NULL,
+                PRIMARY KEY (action_id, depends_on_action_id),
+                FOREIGN KEY (action_id) REFERENCES actions(id) ON DELETE CASCADE,
+                FOREIGN KEY (depends_on_action_id) REFERENCES actions(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS leases (
+                id TEXT PRIMARY KEY,
+                action_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                result TEXT,
+                ttl_ms INTEGER NOT NULL DEFAULT 300000,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                FOREIGN KEY (action_id) REFERENCES actions(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS routines (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                steps TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS signals (
+                id TEXT PRIMARY KEY,
+                from_agent TEXT NOT NULL,
+                to_agent TEXT NOT NULL,
+                content TEXT NOT NULL,
+                signal_type TEXT NOT NULL DEFAULT 'info',
+                reply_to TEXT,
+                read INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status);
+            CREATE INDEX IF NOT EXISTS idx_actions_project ON actions(project);
+            CREATE INDEX IF NOT EXISTS idx_leases_action_id ON leases(action_id);
+            CREATE INDEX IF NOT EXISTS idx_leases_status ON leases(status);
+            CREATE INDEX IF NOT EXISTS idx_signals_to_agent ON signals(to_agent);
+            CREATE INDEX IF NOT EXISTS idx_signals_read ON signals(read);",
+        )?;
+        Ok(Self { conn })
+    }
+
+    // Actions
+    pub fn action_create(&mut self, action: &Action) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO actions (id, title, description, status, priority, project, tags, parent_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                action.id,
+                action.title,
+                action.description,
+                action.status,
+                action.priority,
+                action.project,
+                action.tags,
+                action.parent_id,
+                action.created_at,
+                action.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn action_update(
+        &mut self,
+        id: &str,
+        status: Option<&str>,
+        result: Option<&str>,
+        priority: Option<i64>,
+    ) -> anyhow::Result<bool> {
+        let mut updated = false;
+        if let Some(s) = status {
+            self.conn.execute("UPDATE actions SET status = ?1, updated_at = ?2 WHERE id = ?3", params![s, chrono::Utc::now().to_rfc3339(), id])?;
+            updated = true;
+        }
+        if let Some(r) = result {
+            self.conn.execute("UPDATE actions SET description = ?1, updated_at = ?2 WHERE id = ?3", params![r, chrono::Utc::now().to_rfc3339(), id])?;
+            updated = true;
+        }
+        if let Some(p) = priority {
+            self.conn.execute("UPDATE actions SET priority = ?1, updated_at = ?2 WHERE id = ?3", params![p, chrono::Utc::now().to_rfc3339(), id])?;
+            updated = true;
+        }
+        Ok(updated)
+    }
+
+    pub fn action_get(&self, id: &str) -> anyhow::Result<Option<Action>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, title, description, status, priority, project, tags, parent_id, created_at, updated_at FROM actions WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(Action {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                status: row.get(3)?,
+                priority: row.get(4)?,
+                project: row.get(5)?,
+                tags: row.get(6)?,
+                parent_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn action_add_dependency(&mut self, action_id: &str, depends_on: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO action_dependencies (action_id, depends_on_action_id) VALUES (?1, ?2)",
+            params![action_id, depends_on],
+        )?;
+        Ok(())
+    }
+
+    pub fn action_list_unblocked(&self, project: Option<&str>, limit: usize) -> anyhow::Result<Vec<Action>> {
+        let query = if project.is_some() {
+            "SELECT a.id, a.title, a.description, a.status, a.priority, a.project, a.tags, a.parent_id, a.created_at, a.updated_at
+             FROM actions a
+             WHERE a.status = 'pending'
+             AND NOT EXISTS (
+                 SELECT 1 FROM action_dependencies ad
+                 JOIN actions dep ON dep.id = ad.depends_on_action_id
+                 WHERE ad.action_id = a.id AND dep.status NOT IN ('done', 'cancelled')
+             )
+             AND (?1 = '' OR a.project = ?1)
+             ORDER BY a.priority DESC, a.created_at ASC
+             LIMIT ?2"
+        } else {
+            "SELECT a.id, a.title, a.description, a.status, a.priority, a.project, a.tags, a.parent_id, a.created_at, a.updated_at
+             FROM actions a
+             WHERE a.status = 'pending'
+             AND NOT EXISTS (
+                 SELECT 1 FROM action_dependencies ad
+                 JOIN actions dep ON dep.id = ad.depends_on_action_id
+                 WHERE ad.action_id = a.id AND dep.status NOT IN ('done', 'cancelled')
+             )
+             ORDER BY a.priority DESC, a.created_at ASC
+             LIMIT ?1"
+        };
+        let mut stmt = self.conn.prepare(query)?;
+        let project_val = project.unwrap_or("");
+        let mut rows = if project.is_some() {
+            stmt.query(params![project_val, limit as i64])?
+        } else {
+            stmt.query(params![limit as i64])?
+        };
+        let mut actions = Vec::new();
+        while let Some(row) = rows.next()? {
+            actions.push(Action {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                status: row.get(3)?,
+                priority: row.get(4)?,
+                project: row.get(5)?,
+                tags: row.get(6)?,
+                parent_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            });
+        }
+        Ok(actions)
+    }
+
+    // Leases
+    pub fn lease_create(&mut self, lease: &Lease) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO leases (id, action_id, agent_id, status, result, ttl_ms, created_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                lease.id,
+                lease.action_id,
+                lease.agent_id,
+                lease.status,
+                lease.result,
+                lease.ttl_ms,
+                lease.created_at,
+                lease.expires_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn lease_get_active(&self, action_id: &str) -> anyhow::Result<Option<Lease>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, action_id, agent_id, status, result, ttl_ms, created_at, expires_at
+             FROM leases WHERE action_id = ?1 AND status = 'active' AND expires_at > ?2",
+        )?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut rows = stmt.query(params![action_id, now])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(Lease {
+                id: row.get(0)?,
+                action_id: row.get(1)?,
+                agent_id: row.get(2)?,
+                status: row.get(3)?,
+                result: row.get(4)?,
+                ttl_ms: row.get(5)?,
+                created_at: row.get(6)?,
+                expires_at: row.get(7)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn lease_release(&mut self, id: &str) -> anyhow::Result<bool> {
+        let rows = self
+            .conn
+            .execute("UPDATE leases SET status = 'released' WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    pub fn lease_renew(&mut self, id: &str, ttl_ms: i64) -> anyhow::Result<bool> {
+        let new_expires = (chrono::Utc::now() + chrono::Duration::milliseconds(ttl_ms)).to_rfc3339();
+        let rows = self
+            .conn
+            .execute("UPDATE leases SET expires_at = ?1 WHERE id = ?2 AND status = 'active'", params![new_expires, id])?;
+        Ok(rows > 0)
+    }
+
+    // Routines
+    pub fn routine_create(&mut self, routine: &Routine) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO routines (id, name, steps, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![routine.id, routine.name, routine.steps, routine.created_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn routine_get(&self, id: &str) -> anyhow::Result<Option<Routine>> {
+        let mut stmt = self.conn.prepare("SELECT id, name, steps, created_at FROM routines WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(Routine {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                steps: row.get(2)?,
+                created_at: row.get(3)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // Signals
+    pub fn signal_create(&mut self, signal: &Signal) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO signals (id, from_agent, to_agent, content, signal_type, reply_to, read, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                signal.id,
+                signal.from_agent,
+                signal.to_agent,
+                signal.content,
+                signal.signal_type,
+                signal.reply_to,
+                signal.read as i32,
+                signal.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn signal_list(
+        &self,
+        agent_id: &str,
+        unread_only: bool,
+        _thread_id: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<Signal>> {
+        let query = if unread_only {
+            "SELECT id, from_agent, to_agent, content, signal_type, reply_to, read, created_at
+             FROM signals WHERE to_agent = ?1 AND read = 0
+             LIMIT ?2"
+        } else {
+            "SELECT id, from_agent, to_agent, content, signal_type, reply_to, read, created_at
+             FROM signals WHERE to_agent = ?1
+             LIMIT ?2"
+        };
+        let mut stmt = self.conn.prepare(query)?;
+        let limit_i64 = limit as i64;
+        let mut rows = stmt.query(params![agent_id, limit_i64])?;
+        let mut signals = Vec::new();
+        while let Some(row) = rows.next()? {
+            signals.push(Signal {
+                id: row.get(0)?,
+                from_agent: row.get(1)?,
+                to_agent: row.get(2)?,
+                content: row.get(3)?,
+                signal_type: row.get(4)?,
+                reply_to: row.get(5)?,
+                read: row.get::<_, i32>(6)? != 0,
+                created_at: row.get(7)?,
+            });
+        }
+        Ok(signals)
+    }
+
+    pub fn signal_mark_read(&mut self, id: &str) -> anyhow::Result<bool> {
+        let rows = self
+            .conn
+            .execute("UPDATE signals SET read = 1 WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
 }
 
 impl EmbeddingDb {
@@ -178,7 +569,12 @@ impl PalaceDb {
             documents,
             palace_path: palace_path.to_path_buf(),
             collection_name,
+            coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
         })
+    }
+
+    pub fn coordination(&self) -> std::sync::MutexGuard<'_, CoordinationDb> {
+        self.coordination.lock().unwrap()
     }
 
     /// Embedder-aware open path (mp-016 / ADR-8).
