@@ -159,17 +159,20 @@ pub struct AppState {
     pub db: crate::palace_db::PalaceDb,
     pub read_only: bool,
     pub palace_path: std::path::PathBuf,
+    pub mesh: std::sync::RwLock<crate::coordination::mesh::Mesh>,
 }
 
 impl AppState {
     pub fn new(config: crate::Config, read_only: bool) -> anyhow::Result<Self> {
         let palace_path = config.palace_path.clone();
         let db = crate::palace_db::PalaceDb::open(&palace_path)?;
+        let mesh = crate::coordination::mesh::Mesh::new(None);
         Ok(Self {
             config,
             db,
             read_only,
             palace_path,
+            mesh: std::sync::RwLock::new(mesh),
         })
     }
 }
@@ -373,7 +376,12 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 // Smart features - sentinel
                 "mempalace_sentinel_create" => tool_sentinel_create(&state, args),
                 "mempalace_sentinel_trigger" => tool_sentinel_trigger(&state, args),
-                // Smart features - sketch
+                "mempalace_sentinel_list" => tool_sentinel_list(&state, args),
+                "mempalace_sentinel_delete" => tool_sentinel_delete(&state, args),
+                // Smart features - checkpoint
+                "mempalace_checkpoint" => tool_checkpoint(&state, args),
+                "mempalace_checkpoint_list" => tool_checkpoint_list(&state, args),
+                "mempalace_checkpoint_resolve" => tool_checkpoint_resolve(&state, args),
                 "mempalace_sketch_create" => tool_sketch_create(&state, args),
                 "mempalace_sketch_promote" => tool_sketch_promote(&state, args),
                 // Smart features - crystallize
@@ -466,6 +474,11 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "memory_team_feed" => tool_team_feed(&state, args),
                 "memory_sentinel_create" => tool_sentinel_create(&state, args),
                 "memory_sentinel_trigger" => tool_sentinel_trigger(&state, args),
+                "memory_sentinel_list" => tool_sentinel_list(&state, args),
+                "memory_sentinel_delete" => tool_sentinel_delete(&state, args),
+                "memory_checkpoint" => tool_checkpoint(&state, args),
+                "memory_checkpoint_list" => tool_checkpoint_list(&state, args),
+                "memory_checkpoint_resolve" => tool_checkpoint_resolve(&state, args),
                 "memory_sketch_create" => tool_sketch_create(&state, args),
                 "memory_sketch_promote" => tool_sketch_promote(&state, args),
                 "memory_crystallize" => tool_crystallize(&state, args),
@@ -730,6 +743,30 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Sentinel Trigger",
             "Manually trigger a sentinel to evaluate its condition.",
             serde_json::json!({ "type": "object", "properties": { "sentinel_id": { "type": "string", "description": "ID of the sentinel to trigger" } }, "required": ["sentinel_id"] }),
+        ),
+        tool(
+            "mempalace_sentinel_list",
+            "Sentinel List",
+            "List all active sentinels.",
+            serde_json::json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "mempalace_sentinel_delete",
+            "Sentinel Delete",
+            "Delete a sentinel by ID.",
+            serde_json::json!({ "type": "object", "properties": { "sentinel_id": { "type": "string", "description": "ID of the sentinel to delete" } }, "required": ["sentinel_id"] }),
+        ),
+        tool(
+            "mempalace_checkpoint_list",
+            "Checkpoint List",
+            "List all checkpoints.",
+            serde_json::json!({ "type": "object", "properties": {} }),
+        ),
+        tool(
+            "mempalace_checkpoint_resolve",
+            "Checkpoint Resolve",
+            "Resolve a checkpoint with a given status.",
+            serde_json::json!({ "type": "object", "properties": { "checkpoint_id": { "type": "string", "description": "ID of the checkpoint to resolve" }, "status": { "type": "string", "description": "New status for the checkpoint" } }, "required": ["checkpoint_id", "status"] }),
         ),
         tool(
             "mempalace_sketch_create",
@@ -1188,21 +1225,38 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     let db = crate::palace_db::PalaceDb::open(&state.palace_path)
         .map_err(|e| internal_error_safe(&e))?;
     let query_results = db
-        .query_sync_with_filter(
+        .hybrid_search(
             &sanitized.clean_query,
+            input.limit.unwrap_or(5),
             input.wing.as_deref(),
             input.room.as_deref(),
-            input.limit.unwrap_or(5),
-            metadata_filter.as_ref(),
         )
         .map_err(|e| internal_error_safe(&e))?;
+
+    let filtered_results = if let Some(ref filter_map) = metadata_filter {
+        query_results
+            .into_iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.metadatas.iter().any(|m| {
+                    filter_map.iter().all(|(k, v)| {
+                        m.get(k).map(|mv| mv.as_str().unwrap_or("") == *v).unwrap_or(false)
+                    })
+                })
+            })
+            .map(|(_, r)| r)
+            .collect::<Vec<_>>()
+    } else {
+        query_results
+    };
+
     let mut response = serde_json::to_value(crate::searcher::SearchResponse {
         query: sanitized.clean_query.clone(),
         filters: crate::searcher::SearchFilters {
             wing: input.wing.clone(),
             room: input.room.clone(),
         },
-        results: query_results
+        results: filtered_results
             .into_iter()
             .map(crate::searcher::SearchResult::from)
             .collect(),
@@ -2525,6 +2579,82 @@ fn tool_sentinel_trigger(state: &AppState, args: JsonObject) -> Result<CallToolR
     }))
 }
 
+fn tool_sentinel_list(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    let mut conn = state.db.coordination();
+    let sentinels = conn.sentinel_list().map_err(|e| internal_error_safe(&e))?;
+    ok_json(serde_json::json!({
+        "success": true,
+        "sentinels": sentinels.into_iter().map(|s| serde_json::json!({
+            "id": s.id,
+            "name": s.name,
+            "watch_type": s.watch_type,
+            "trigger_condition": s.trigger_condition,
+            "action_id": s.action_id,
+            "expires_at": s.expires_at,
+            "created_at": s.created_at,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn tool_sentinel_delete(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        sentinel_id: String,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let mut conn = state.db.coordination();
+    conn.sentinel_delete(&input.sentinel_id).map_err(|e| internal_error_safe(&e))?;
+    ok_json(serde_json::json!({
+        "success": true,
+        "deleted": true,
+        "sentinel_id": input.sentinel_id,
+    }))
+}
+
+fn tool_checkpoint_list(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    let mut conn = state.db.coordination();
+    let checkpoints = conn.checkpoint_list().map_err(|e| internal_error_safe(&e))?;
+    ok_json(serde_json::json!({
+        "success": true,
+        "checkpoints": checkpoints.into_iter().map(|c| serde_json::json!({
+            "id": c.id,
+            "name": c.name,
+            "operation": c.operation,
+            "status": c.status,
+            "checkpoint_type": c.checkpoint_type,
+            "linked_action_ids": c.linked_action_ids,
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn tool_checkpoint_resolve(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        checkpoint_id: String,
+        status: String,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let mut conn = state.db.coordination();
+    conn.checkpoint_resolve(&input.checkpoint_id, &input.status)
+        .map_err(|e| internal_error_safe(&e))?;
+    ok_json(serde_json::json!({
+        "success": true,
+        "resolved": true,
+        "checkpoint_id": input.checkpoint_id,
+        "status": input.status,
+    }))
+}
+
 fn tool_sketch_create(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -2601,7 +2731,7 @@ fn tool_sketch_promote(state: &AppState, args: JsonObject) -> Result<CallToolRes
     let content = format!("{}\n{}\n{}", sketch.title, sketch.description, sketch.steps);
     let action_items = extract_action_items(&content);
 
-    // 3. Create action observations in lesson drawer for each action item
+    // 3. Create permanent Action entries via CoordinationDb
     let mut action_ids = Vec::new();
     let now = chrono::Utc::now().to_rfc3339();
     let project = if sketch.project.is_empty() {
@@ -2609,23 +2739,27 @@ fn tool_sketch_promote(state: &AppState, args: JsonObject) -> Result<CallToolRes
     } else {
         sketch.project.clone()
     };
-
-    for item in action_items {
-        let lesson_id = format!("lesson_{}", short_hash(&item, 8));
-        let lesson = crate::palace_db::LessonRecord {
-            id: lesson_id.clone(),
-            content: item,
-            context: format!("source_sketch:{}", input.sketch_id),
-            confidence: 0.8,
-            project: project.clone(),
-            tags: "action_item".to_string(),
-            reinforced_at: now.clone(),
-            created_at: now.clone(),
-        };
-        if let Err(e) = db.lesson_create(&lesson) {
-            warn!("Failed to create lesson for action item: {}", e);
-        } else {
-            action_ids.push(lesson_id);
+    {
+        let mut coord = db.coordination();
+        for item in action_items {
+            let action_id = format!("action_{}", short_hash(&item, 16));
+            let action = crate::palace_db::Action {
+                id: action_id.clone(),
+                title: item,
+                description: format!("source_sketch:{}", input.sketch_id),
+                status: "pending".to_string(),
+                priority: 5,
+                project: project.clone(),
+                tags: "from_sketch".to_string(),
+                parent_id: Some(input.sketch_id.clone()),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            if let Err(e) = coord.action_create(&action) {
+                warn!("Failed to create action for sketch item: {}", e);
+            } else {
+                action_ids.push(action_id);
+            }
         }
     }
 
@@ -3413,16 +3547,53 @@ fn tool_mesh_sync(state: &AppState, args: JsonObject) -> Result<CallToolResult, 
         wings: Option<Vec<String>>,
         #[serde(default)]
         sync_mode: Option<String>,
+        #[serde(default)]
+        peer_url: Option<String>,
+        #[serde(default)]
+        peer_name: Option<String>,
     }
     let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
+
+    let registered_peer = if let (Some(url), Some(name)) = (&input.peer_url, &input.peer_name) {
+        match state.mesh.write().unwrap().register(url, name, None, None) {
+            Ok(p) => Some(serde_json::json!({
+                "id": p.id,
+                "url": p.url,
+                "name": p.name,
+                "status": p.status,
+            })),
+            Err(e) => {
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error": e.to_string(),
+                }));
+            }
+        }
+    } else {
+        None
+    };
+
+    let peers: Vec<_> = state.mesh.read().unwrap().list_peers().iter().map(|p| {
+        serde_json::json!({
+            "id": p.id,
+            "url": p.url,
+            "name": p.name,
+            "status": p.status,
+            "shared_scopes": p.shared_scopes,
+            "last_sync_at": p.last_sync_at.map(|dt| dt.to_rfc3339()),
+        })
+    }).collect();
+
     ok_json(serde_json::json!({
         "success": true,
         "synced_wings": input.wings.unwrap_or_default(),
         "sync_mode": input.sync_mode.unwrap_or_else(|| "incremental".to_string()),
-        "nodes_synced": 0,
+        "nodes_synced": peers.len(),
+        "peers": peers,
+        "registered": registered_peer,
     }))
 }
 
@@ -3606,6 +3777,69 @@ fn tool_consolidate(state: &AppState, args: JsonObject) -> Result<CallToolResult
             "message": "Dry run - no changes made",
         }))
     } else {
+        // Re-open mutable db for writes
+        let mut db = fresh_db(state)?;
+
+        // Apply sketch → lesson promotions (doc_type: observation → lesson)
+        if !promote_sketch_to_lesson.is_empty() {
+            let docs_to_update: Vec<_> = db
+                .get_documents_with_metadata(&promote_sketch_to_lesson)
+                .into_iter()
+                .map(|(id, content, mut meta)| {
+                    meta.insert("doc_type".to_string(), serde_json::json!("lesson"));
+                    (id, content, meta)
+                })
+                .collect();
+            db.upsert_documents(&docs_to_update).map_err(|e| internal_error_safe(&e))?;
+        }
+
+        // Apply lesson → insight promotions (doc_type: lesson → insight)
+        if !promote_lesson_to_insight.is_empty() {
+            let docs_to_update: Vec<_> = db
+                .get_documents_with_metadata(&promote_lesson_to_insight)
+                .into_iter()
+                .map(|(id, content, mut meta)| {
+                    meta.insert("doc_type".to_string(), serde_json::json!("insight"));
+                    (id, content, meta)
+                })
+                .collect();
+            db.upsert_documents(&docs_to_update).map_err(|e| internal_error_safe(&e))?;
+        }
+
+        // Apply insight → memory promotions (doc_type: insight → memory, bump confidence)
+        if !promote_insight_to_memory.is_empty() {
+            let docs_to_update: Vec<_> = db
+                .get_documents_with_metadata(&promote_insight_to_memory)
+                .into_iter()
+                .map(|(id, content, mut meta)| {
+                    meta.insert("doc_type".to_string(), serde_json::json!("memory"));
+                    meta.insert("confidence".to_string(), serde_json::json!(8.0));
+                    (id, content, meta)
+                })
+                .collect();
+            db.upsert_documents(&docs_to_update).map_err(|e| internal_error_safe(&e))?;
+        }
+
+        // Apply memory → archive promotions (doc_type: memory → archive, bump importance)
+        if !promote_memory_to_archive.is_empty() {
+            let docs_to_update: Vec<_> = db
+                .get_documents_with_metadata(&promote_memory_to_archive)
+                .into_iter()
+                .map(|(id, content, mut meta)| {
+                    meta.insert("doc_type".to_string(), serde_json::json!("archive"));
+                    meta.insert("importance".to_string(), serde_json::json!(1.0));
+                    (id, content, meta)
+                })
+                .collect();
+            db.upsert_documents(&docs_to_update).map_err(|e| internal_error_safe(&e))?;
+        }
+
+        // Persist all changes
+        db.flush().map_err(|e| internal_error_safe(&e))?;
+
+        // Invalidate graph cache so KG reflects updated doc_types
+        crate::palace_graph::invalidate_cache(&state.palace_path);
+
         ok_json(serde_json::json!({
             "success": true,
             "dry_run": false,
@@ -4150,7 +4384,7 @@ fn tool_smart_search(state: &AppState, args: JsonObject) -> Result<CallToolResul
     let db = fresh_db(state)?;
 
     let results = db
-        .hybrid_search(&input.query, input.limit.unwrap_or(10))
+        .hybrid_search(&input.query, input.limit.unwrap_or(10), None, None)
         .map_err(|e| internal_error_safe(&e))?;
 
     // If expand_ids provided, fetch those specifically
@@ -4181,13 +4415,70 @@ fn tool_smart_search(state: &AppState, args: JsonObject) -> Result<CallToolResul
     }))
 }
 
-fn tool_vision_search(_state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
-    // CLIP image embeddings require AGENTMEMORY_IMAGE_EMBEDDINGS=true
-    // This is a stub - actual implementation would need image embedding support
-    ok_json(serde_json::json!({
-        "status": "not_configured",
-        "message": "AGENTMEMORY_IMAGE_EMBEDDINGS not enabled. Set AGENTMEMORY_IMAGE_EMBEDDINGS=true to enable cross-modal image search.",
-    }))
+fn tool_vision_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        query_text: Option<String>,
+        query_image_ref: Option<String>,
+        top_k: Option<usize>,
+        session_id: Option<String>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+
+    let db_path = state.palace_path.join("coordination.db");
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => return ok_json(serde_json::json!({
+            "status": "error",
+            "message": format!("cannot open coordination.db: {}", e),
+        })),
+    };
+
+    match crate::vision::VisionSearchStore::new(conn, None) {
+        Ok(store) => {
+            match store.vision_search(
+                input.query_text.as_deref(),
+                input.query_image_ref.as_deref(),
+                input.top_k,
+                input.session_id.as_deref(),
+            ) {
+                Ok(results) => {
+                    let hits: Vec<_> = results
+                        .into_iter()
+                        .map(|r| serde_json::json!({
+                            "image_ref": r.image_ref,
+                            "score": r.score,
+                            "session_id": r.session_id,
+                            "observation_id": r.observation_id,
+                            "updated_at": r.updated_at,
+                        }))
+                        .collect();
+                    ok_json(serde_json::json!({
+                        "status": "ok",
+                        "query_text": input.query_text,
+                        "query_image_ref": input.query_image_ref,
+                        "results": hits,
+                        "total": hits.len(),
+                    }))
+                }
+                Err(e) => ok_json(serde_json::json!({
+                    "status": "error",
+                    "message": e.to_string(),
+                })),
+            }
+        }
+        Err(e) => ok_json(serde_json::json!({
+            "status": "error",
+            "message": format!("vision search unavailable: {}", e),
+        })),
+    }
 }
 
 fn tool_relations(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -4367,6 +4658,7 @@ mod tests {
             db: crate::palace_db::PalaceDb::open(&state.palace_path).unwrap(),
             read_only: state.read_only,
             palace_path: state.palace_path.clone(),
+            mesh: std::sync::RwLock::new(crate::coordination::mesh::Mesh::new(None)),
         };
         let f = make_dispatch(Arc::new(owned_state));
         let args = args.as_object().cloned().unwrap_or_default();
@@ -5375,7 +5667,11 @@ mod tests {
             "mempalace_signal_read",
             "mempalace_sentinel_create",
             "mempalace_sentinel_trigger",
-            "mempalace_sketch_create",
+            "mempalace_sentinel_list",
+            "mempalace_sentinel_delete",
+            "mempalace_checkpoint",
+            "mempalace_checkpoint_list",
+            "mempalace_checkpoint_resolve",
             "mempalace_sketch_promote",
             "mempalace_crystallize",
             "mempalace_diagnose",

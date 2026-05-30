@@ -1777,21 +1777,54 @@ impl PalaceDb {
         &self,
         query_text: &str,
         limit: usize,
+        wing: Option<&str>,
+        room: Option<&str>,
     ) -> anyhow::Result<Vec<QueryResult>> {
         use crate::search::rrf::{fuse_results, SearchStream, StreamResult, RrfConfig};
         use crate::search::diversify::diversify_by_session;
 
         let over_fetch = (limit * 3).min(300);
 
+        // Helper: check if a document entry passes wing/room filter
+        let passes_filter = |entry: &DocumentEntry| {
+            if let Some(w) = wing {
+                let entry_wing = entry
+                    .metadata
+                    .get("wing")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if entry_wing != w {
+                    return false;
+                }
+            }
+            if let Some(r) = room {
+                let entry_room = entry
+                    .metadata
+                    .get("room")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if entry_room != r {
+                    return false;
+                }
+            }
+            true
+        };
+
         let bm25_results: Vec<StreamResult> = self
             .bm25
             .search(query_text, over_fetch)
             .into_iter()
             .enumerate()
-            .map(|(rank, result)| StreamResult {
-                id: result.document.id,
-                rank,
-                stream: SearchStream::Bm25,
+            .filter_map(|(rank, result)| {
+                let entry = self.documents.get(&result.document.id)?;
+                if !passes_filter(entry) {
+                    return None;
+                }
+                Some(StreamResult {
+                    id: result.document.id,
+                    rank,
+                    stream: SearchStream::Bm25,
+                })
             })
             .collect();
 
@@ -1801,6 +1834,9 @@ impl PalaceDb {
             .iter()
             .enumerate()
             .filter_map(|(idx, (id, entry))| {
+                if !passes_filter(entry) {
+                    return None;
+                }
                 let similarity = naive_similarity(&query_lower, &entry.content.to_lowercase());
                 if similarity > 0.05 {
                     Some(StreamResult {
@@ -1821,11 +1857,16 @@ impl PalaceDb {
             for word in query_words {
                 if let Ok(triples) = kg.query_entity(word, None, None, "both") {
                     for (rank, triple) in triples.iter().enumerate() {
-                        graph_results.push(StreamResult {
-                            id: triple.subject.clone(),
-                            rank,
-                            stream: SearchStream::Graph,
-                        });
+                        // Filter graph results by wing/room too
+                        if let Some(entry) = self.documents.get(&triple.subject) {
+                            if passes_filter(entry) {
+                                graph_results.push(StreamResult {
+                                    id: triple.subject.clone(),
+                                    rank,
+                                    stream: SearchStream::Graph,
+                                });
+                            }
+                        }
                         if graph_results.len() >= over_fetch {
                             break;
                         }
@@ -2046,6 +2087,21 @@ impl PalaceDb {
         ids.iter()
             .filter(|id| self.documents.contains_key(id.as_str()))
             .cloned()
+            .collect()
+    }
+
+    /// Get full document entries (id, content, metadata) for the given IDs.
+    /// Returns only entries that exist.
+    pub fn get_documents_with_metadata(
+        &self,
+        ids: &[String],
+    ) -> Vec<(String, String, HashMap<String, serde_json::Value>)> {
+        ids.iter()
+            .filter_map(|id| {
+                self.documents.get(id).map(|entry| {
+                    (id.clone(), entry.content.clone(), entry.metadata.clone())
+                })
+            })
             .collect()
     }
 
