@@ -782,8 +782,8 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
         tool(
             "mempalace_reflect",
             "Reflect",
-            "Traverse the knowledge graph and synthesize insights.",
-            serde_json::json!({ "type": "object", "properties": { "focus_areas": { "type": "array", "items": { "type": "string" }, "description": "Focus areas for reflection (optional)" }, "depth": { "type": "integer", "description": "Traversal depth (default 2)" } } }),
+            "Traverse lessons, insights, and crystals by concept clusters, then synthesize higher-order insights via LLM.",
+            serde_json::json!({ "type": "object", "properties": { "topic": { "type": "string", "description": "Topic to reflect on (filters source material)" }, "max_clusters": { "type": "integer", "description": "Max concept clusters to process (default 10, max 20)" } }, "required": ["topic"] }),
         ),
         tool(
             "mempalace_insight_list",
@@ -2901,39 +2901,243 @@ fn tool_lesson_recall(state: &AppState, args: JsonObject) -> Result<CallToolResu
     }))
 }
 
+struct ReflectInput {
+    topic: String,
+    max_clusters: Option<usize>,
+}
+
+async fn tool_reflect_async(
+    state: &AppState,
+    input: &ReflectInput,
+) -> Result<serde_json::Value, ErrorData> {
+    let mut db = fresh_db(state)?;
+    let llm = crate::llm::create_llm_provider_from_env();
+
+    // Collect all source material: lessons + insights + crystals
+    let lessons = db.lesson_list(None, None).map_err(|e| {
+        ErrorData::invalid_request(format!("Failed to list lessons: {}", e), None)
+    })?;
+    let insights = db.insight_list(None, None).map_err(|e| {
+        ErrorData::invalid_request(format!("Failed to list insights: {}", e), None)
+    })?;
+    let crystals = db.crystal_list(None).map_err(|e| {
+        ErrorData::invalid_request(format!("Failed to list crystals: {}", e), None)
+    })?;
+
+    let total_sources = lessons.len() + insights.len() + crystals.len();
+    if total_sources == 0 {
+        return Ok(serde_json::json!({
+            "success": true,
+            "topic": input.topic,
+            "new_insights": 0,
+            "reinforced": 0,
+            "clusters_processed": 0,
+            "used_fallback": false,
+            "insights": [],
+        }));
+    }
+
+    // Phase 1: cluster source material by concept tags
+    let mut concept_to_sources: std::collections::HashMap<String, Vec<ClusterMember>> =
+        std::collections::HashMap::new();
+
+    for lesson in &lessons {
+        for tag in lesson.tags.split(',') {
+            let tag = tag.trim();
+            if !tag.is_empty() && lesson.content.to_lowercase().contains(&input.topic.to_lowercase()) {
+                concept_to_sources
+                    .entry(tag.to_lowercase())
+                    .or_default()
+                    .push(ClusterMember {
+                        source_type: "lesson".to_string(),
+                        id: lesson.id.clone(),
+                        content: lesson.content.clone(),
+                        confidence: lesson.confidence,
+                    });
+            }
+        }
+    }
+
+    for insight in &insights {
+        let words: Vec<&str> = insight.content.split_whitespace().take(5).collect();
+        for word in words {
+            let word_lower = word.to_lowercase();
+            if word_lower.len() > 3 && insight.content.to_lowercase().contains(&input.topic.to_lowercase()) {
+                concept_to_sources
+                    .entry(word_lower)
+                    .or_default()
+                    .push(ClusterMember {
+                        source_type: "insight".to_string(),
+                        id: insight.id.clone(),
+                        content: insight.content.clone(),
+                        confidence: insight.confidence,
+                    });
+            }
+        }
+    }
+
+    for crystal in &crystals {
+        if !crystal.lessons.is_empty() {
+            for tag in crystal.lessons.split(',') {
+                let tag = tag.trim();
+                if !tag.is_empty() {
+                    concept_to_sources
+                        .entry(tag.to_lowercase())
+                        .or_default()
+                        .push(ClusterMember {
+                            source_type: "crystal".to_string(),
+                            id: crystal.id.clone(),
+                            content: crystal.lessons.clone(),
+                            confidence: 0.8,
+                        });
+                }
+            }
+        }
+    }
+
+    let mut clusters: Vec<(String, Vec<ClusterMember>)> = concept_to_sources
+        .into_iter()
+        .filter(|(_, members)| members.len() >= 2)
+        .collect();
+    clusters.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    let max_clusters = input.max_clusters.unwrap_or(10).min(20);
+    clusters.truncate(max_clusters);
+
+    let mut new_insights = 0;
+    let mut reinforced = 0;
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    let now = chrono::Utc::now();
+
+    for (concept, members) in &clusters {
+        let cluster_items: Vec<String> = members
+            .iter()
+            .map(|m| {
+                format!(
+                    "- [{}] {} (confidence: {:.1}): {}",
+                    m.source_type,
+                    m.id,
+                    m.confidence,
+                    m.content.chars().take(200).collect::<String>()
+                )
+            })
+            .collect();
+        let prompt = format!(
+            "Analyze these observations about '{}' and generate higher-order insights:\n\n{}\n\n\
+            Focus on patterns, best practices, and cross-cutting lessons. \
+            Output 1-2 concise insights (under 150 chars each).",
+            concept,
+            cluster_items.join("\n")
+        );
+
+        let response = llm.complete(
+            crate::reflect::REFLECT_SYSTEM_PROMPT,
+            &prompt,
+        ).await;
+
+        match response {
+            Ok(completion) => {
+                if let Ok(parsed) = crate::reflect::parse_insights_xml(&completion.text) {
+                    for insight in parsed {
+                        let content_hash = short_hash(&insight.content, 12);
+                        let insight_id = format!("ins_{}", content_hash);
+
+                        let existing = db.insight_list(None, Some(insight.confidence))
+                            .ok()
+                            .and_then(|list| {
+                                list.into_iter().find(|i| {
+                                    i.content == insight.content && !i.id.contains("deprecated")
+                                })
+                            });
+
+                        if let Some(existing_insight) = existing {
+                            if let Err(e) = db.insight_reinforce(&existing_insight.id) {
+                                tracing::warn!("Failed to reinforce insight: {}", e);
+                            }
+                            reinforced += 1;
+                            results.push(serde_json::json!({
+                                "id": existing_insight.id,
+                                "title": existing_insight.id,
+                                "content": existing_insight.content,
+                                "confidence": existing_insight.confidence,
+                                "reinforced": true,
+                                "source_concept": concept,
+                            }));
+                        } else {
+                            let record = crate::palace_db::InsightRecord {
+                                id: insight_id.clone(),
+                                content: insight.content.clone(),
+                                confidence: insight.confidence,
+                                project: "default".to_string(),
+                                cluster_id: concept.clone(),
+                                reinforced_count: 0,
+                                created_at: now.to_rfc3339(),
+                            };
+                            if let Err(e) = db.insight_create(&record) {
+                                tracing::warn!("Failed to create insight: {}", e);
+                            } else {
+                                new_insights += 1;
+                            }
+                            results.push(serde_json::json!({
+                                "id": insight_id,
+                                "title": insight.title,
+                                "content": insight.content,
+                                "confidence": insight.confidence,
+                                "reinforced": false,
+                                "source_concept": concept,
+                            }));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("LLM reflect failed for cluster '{}': {}", concept, e);
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "success": true,
+        "topic": input.topic,
+        "new_insights": new_insights,
+        "reinforced": reinforced,
+        "clusters_processed": clusters.len(),
+        "clusters_skipped": 0,
+        "used_fallback": false,
+        "insights": results,
+    }))
+}
+
+#[derive(Debug, Clone)]
+struct ClusterMember {
+    source_type: String,
+    id: String,
+    content: String,
+    confidence: f64,
+}
+
 fn tool_reflect(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Input {
         topic: String,
         #[serde(default)]
-        depth: Option<String>,
-        #[serde(default)]
-        context: Option<String>,
+        max_clusters: Option<usize>,
     }
     let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
         Ok(i) => i,
         Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
     };
-    let db = fresh_db(state)?;
-    let lessons = db.lesson_list(None, None).map_err(|e| {
-        ErrorData::invalid_request(format!("Failed to reflect: {}", e), None)
-    })?;
-    let reflections: Vec<_> = lessons.iter().filter(|l| {
-        l.content.to_lowercase().contains(&input.topic.to_lowercase())
-    }).map(|l| {
-        serde_json::json!({
-            "id": l.id,
-            "content": l.content,
-            "confidence": l.confidence,
-        })
-    }).collect();
-    ok_json(serde_json::json!({
-        "success": true,
-        "topic": input.topic,
-        "reflections": reflections,
-        "insights": [],
-    }))
+    let reflect_input = ReflectInput {
+        topic: input.topic,
+        max_clusters: input.max_clusters,
+    };
+
+    let rt = tokio::runtime::Handle::current();
+    let result = rt.block_on(tool_reflect_async(state, &reflect_input));
+    match result {
+        Ok(json) => ok_json(json),
+        Err(e) => Err(e),
+    }
 }
 
 fn tool_insight_list(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {

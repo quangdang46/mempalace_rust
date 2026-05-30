@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-const REFLECT_SYSTEM_PROMPT: &str = r#"You are a reflection engine that analyzes coding observations and generates insights.
+pub const REFLECT_SYSTEM_PROMPT: &str = r#"You are a reflection engine that analyzes coding observations and generates insights.
 
 Output format (XML):
 <insights>
