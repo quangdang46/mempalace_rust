@@ -5,6 +5,8 @@ use std::sync::{Arc, OnceLock};
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
 
+use bm25::SearchEngine;
+
 use crate::dedup_window::{DedupVerdict, WindowedDedup};
 
 pub type DbErr = rusqlite::Error;
@@ -124,6 +126,7 @@ pub struct PalaceDb {
     palace_path: PathBuf,
     collection_name: String,
     coordination: Arc<Mutex<CoordinationDb>>,
+    bm25: SearchEngine<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1022,6 +1025,7 @@ impl PalaceDb {
             palace_path: palace_path.to_path_buf(),
             collection_name,
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
+            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0).build(),
         })
     }
 
@@ -1169,6 +1173,28 @@ impl PalaceDb {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn sketch_get(&self, id: &str) -> Result<Option<SketchRecord>, DbErr> {
+        let conn = self.coordination.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, steps, project, expires_at, created_at
+             FROM sketches WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(SketchRecord {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                description: row.get(2)?,
+                steps: row.get(3)?,
+                project: row.get(4)?,
+                expires_at: row.get(5)?,
+                created_at: row.get(6)?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn sketch_list(&self, project: Option<&str>) -> Result<Vec<SketchRecord>, DbErr> {
@@ -1744,6 +1770,108 @@ impl PalaceDb {
         Ok(query_results)
     }
 
+    /// Hybrid search: BM25 + naive similarity + Graph via RRF fusion.
+    ///
+    /// Returns results sorted by combined RRF score.
+    pub fn hybrid_search(
+        &self,
+        query_text: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<QueryResult>> {
+        use crate::search::rrf::{fuse_results, SearchStream, StreamResult, RrfConfig};
+        use crate::search::diversify::diversify_by_session;
+
+        let over_fetch = (limit * 3).min(300);
+
+        let bm25_results: Vec<StreamResult> = self
+            .bm25
+            .search(query_text, over_fetch)
+            .into_iter()
+            .enumerate()
+            .map(|(rank, result)| StreamResult {
+                id: result.document.id,
+                rank,
+                stream: SearchStream::Bm25,
+            })
+            .collect();
+
+        let query_lower = query_text.to_lowercase();
+        let vector_results: Vec<StreamResult> = self
+            .documents
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, (id, entry))| {
+                let similarity = naive_similarity(&query_lower, &entry.content.to_lowercase());
+                if similarity > 0.05 {
+                    Some(StreamResult {
+                        id: id.clone(),
+                        rank: idx,
+                        stream: SearchStream::Vector,
+                    })
+                } else {
+                    None
+                }
+            })
+            .take(over_fetch)
+            .collect();
+
+        let mut graph_results: Vec<StreamResult> = vec![];
+        if let Ok(kg) = crate::knowledge_graph::KnowledgeGraph::open(&self.palace_path.join("knowledge_graph.db")) {
+            let query_words: Vec<&str> = query_lower.split_whitespace().take(5).collect();
+            for word in query_words {
+                if let Ok(triples) = kg.query_entity(word, None, None, "both") {
+                    for (rank, triple) in triples.iter().enumerate() {
+                        graph_results.push(StreamResult {
+                            id: triple.subject.clone(),
+                            rank,
+                            stream: SearchStream::Graph,
+                        });
+                        if graph_results.len() >= over_fetch {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let config = RrfConfig::default();
+        let fused = fuse_results(&bm25_results, &vector_results, &graph_results, &config);
+
+        let diversified: Vec<_> = fused.into_iter().take(over_fetch).filter_map(|fr| {
+            let doc = self.documents.get(&fr.id)?;
+            let session_id = doc
+                .metadata
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            Some(crate::search::diversify::DiversifiableResult {
+                id: fr.id.clone(),
+                session_id,
+                score: fr.combined_score,
+            })
+        }).collect();
+
+        let diversified = diversify_by_session(&diversified, limit, 3);
+
+        let results: Vec<QueryResult> = diversified
+            .into_iter()
+            .filter_map(|dr| {
+                let entry = self.documents.get(&dr.id)?;
+                let mut metadata = entry.metadata.clone();
+                metadata.insert("combined_score".to_string(), serde_json::json!(dr.score));
+                Some(QueryResult {
+                    ids: vec![dr.id],
+                    documents: vec![entry.content.clone()],
+                    distances: vec![dr.score],
+                    metadatas: vec![metadata],
+                })
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     pub fn add(
         &mut self,
         documents: &[(&str, &str)],
@@ -1765,10 +1893,13 @@ impl PalaceDb {
             self.documents.insert(
                 id.to_string(),
                 DocumentEntry {
-                    content: redacted,
+                    content: redacted.clone(),
                     metadata: meta_map,
                 },
             );
+
+            // Index document in BM25
+            self.bm25.upsert(bm25::Document::new(id.to_string(), redacted.clone()));
         }
 
         // Don't auto-save on every add - caller should call flush() when done batching
@@ -1786,10 +1917,11 @@ impl PalaceDb {
             self.documents.insert(
                 id.clone(),
                 DocumentEntry {
-                    content: redacted,
+                    content: redacted.clone(),
                     metadata: metadata.clone(),
                 },
             );
+            self.bm25.upsert(bm25::Document::new(id.clone(), redacted.clone()));
         }
 
         Ok(())
