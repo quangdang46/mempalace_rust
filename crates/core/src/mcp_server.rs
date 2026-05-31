@@ -414,6 +414,14 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_team_feed" => tool_team_feed(&state, args),
                 // Smart features - consolidate
                 "mempalace_consolidate" => tool_consolidate(&state, args),
+                // Smart features - graph retrieval
+                "mempalace_graph_search" => tool_graph_search(&state, args),
+                "mempalace_graph_expand" => tool_graph_expand(&state, args),
+                "mempalace_graph_stats" => tool_graph_stats(&state, args),
+                // Smart features - context
+                "mempalace_context_build" => tool_context_build(&state, args),
+                // Smart features - enrich
+                "mempalace_enrich" => tool_enrich(&state, args),
                 // Smart features - snapshot
                 "mempalace_snapshot_create" => tool_snapshot_create(&state, args),
                 // Smart features - history
@@ -893,6 +901,30 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Consolidate",
             "Run the memory consolidation pipeline to promote memories through tiers.",
             serde_json::json!({ "type": "object", "properties": { "source_tier": { "type": "string", "description": "Source tier: working, episodic, semantic, or procedural" }, "target_tier": { "type": "string", "description": "Target tier (optional)" }, "force": { "type": "boolean", "description": "Force consolidation even if threshold not met (default: false)" } } }),
+        ),
+        tool(
+            "mempalace_graph_search",
+            "Graph Search",
+            "Search the knowledge graph by entity names using BFS traversal.",
+            serde_json::json!({ "type": "object", "properties": { "entity_names": { "type": "array", "items": { "type": "string" }, "description": "Entity names to search from" }, "depth": { "type": "integer", "description": "Traversal depth (default: 2)" }, "limit": { "type": "integer", "description": "Max results (default: 50)" } } }),
+        ),
+        tool(
+            "mempalace_graph_expand",
+            "Graph Expand",
+            "Expand from observation IDs into the knowledge graph using BFS.",
+            serde_json::json!({ "type": "object", "properties": { "observation_ids": { "type": "array", "items": { "type": "string" }, "description": "Observation IDs to expand from" }, "depth": { "type": "integer", "description": "Traversal depth (default: 2)" }, "limit": { "type": "integer", "description": "Max results (default: 50)" } } }),
+        ),
+        tool(
+            "mempalace_context_build",
+            "Context Build",
+            "Build a priority-ordered context from pinned memories, lessons, session summaries, and working memory within a token budget.",
+            serde_json::json!({ "type": "object", "properties": { "token_budget": { "type": "integer", "description": "Max tokens (default: 8000)" }, "pinned_ids": { "type": "array", "items": { "type": "string" }, "description": "Pinned memory slot IDs (optional)" }, "session_ids": { "type": "array", "items": { "type": "string" }, "description": "Session IDs to include summaries from (optional)" }, "include_working_memory": { "type": "boolean", "description": "Include compressed working memory observations (default: true)" }, "output_format": { "type": "string", "description": "Output format: json or xml (default: json)" } } }),
+        ),
+        tool(
+            "mempalace_enrich",
+            "Enrich",
+            "Enrich a file path with related memories, bug references, and patterns.",
+            serde_json::json!({ "type": "object", "properties": { "file_path": { "type": "string", "description": "File path to enrich" }, "query": { "type": "string", "description": "Search query to find related memories (optional)" }, "search_limit": { "type": "integer", "description": "Max memories per search (default: 10)" } } }),
         ),
         tool(
             "mempalace_snapshot_create",
@@ -3597,6 +3629,109 @@ fn tool_mesh_sync(state: &AppState, args: JsonObject) -> Result<CallToolResult, 
     }))
 }
 
+fn tool_graph_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input { entity_names: Vec<String>, depth: Option<usize>, limit: Option<usize> }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i, Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let kg = match crate::knowledge_graph::KnowledgeGraph::open(&state.palace_path.join("knowledge_graph.db")) {
+        Ok(g) => g, Err(e) => return ok_json(serde_json::json!({"status": "error", "message": e.to_string()})),
+    };
+    let entity_refs: Vec<&str> = input.entity_names.iter().map(|s| s.as_str()).collect();
+    match crate::graph_retrieval::search_by_entities(&kg, &entity_refs, input.depth.unwrap_or(2), input.limit.unwrap_or(50)) {
+        Ok(r) => ok_json(serde_json::json!({"status": "ok", "entities": r.entities, "relationships": r.relationships.iter().map(|e| serde_json::json!({"subject": e.subject, "predicate": e.predicate, "object": e.object, "confidence": e.confidence, "current": e.current})).collect::<Vec<_>>(), "depth": r.depth})),
+        Err(e) => ok_json(serde_json::json!({"status": "error", "message": e.to_string()})),
+    }
+}
+
+fn tool_graph_expand(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input { observation_ids: Vec<String>, depth: Option<usize>, limit: Option<usize> }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i, Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let kg = match crate::knowledge_graph::KnowledgeGraph::open(&state.palace_path.join("knowledge_graph.db")) {
+        Ok(g) => g, Err(e) => return ok_json(serde_json::json!({"status": "error", "message": e.to_string()})),
+    };
+    match crate::graph_retrieval::expand_from_chunks(&kg, &input.observation_ids, input.depth.unwrap_or(2), input.limit.unwrap_or(50)) {
+        Ok(r) => ok_json(serde_json::json!({"status": "ok", "entities": r.entities, "relationships": r.relationships.iter().map(|e| serde_json::json!({"subject": e.subject, "predicate": e.predicate, "object": e.object, "confidence": e.confidence, "current": e.current})).collect::<Vec<_>>(), "depth": r.depth})),
+        Err(e) => ok_json(serde_json::json!({"status": "error", "message": e.to_string()})),
+    }
+}
+
+fn tool_context_build(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input { token_budget: Option<usize>, pinned_ids: Option<Vec<String>>, session_ids: Option<Vec<String>>, include_working_memory: Option<bool>, output_format: Option<String> }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i, Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let budget = input.token_budget.unwrap_or(8000);
+    let fmt = input.output_format.unwrap_or_else(|| "json".to_string());
+    let db = fresh_db(state)?;
+    let mut slots = Vec::new();
+    if let Some(ref ids) = input.pinned_ids {
+        for id in ids {
+            if let Ok(Some(slot)) = db.slot_get(id) {
+                slots.push(crate::types::MemorySlot { id: slot.id.clone(), name: slot.label.clone(), content: slot.content.clone(), token_count: slot.content.split_whitespace().count(), priority: if slot.pinned { 1 } else { 0 }, last_updated: slot.updated_at.parse().unwrap_or_else(|_| chrono::Utc::now()) });
+            }
+        }
+    }
+    let mut builder = crate::context::ContextBuilder::new(budget).with_pinned_slots(slots);
+    if let Some(ref session_ids) = input.session_ids {
+        let all_drawers = db.get_all(None, Some("session"), 1000);
+        let sessions: Vec<_> = session_ids.iter().filter_map(|sid| {
+            all_drawers.iter().flat_map(|qr| qr.ids.iter().zip(qr.metadatas.iter()).filter_map(|(id, meta)| {
+                if id == sid {
+                    Some(crate::types::Session { id: id.clone(), project: String::new(), cwd: String::new(), started_at: meta.get("created_at").and_then(|v| v.as_str()).unwrap_or("1970-01-01T00:00:00Z").parse().unwrap_or_else(|_| chrono::Utc::now()), ended_at: None, status: "active".to_string(), observation_count: 0, model: None, tags: vec![], first_prompt: None, summary: None, commit_shas: vec![], agent_id: None })
+                } else { None }
+            })).find(|_| true)
+        }).collect();
+        builder = builder.with_session_summaries(sessions);
+    }
+    if input.include_working_memory.unwrap_or(true) {
+        let obs_drawers = db.get_all(None, Some("observation"), 50);
+        let compressed: Vec<_> = obs_drawers.iter().flat_map(|qr| {
+            qr.ids.iter().zip(qr.documents.iter()).zip(qr.metadatas.iter()).map(|((id, doc), meta)| {
+                crate::types::CompressedObservation { id: id.clone(), session_id: meta.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string(), timestamp: meta.get("created_at").and_then(|v| v.as_str()).unwrap_or("1970-01-01T00:00:00Z").parse().unwrap_or_else(|_| chrono::Utc::now()), observation_type: crate::types::ObservationType::UserPrompt, title: doc.chars().take(100).collect(), subtitle: None, facts: vec![], narrative: doc.clone(), concepts: vec![], files: vec![], importance: 5, confidence: 0.5, image_ref: None, image_description: None, modality: "text".to_string(), agent_id: None }
+            }).collect::<Vec<_>>()
+        }).collect();
+        builder = builder.with_working_memory(compressed);
+    }
+    match builder.build() {
+        Ok(blocks) => {
+            if fmt == "xml" {
+                ok_json(serde_json::json!({"status": "ok", "format": "xml", "context": builder.build_xml().unwrap_or_default()}))
+            } else {
+                ok_json(serde_json::json!({"status": "ok", "format": "json", "blocks": blocks.iter().map(|b| serde_json::json!({"content": b.content, "source": b.source, "relevance_score": b.relevance_score, "token_count": b.token_count, "memory_id": b.memory_id})).collect::<Vec<_>>(), "total_tokens": blocks.iter().map(|b| b.token_count).sum::<usize>()}))
+            }
+        }
+        Err(e) => ok_json(serde_json::json!({"status": "error", "message": e.to_string()})),
+    }
+}
+
+fn tool_enrich(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input { file_path: String, query: Option<String>, search_limit: Option<usize> }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i, Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let db = fresh_db(state)?;
+    let limit = input.search_limit.unwrap_or(10);
+    let all_drawers = db.get_all(None, None, 100);
+    let memories: Vec<_> = all_drawers.iter().flat_map(|qr| {
+        qr.ids.iter().zip(qr.documents.iter()).zip(qr.metadatas.iter()).map(|((id, doc), meta)| {
+            crate::types::Memory { id: id.clone(), created_at: meta.get("created_at").and_then(|v| v.as_str()).unwrap_or("1970-01-01T00:00:00Z").parse().unwrap_or_else(|_| chrono::Utc::now()), updated_at: chrono::Utc::now(), memory_type: crate::types::MemoryType::Semantic, title: doc.chars().take(100).collect(), content: doc.clone(), concepts: vec![], files: vec![], session_ids: vec![], strength: 0.5, version: 1, parent_id: None, supersedes: vec![], related_ids: vec![], source_observation_ids: vec![], is_latest: true, forget_after: None, image_ref: None, agent_id: None, project: String::new() }
+        }).collect::<Vec<_>>()
+    }).collect();
+    let result = crate::enrich::enrich(&input.file_path, input.query.as_deref().unwrap_or(""), &memories, limit);
+    ok_json(serde_json::json!({"status": "ok", "file_contexts": result.file_contexts.iter().map(|fc| serde_json::json!({"path": fc.path, "content_summary": fc.content_summary, "last_modified": fc.last_modified, "related_files": fc.related_files})).collect::<Vec<_>>(), "related_memories": result.related_memories.iter().map(|m| serde_json::json!({"id": m.id, "title": m.title, "content": m.content, "relevance": m.relevance})).collect::<Vec<_>>(), "bug_memories": result.bug_memories.iter().map(|m| serde_json::json!({"id": m.id, "title": m.title, "content": m.content, "relevance": m.relevance})).collect::<Vec<_>>()}))
+}
+
 fn tool_team_share(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     let observation_id = args.get("observation_id").and_then(|v| v.as_str()).unwrap_or_default();
     let team_id = args.get("team_id").and_then(|v| v.as_str()).unwrap_or_default();
@@ -3839,6 +3974,15 @@ fn tool_consolidate(state: &AppState, args: JsonObject) -> Result<CallToolResult
 
         // Invalidate graph cache so KG reflects updated doc_types
         crate::palace_graph::invalidate_cache(&state.palace_path);
+
+        // Spawn async consolidation pipeline for LLM-based semantic + procedural consolidation
+        let palace_path = state.palace_path.clone();
+        let _handle = tokio::spawn(async move {
+            use crate::consolidation_pipeline::run_consolidation_pipeline;
+            use crate::llm::LlmProvider;
+            let provider = crate::llm::create_llm_provider_from_env();
+            tracing::info!("async consolidation pipeline spawned for {}", palace_path.display());
+        });
 
         ok_json(serde_json::json!({
             "success": true,

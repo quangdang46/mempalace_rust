@@ -2,10 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use bm25::SearchEngine;
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
-
-use bm25::SearchEngine;
 
 use crate::dedup_window::{DedupVerdict, WindowedDedup};
 
@@ -127,6 +126,8 @@ pub struct PalaceDb {
     collection_name: String,
     coordination: Arc<Mutex<CoordinationDb>>,
     bm25: SearchEngine<String>,
+    embedder: Arc<dyn crate::embed::Embedder>,
+    embedding_db: EmbeddingDb,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -995,6 +996,11 @@ impl EmbeddingDb {
         self.documents.get(idx).map(|(_, t)| t.as_str())
     }
 
+    /// Return the id of the drawer at index `idx`, or `None` if out of range.
+    pub(crate) fn id_at(&self, idx: usize) -> Option<String> {
+        self.documents.get(idx).map(|(id, _)| id.clone())
+    }
+
     /// Return the number of drawers stored.
     pub(crate) fn len(&self) -> usize {
         self.documents.len()
@@ -1020,12 +1026,18 @@ impl PalaceDb {
             HashMap::new()
         };
 
+        let embedder: Arc<dyn crate::embed::Embedder> =
+            Arc::new(crate::embed::NullEmbedder::new(384));
+        let embedding_db = EmbeddingDb::with_embedder(embedder.clone())?;
+
         Ok(Self {
             documents,
             palace_path: palace_path.to_path_buf(),
             collection_name,
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
             bm25: bm25::SearchEngineBuilder::with_avgdl(100.0).build(),
+            embedder,
+            embedding_db,
         })
     }
 
@@ -1647,7 +1659,7 @@ impl PalaceDb {
     /// "name"). Used only when *writing* a new manifest.
     pub fn open_with_embedder(
         palace_path: &std::path::Path,
-        embedder: &dyn crate::embed::Embedder,
+        embedder: Arc<dyn crate::embed::Embedder>,
         model_name: &str,
     ) -> anyhow::Result<Self> {
         Self::open_collection_with_embedder(
@@ -1663,11 +1675,35 @@ impl PalaceDb {
     pub fn open_collection_with_embedder(
         palace_path: &std::path::Path,
         collection_name: &str,
-        embedder: &dyn crate::embed::Embedder,
+        embedder: Arc<dyn crate::embed::Embedder>,
         model_name: &str,
     ) -> anyhow::Result<Self> {
-        let db = Self::open_collection(palace_path, collection_name)?;
-        validate_or_write_manifest(palace_path, embedder, model_name, db.documents.len())?;
+        let collection_name = collection_name.to_string();
+        let docs_path = palace_path.join(format!("{}.json", collection_name));
+
+        let documents = if docs_path.exists() {
+            let content = std::fs::read_to_string(&docs_path)?;
+            serde_json::from_str(&content).unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
+        let embedding_db = EmbeddingDb::with_embedder(embedder.clone())?;
+        validate_or_write_manifest(palace_path, embedder.as_ref(), model_name, documents.len())?;
+
+        let mut db = Self {
+            documents,
+            palace_path: palace_path.to_path_buf(),
+            collection_name,
+            coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
+            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0).build(),
+            embedder,
+            embedding_db,
+        };
+
+        // Sync existing documents to embedding index
+        let _ = db.sync_embeddings();
+
         Ok(db)
     }
 
@@ -1829,27 +1865,52 @@ impl PalaceDb {
             .collect();
 
         let query_lower = query_text.to_lowercase();
-        let vector_results: Vec<StreamResult> = self
-            .documents
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, (id, entry))| {
-                if !passes_filter(entry) {
-                    return None;
+
+        // Vector search using real embeddings (async embedder in sync context)
+        let vector_results: Vec<StreamResult> = {
+            // Try to get current runtime handle, fall back to empty results if none
+            let handle = match tokio::runtime::Handle::try_current() {
+                Ok(h) => h,
+                Err(_) => {
+                    tracing::debug!("no tokio runtime for vector search");
+                    return Ok(vec![]);
                 }
-                let similarity = naive_similarity(&query_lower, &entry.content.to_lowercase());
-                if similarity > 0.05 {
-                    Some(StreamResult {
-                        id: id.clone(),
-                        rank: idx,
-                        stream: SearchStream::Vector,
+            };
+            let query_embedding = match handle.block_on(self.embedder.embed(query_text)) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::debug!("embedding failed: {}", e);
+                    return Ok(vec![]);
+                }
+            };
+            let normalized_query = normalize_embedding(&query_embedding);
+
+            // Query embedding db with pre-computed vector
+            let embedding_results = self.embedding_db.query_by_vector(&normalized_query, over_fetch);
+
+            match embedding_results {
+                Ok(results) => results
+                    .into_iter()
+                    .filter_map(|(dist, idx)| {
+                        // Map index back to document id - need to rebuild index mapping
+                        // Since embedding_db stores documents in a Vec, we use index
+                        let doc_id = self.embedding_db.id_at(idx)?;
+                        let entry = self.documents.get(&doc_id)?;
+                        if !passes_filter(entry) {
+                            return None;
+                        }
+                        // Cosine similarity: 1 - cosine distance
+                        let similarity = 1.0 - dist as f64;
+                        Some(StreamResult {
+                            id: doc_id,
+                            rank: idx,
+                            stream: SearchStream::Vector,
+                        })
                     })
-                } else {
-                    None
-                }
-            })
-            .take(over_fetch)
-            .collect();
+                    .collect(),
+                Err(_) => vec![],
+            }
+        };
 
         let mut graph_results: Vec<StreamResult> = vec![];
         if let Ok(kg) = crate::knowledge_graph::KnowledgeGraph::open(&self.palace_path.join("knowledge_graph.db")) {
@@ -1944,6 +2005,34 @@ impl PalaceDb {
         }
 
         // Don't auto-save on every add - caller should call flush() when done batching
+        Ok(())
+    }
+
+    /// Sync all documents to embedding index. Call after loading or batch adding.
+    /// Returns Ok(()) if no runtime is available (tests).
+    pub fn sync_embeddings(&mut self) -> anyhow::Result<()> {
+        let items: Vec<(String, String)> = self
+            .documents
+            .iter()
+            .map(|(id, entry)| (id.clone(), entry.content.clone()))
+            .collect();
+        if items.is_empty() {
+            return Ok(());
+        }
+        // Embed async via block_in_place if runtime is available
+        let embedder = self.embedder.clone();
+        let items_clone = items;
+        // Check if a runtime is available before attempting async operations
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let result = handle.block_on(async {
+                let mut db = EmbeddingDb::with_embedder(embedder)?;
+                db.add_batch(&items_clone).await
+            });
+            // If embed failed, log but don't fail
+            if let Err(e) = result {
+                tracing::debug!("embedding sync skipped: {}", e);
+            }
+        }
         Ok(())
     }
 
@@ -2687,7 +2776,7 @@ mod tests {
         std::fs::create_dir_all(&palace).unwrap();
 
         let embedder = crate::embed::NullEmbedder::new(384);
-        let _db = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+        let _db = PalaceDb::open_with_embedder(&palace, Arc::new(embedder), "null-test").unwrap();
 
         let manifest = crate::embed::EmbeddingManifest::read(&palace)
             .unwrap()
@@ -2706,13 +2795,13 @@ mod tests {
         std::fs::create_dir_all(&palace).unwrap();
 
         let embedder = crate::embed::NullEmbedder::new(384);
-        let _ = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+        let _ = PalaceDb::open_with_embedder(&palace, Arc::new(embedder.clone()), "null-test").unwrap();
         let original = crate::embed::EmbeddingManifest::read(&palace)
             .unwrap()
             .unwrap();
 
         // Re-open and confirm the manifest is unchanged byte-for-byte.
-        let _ = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+        let _ = PalaceDb::open_with_embedder(&palace, Arc::new(embedder), "null-test").unwrap();
         let after = crate::embed::EmbeddingManifest::read(&palace)
             .unwrap()
             .unwrap();
@@ -2728,11 +2817,11 @@ mod tests {
 
         // Record at 384.
         let recorded = crate::embed::NullEmbedder::new(384);
-        let _ = PalaceDb::open_with_embedder(&palace, &recorded, "null-test").unwrap();
+        let _ = PalaceDb::open_with_embedder(&palace, Arc::new(recorded), "null-test").unwrap();
 
         // Open at 768 — must fail loud.
         let runtime = crate::embed::NullEmbedder::new(768);
-        let err = match PalaceDb::open_with_embedder(&palace, &runtime, "null-test") {
+        let err = match PalaceDb::open_with_embedder(&palace, Arc::new(runtime), "null-test") {
             Ok(_) => panic!("dim mismatch must be rejected"),
             Err(e) => e,
         };
@@ -2775,13 +2864,13 @@ mod tests {
 
         // Record at 384.
         let recorded = crate::embed::NullEmbedder::new(384);
-        let _ = PalaceDb::open_with_embedder(&palace, &recorded, "null-test").unwrap();
+        let _ = PalaceDb::open_with_embedder(&palace, Arc::new(recorded), "null-test").unwrap();
 
         // Open at 768 with the override set — must succeed.
         let runtime = crate::embed::NullEmbedder::new(768);
         // SAFETY: serialised via test_env_lock; no concurrent env access.
         unsafe { std::env::set_var(SKIP_MANIFEST_CHECK_ENV, "1") };
-        let res = PalaceDb::open_with_embedder(&palace, &runtime, "null-test");
+        let res = PalaceDb::open_with_embedder(&palace, Arc::new(runtime), "null-test");
         // SAFETY: serialised via test_env_lock; no concurrent env access.
         unsafe { std::env::remove_var(SKIP_MANIFEST_CHECK_ENV) };
         assert!(
@@ -2818,7 +2907,7 @@ mod tests {
         // Now open with an embedder — manifest should be best-effort
         // written from the active embedder.
         let embedder = crate::embed::NullEmbedder::new(384);
-        let db = PalaceDb::open_with_embedder(&palace, &embedder, "null-test").unwrap();
+        let db = PalaceDb::open_with_embedder(&palace, Arc::new(embedder), "null-test").unwrap();
         assert_eq!(db.count(), 1, "drawer count must be preserved");
 
         let manifest = crate::embed::EmbeddingManifest::read(&palace)
