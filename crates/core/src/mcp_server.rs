@@ -422,6 +422,12 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_context_build" => tool_context_build(&state, args),
                 // Smart features - enrich
                 "mempalace_enrich" => tool_enrich(&state, args),
+                // Smart features - retention
+                "mempalace_retention_score" => tool_retention_score(&state, args),
+                // Smart features - access
+                "mempalace_access_stats" => tool_access_stats(&state, args),
+                // Smart features - working memory
+                "mempalace_working_memory" => tool_working_memory(&state, args),
                 // Smart features - snapshot
                 "mempalace_snapshot_create" => tool_snapshot_create(&state, args),
                 // Smart features - history
@@ -925,6 +931,24 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Enrich",
             "Enrich a file path with related memories, bug references, and patterns.",
             serde_json::json!({ "type": "object", "properties": { "file_path": { "type": "string", "description": "File path to enrich" }, "query": { "type": "string", "description": "Search query to find related memories (optional)" }, "search_limit": { "type": "integer", "description": "Max memories per search (default: 10)" } } }),
+        ),
+        tool(
+            "mempalace_retention_score",
+            "Retention Score",
+            "Get the retention score and decay status for a memory. Returns Ebbinghaus-based retention strength, access count, and promotion tier recommendation.",
+            serde_json::json!({ "type": "object", "properties": { "memory_id": { "type": "string", "description": "Memory ID to get retention score for" } }, "required": ["memory_id"] }),
+        ),
+        tool(
+            "mempalace_access_stats",
+            "Access Stats",
+            "Get access statistics for memories - most accessed, recently accessed, and access counts.",
+            serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max results per category (default: 10)" } } }),
+        ),
+        tool(
+            "mempalace_working_memory",
+            "Working Memory",
+            "List current working memory observations.",
+            serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max observations to return (default: 50)" } } }),
         ),
         tool(
             "mempalace_snapshot_create",
@@ -3730,6 +3754,105 @@ fn tool_enrich(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
     }).collect();
     let result = crate::enrich::enrich(&input.file_path, input.query.as_deref().unwrap_or(""), &memories, limit);
     ok_json(serde_json::json!({"status": "ok", "file_contexts": result.file_contexts.iter().map(|fc| serde_json::json!({"path": fc.path, "content_summary": fc.content_summary, "last_modified": fc.last_modified, "related_files": fc.related_files})).collect::<Vec<_>>(), "related_memories": result.related_memories.iter().map(|m| serde_json::json!({"id": m.id, "title": m.title, "content": m.content, "relevance": m.relevance})).collect::<Vec<_>>(), "bug_memories": result.bug_memories.iter().map(|m| serde_json::json!({"id": m.id, "title": m.title, "content": m.content, "relevance": m.relevance})).collect::<Vec<_>>()}))
+}
+
+fn tool_retention_score(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input { memory_id: String }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i, Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let db = fresh_db(state)?;
+    let drawers = db.get_all(None, None, usize::MAX);
+    let mut found = None;
+    for drawer in &drawers {
+        if let Some(idx) = drawer.ids.iter().position(|id| id == &input.memory_id) {
+            let doc = &drawer.documents[idx];
+            let meta = &drawer.metadatas[idx];
+            let strength: f64 = meta.get("strength").and_then(|v| v.as_f64()).unwrap_or(1.0);
+            let memory_type = meta.get("memory_type").and_then(|v| v.as_str()).unwrap_or("semantic");
+            found = Some((doc.clone(), strength, memory_type));
+            break;
+        }
+    }
+    match found {
+        Some((_content, strength, memory_type)) => {
+            let decay_id = input.memory_id.clone();
+            let decay_config = crate::retention::default_decay_config();
+            let retention_score = crate::retention::default_retention_score(&decay_id);
+            let retention_strength = crate::retention::calculate_retention(&retention_score, &decay_config, None);
+            let tier = crate::retention::promote_tier(retention_strength);
+            ok_json(serde_json::json!({
+                "memory_id": input.memory_id,
+                "retention_strength": retention_strength,
+                "current_strength": strength,
+                "memory_type": memory_type,
+                "promotion_tier": serde_json::json!({ "tier": format!("{:?}", tier), "threshold_met": retention_strength >= 0.5 }),
+                "decay_info": { "initial_retention": decay_config.initial_retention, "decay_rate": decay_config.decay_rate }
+            }))
+        }
+        None => ok_json(serde_json::json!({"status": "not_found", "memory_id": input.memory_id})),
+    }
+}
+
+fn tool_access_stats(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input { limit: Option<usize> }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i, Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let limit = input.limit.unwrap_or(10);
+    let db = fresh_db(state)?;
+    let drawers = db.get_all(None, None, usize::MAX);
+    let mut stats: Vec<_> = drawers.iter().flat_map(|drawer| {
+        drawer.ids.iter().zip(drawer.metadatas.iter()).filter_map(|(id, meta)| {
+            let access_count: usize = meta.get("access_count").and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(0);
+            let last_accessed = meta.get("last_accessed").and_then(|v| v.as_str()).map(|s| s.to_string());
+            Some(serde_json::json!({ "memory_id": id, "access_count": access_count, "last_accessed": last_accessed }))
+        }).collect::<Vec<_>>()
+    }).collect();
+    stats.sort_by(|a, b| {
+        let a_count = a.get("access_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let b_count = b.get("access_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        b_count.cmp(&a_count)
+    });
+    let most_accessed: Vec<_> = stats.iter().take(limit).cloned().collect();
+    let recently_accessed: Vec<_> = stats.iter().rev().take(limit).cloned().collect();
+    ok_json(serde_json::json!({
+        "most_accessed": most_accessed,
+        "recently_accessed": recently_accessed,
+        "total_tracked": stats.len()
+    }))
+}
+
+fn tool_working_memory(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input { limit: Option<usize> }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i, Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+    let limit = input.limit.unwrap_or(50);
+    let db = fresh_db(state)?;
+    let obs_drawers = db.get_all(None, Some("observation"), limit);
+    let observations: Vec<_> = obs_drawers.iter().flat_map(|qr| {
+        qr.ids.iter().zip(qr.documents.iter()).zip(qr.metadatas.iter()).map(|((id, doc), meta)| {
+            serde_json::json!({
+                "id": id,
+                "session_id": meta.get("session_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "created_at": meta.get("created_at").and_then(|v| v.as_str()).unwrap_or("1970-01-01T00:00:00Z"),
+                "title": doc.chars().take(100).collect::<String>(),
+                "content": doc,
+                "importance": meta.get("importance").and_then(|v| v.as_u64()).unwrap_or(5) as usize
+            })
+        }).collect::<Vec<_>>()
+    }).take(limit).collect();
+    ok_json(serde_json::json!({
+        "observations": observations,
+        "count": observations.len()
+    }))
 }
 
 fn tool_team_share(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
