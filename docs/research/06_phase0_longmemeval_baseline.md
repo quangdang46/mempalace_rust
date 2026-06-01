@@ -146,3 +146,79 @@ scoring code **must** bump it and refresh this document.
 
 This is the number `README.md` should quote until the Phase 1 native
 embedder lands and we re-baseline.
+
+---
+
+## Re-measure attempt (2026-06-01, partial, vector-wired mainline)
+
+> Status: **PARTIAL — 12 / 500 questions completed** before the run was
+> stopped for budget. Path exercised is the **vector-wired mainline**
+> (`searcher::search_memories` → `open_for_search` → real BGE-small
+> embedder) — *not* the naive Jaccard path measured above.
+
+### Why partial
+
+The full 500-question run is single-threaded in the current harness
+(concurrency control is documented as aspirational in
+`crates/bench/src/longmemeval_harness.rs:20` but not implemented in
+`crates/bench/src/bin/longmemeval-bench.rs`). Measured per-question
+wall time against the wired path: **~32.8 s** (see `elapsed_ms` in the
+NDJSON). That puts a full run at **~4.5 hours** wall-clock, which is
+beyond the agent run-budget.
+
+The run was stopped at N=12; all 12 happen to be
+`single-session-user` questions (the first 12 in the dataset, since
+the harness doesn't shuffle). That category is the **worst case** for
+both the lexical baseline *and* the vector baseline (the answer is in
+the user turn, the question paraphrases it lexically).
+
+### Partial numbers
+
+| Metric | Re-measure (12/500, single-session-user) | Naive baseline above (500/500, all types) | Python upstream (vendor) |
+|---|---|---|---|
+| Recall@5 | **0.0833** | 0.143 (single-session-user, 70 q) | 0.966 (all types) |
+| Recall@10 | **0.0833** | 0.214 (single-session-user, 70 q) | — |
+| MRR | **0.0833** | 0.103 (single-session-user, 70 q) | — |
+| Mean wall-time per question | 32.8 s | 4.3 ms | — |
+
+### Interpretation
+
+The vector-wired path is **2-3 orders of magnitude slower per question**
+than the lexical baseline (32.8 s vs 4.3 ms) — every question triggers
+a full palace re-open and `sync_embeddings` re-embed of all stored
+text in the BGE-small ONNX runtime. At 500 questions, that's the
+wall-time cost of the fix.
+
+**Recall on single-session-user is, surprisingly, *worse* with vectors
+(0.083) than with the naive keyword overlap (0.143) on the same
+question type.** This is consistent with what
+`docs/research/04_…_gaps.md` warns: BGE-small at 384-d does not capture
+the *temporal anchoring* of "what city did I say I'd visit?" against
+"flying to Madrid for a conference next week" — the vector similarity
+between those two sentences is low because BGE-small does not weigh
+the future-tense user commitment as strongly as a BM25 retriever
+weights the lexical token "Madrid".
+
+This single-type result is **not a representative re-baseline**. It
+is evidence that the wired path *runs* (catches no error, returns
+retrievals, scores are well-formed) and that the throughput needs a
+fix before a defensible 500-question number can be claimed.
+
+### To complete the re-baseline (follow-up)
+
+Two changes, both small:
+
+1. **Concurrency** in `longmemeval-harness.rs` (the harness accepts
+   `&entries` and could trivially `futures::stream::iter(...).buffer_unordered(N).try_collect()`
+   over the per-question loop). With N=4 and BGE-small at 2 GB RAM per
+   palace, a 4-way parallel run should land at ~10 min total.
+2. **Open once, query many.** `open_for_search` is called per question
+   (per the harness contract that wipes the palace between questions).
+   For R@5 against the same haystack, the *right* shape is to mine once
+   and call `query_sync` / `hybrid_search` N times — but the bench
+   contract forbids that, because per-question palace isolation is the
+   thing that makes R@k meaningful.
+
+Once (1) is in, bump `HARNESS_VERSION` to `mp-003.v2`, rerun the full
+500, and replace the table above. The new R@5 will be the number
+`README.md` should quote.
