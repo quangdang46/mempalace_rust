@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
+use crate::export::disk_size_manager::DiskSizeManager;
 use crate::mcp_server::AppState;
 use crate::palace_db::MemorySlot;
 use rmcp::model::{CallToolResult, Content, JsonObject, RawContent};
@@ -31,6 +32,7 @@ use serde_json::json;
 pub struct HttpServerState {
     pub app_state: Arc<AppState>,
     pub read_only: bool,
+    pub disk_size_manager: Arc<Mutex<DiskSizeManager>>,
 }
 
 type SharedState = Arc<Mutex<HttpServerState>>;
@@ -1177,6 +1179,704 @@ async fn mesh_sync_handler(
 }
 
 // ---------------------------------------------------------------------------
+// P0: Session, Summarize, Forget, Remember, Liveness, Config-Flags
+// ---------------------------------------------------------------------------
+
+async fn session_start_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_session_start", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn session_end_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_session_end", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn summarize_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_summarize", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn forget_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_governance_delete", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn remember_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_save", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn liveness_handler() -> Json<serde_json::Value> {
+    Json(json!({
+        "status": "alive",
+        "service": "mempalace-rest-api",
+    }))
+}
+
+async fn config_flags_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_config_flags", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+// ---------------------------------------------------------------------------
+// P1: Semantic/Procedural Lists, Auto-Forget, Auto-Crystallize, Flow-Compress,
+//      Replay, Snapshots, Governance, Sentinel, Insight, Lesson, Action, Lease, Routine
+// ---------------------------------------------------------------------------
+
+async fn semantic_list_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_semantic_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn semantic_list_post_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_semantic_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn procedural_list_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_procedural_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn procedural_list_post_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_procedural_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn auto_forget_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_auto_forget", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn auto_crystallize_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_auto_crystallize", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn flow_compress_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_flow_compress", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn replay_sessions_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_replay_sessions", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn replay_load_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_replay_load", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn snapshots_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_snapshot_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn snapshot_restore_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_snapshot_restore", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn governance_bulk_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_governance_bulk", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn sentinel_cancel_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_sentinel_cancel", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn sentinel_check_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_sentinel_check", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn insight_search_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_insight_search", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn lesson_search_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_lesson_search", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn lesson_list_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_lesson_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn lesson_strengthen_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_lesson_strengthen", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn action_edge_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_action_edge", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn lease_acquire_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let mut args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    args.insert("operation".to_string(), serde_json::Value::String("acquire".to_string()));
+    let result = invoke_tool(&state_guard, "mempalace_lease", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn lease_release_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let mut args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    args.insert("operation".to_string(), serde_json::Value::String("release".to_string()));
+    let result = invoke_tool(&state_guard, "mempalace_lease", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn lease_renew_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let mut args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    args.insert("operation".to_string(), serde_json::Value::String("renew".to_string()));
+    let result = invoke_tool(&state_guard, "mempalace_lease", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn routine_create_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_routine_create", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn routine_list_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_routine_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn routine_status_handler(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = json!({ "routine_id": id }).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_routine_status", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+// ---------------------------------------------------------------------------
+// P2: Team Profile, Mesh, Action, Cascade, Rules, Evolve, Disk-Size,
+//      Sketch, Crystal, Facet, Branch, Vision
+// ---------------------------------------------------------------------------
+
+async fn team_profile_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_team_profile", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn mesh_register_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_mesh_register", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn mesh_list_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_mesh_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn mesh_export_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_mesh_export", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn mesh_receive_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_mesh_receive", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn action_list_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_frontier", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn action_get_handler(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = json!({ "action_id": id }).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_action_get", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn cascade_update_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_cascade_update", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn generate_rules_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_generate_rules", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn evolve_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_evolve", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn disk_size_manager_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let manager = state_guard.disk_size_manager.lock().await;
+    Ok(Json(json!({
+        "current_bytes": manager.current_bytes(),
+        "max_bytes": manager.max_bytes(),
+        "remaining_bytes": manager.remaining_bytes(),
+        "is_over_quota": manager.is_over_quota(),
+    })))
+}
+
+async fn sketch_add_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_sketch_add", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn sketch_discard_handler(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = json!({ "sketch_id": id }).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_sketch_discard", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn sketch_gc_handler(
+    State(state): State<SharedState>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_sketch_gc", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn crystal_list_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_crystal_list", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn facet_get_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_facet_get", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn facet_stats_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_facet_stats", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn facet_untag_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::response::Response, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_facet_untag", args).await;
+    Ok(tool_result_to_response(result))
+}
+
+async fn branch_detect_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_branch_detect", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn branch_sessions_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(json!({ "params": params }))
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_branch_sessions", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn branch_worktrees_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args = json!({}).as_object().unwrap().clone();
+    let result = invoke_tool(&state_guard, "mempalace_branch_worktrees", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+async fn vision_embed_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state_guard = state.lock().await;
+    let args: JsonObject = serde_json::to_value(body)
+        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .as_object()
+        .unwrap()
+        .clone();
+    let result = invoke_tool(&state_guard, "mempalace_vision_embed", args).await?;
+    Ok(Json(text_content_to_json(result)))
+}
+
+// ---------------------------------------------------------------------------
 // SSE Transport (P13) - simplified placeholder
 // ---------------------------------------------------------------------------
 
@@ -1307,6 +2007,65 @@ fn build_router(state: SharedState) -> Router {
         .route("/heal", post(heal_handler))
         .route("/verify", post(verify_handler))
         .route("/mesh/sync", post(mesh_sync_handler))
+        // P0: Session, Summarize, Forget, Remember, Liveness, Config-Flags
+        .route("/session/start", post(session_start_handler))
+        .route("/session/end", post(session_end_handler))
+        .route("/summarize", post(summarize_handler))
+        .route("/forget", post(forget_handler))
+        .route("/remember", post(remember_handler))
+        .route("/liveness", get(liveness_handler))
+        .route("/config-flags", get(config_flags_handler))
+        // P1: Semantic/Procedural Lists, Auto-Forget, Auto-Crystallize, Flow-Compress,
+        //      Replay, Snapshots, Governance, Sentinel, Insight, Lesson, Action, Lease, Routine
+        .route("/semantic-list", get(semantic_list_handler))
+        .route("/semantic-list", post(semantic_list_post_handler))
+        .route("/procedural-list", get(procedural_list_handler))
+        .route("/procedural-list", post(procedural_list_post_handler))
+        .route("/auto-forget", post(auto_forget_handler))
+        .route("/auto-crystallize", post(auto_crystallize_handler))
+        .route("/flow-compress", post(flow_compress_handler))
+        .route("/replay/sessions", get(replay_sessions_handler))
+        .route("/replay/load", get(replay_load_handler))
+        .route("/snapshots", get(snapshots_handler))
+        .route("/snapshot/restore", post(snapshot_restore_handler))
+        .route("/governance/bulk", post(governance_bulk_handler))
+        .route("/sentinel/cancel", post(sentinel_cancel_handler))
+        .route("/sentinel/check", post(sentinel_check_handler))
+        .route("/insight/search", get(insight_search_handler))
+        .route("/lesson/search", get(lesson_search_handler))
+        .route("/lesson/list", get(lesson_list_handler))
+        .route("/lesson/strengthen", post(lesson_strengthen_handler))
+        .route("/action/edge", post(action_edge_handler))
+        .route("/lease/acquire", post(lease_acquire_handler))
+        .route("/lease/release", post(lease_release_handler))
+        .route("/lease/renew", post(lease_renew_handler))
+        .route("/routine/create", post(routine_create_handler))
+        .route("/routine/list", get(routine_list_handler))
+        .route("/routine/status/{id}", get(routine_status_handler))
+        // P2: Team Profile, Mesh, Action, Cascade, Rules, Evolve, Disk-Size,
+        //      Sketch, Crystal, Facet, Branch, Vision
+        .route("/team/profile", get(team_profile_handler))
+        .route("/mesh/register", post(mesh_register_handler))
+        .route("/mesh/list", get(mesh_list_handler))
+        .route("/mesh/export", get(mesh_export_handler))
+        .route("/mesh/receive", post(mesh_receive_handler))
+        .route("/action/list", get(action_list_handler))
+        .route("/action/{id}", get(action_get_handler))
+        .route("/cascade-update", post(cascade_update_handler))
+        .route("/generate-rules", post(generate_rules_handler))
+        .route("/evolve", post(evolve_handler))
+        .route("/disk-size-manager", get(disk_size_manager_handler))
+        .route("/sketch/add", post(sketch_add_handler))
+        .route("/sketch/discard/{id}", get(sketch_discard_handler))
+        .route("/sketch/gc", get(sketch_gc_handler))
+        .route("/crystal/list", get(crystal_list_handler))
+        .route("/facet/get", get(facet_get_handler))
+        .route("/facet/stats", get(facet_stats_handler))
+        .route("/facet/untag", post(facet_untag_handler))
+        .route("/branch/detect", post(branch_detect_handler))
+        .route("/branch/sessions", get(branch_sessions_handler))
+        .route("/branch/worktrees", get(branch_worktrees_handler))
+        .route("/vision/embed", post(vision_embed_handler))
         // SSE Transport (P13)
         .route("/sse", get(sse_handler))
         .route("/mcp", post(mcp_handler))
@@ -1320,9 +2079,12 @@ pub async fn run_http_server(
     read_only: bool,
     port: u16,
 ) -> anyhow::Result<()> {
+    // Default 10GB disk quota for the REST API disk size tracker
+    let disk_size_manager = DiskSizeManager::new(10 * 1024 * 1024 * 1024);
     let state = Arc::new(Mutex::new(HttpServerState {
         app_state,
         read_only,
+        disk_size_manager: Arc::new(Mutex::new(disk_size_manager)),
     }));
 
     let addr = format!("0.0.0.0:{}", port);

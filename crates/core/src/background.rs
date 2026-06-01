@@ -74,11 +74,11 @@ impl BackgroundRunner {
         }
 
         // Simple heuristic: if memory is older than 90 days, consider forgetting
-        let now = Utc::now();
-        let decay_days = 90_i64;
+        let _now = Utc::now();
+        let _decay_days = 90_i64;
         let mut forgettable_ids = Vec::new();
 
-        for id in memory_ids {
+        for id in &memory_ids {
             // PalaceDb doesn't track created_at per memory, so we use a simple approach:
             // forget memories that have been around for a while (using knowledge graph age as proxy)
             // For now, just limit to a reasonable number to prevent memory bloat

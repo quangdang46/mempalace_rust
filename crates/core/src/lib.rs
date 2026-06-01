@@ -16,6 +16,7 @@ pub mod doctor;
 pub mod knowledge_graph;
 pub mod layers;
 pub mod mcp_server;
+pub mod mcp;
 pub mod miner;
 pub mod onboarding;
 pub mod searcher;
@@ -206,6 +207,10 @@ pub mod verify;
 pub mod heal;
 #[doc(hidden)]
 pub mod obsidian_export;
+#[doc(hidden)]
+pub mod flow_compress;
+#[doc(hidden)]
+pub mod cascade;
 
 // =====================================================================
 // Background task runner (internal)

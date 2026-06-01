@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 /// BM25 ranking parameters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct Bm25Params {
     /// k1 parameter - term frequency saturation (default: 1.2)
@@ -131,6 +131,63 @@ impl Bm25Scorer {
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         scored
+    }
+
+    /// Persist BM25 index to a JSON file for faster startup on subsequent runs.
+    ///
+    /// Saves doc_freqs, total_docs, avg_doc_length, and params.
+    /// Returns error if serialization fails or file cannot be written.
+    pub fn persist_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        #[derive(serde::Serialize)]
+        struct PersistedBm25 {
+            params: Bm25Params,
+            doc_freqs: Vec<(String, usize)>,
+            total_docs: usize,
+            avg_doc_length: f64,
+        }
+
+        let persisted = PersistedBm25 {
+            params: self.params.clone(),
+            doc_freqs: self.doc_freqs.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            total_docs: self.total_docs,
+            avg_doc_length: self.avg_doc_length,
+        };
+
+        let json = serde_json::to_string_pretty(&persisted)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(path, json)
+    }
+
+    /// Load BM25 index from a JSON file.
+    ///
+    /// Returns `Ok(None)` if the file doesn't exist (index needs building).
+    /// Returns `Ok(Some(scorer))` if loaded successfully.
+    /// Returns `Err` on file read/parse errors.
+    pub fn load_from_file(path: &std::path::Path) -> std::io::Result<Option<Self>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        #[derive(serde::Deserialize)]
+        struct PersistedBm25 {
+            params: Bm25Params,
+            doc_freqs: Vec<(String, usize)>,
+            total_docs: usize,
+            avg_doc_length: f64,
+        }
+
+        let content = std::fs::read_to_string(path)?;
+        let persisted: PersistedBm25 = serde_json::from_str(&content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let doc_freqs: HashMap<String, usize> = persisted.doc_freqs.into_iter().collect();
+
+        Ok(Some(Self {
+            params: persisted.params,
+            doc_freqs,
+            total_docs: persisted.total_docs,
+            avg_doc_length: persisted.avg_doc_length,
+        }))
     }
 }
 

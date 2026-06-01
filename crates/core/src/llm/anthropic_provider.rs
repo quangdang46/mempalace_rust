@@ -1,6 +1,6 @@
 //! Anthropic Claude provider.
 //!
-//! POST to Anthropic Messages API.
+//! POST to Anthropic Messages API + embeddings endpoint.
 
 use super::provider::{LlmCompletion, LlmError, LlmProvider, LlmUsage};
 use async_trait::async_trait;
@@ -48,6 +48,12 @@ impl AnthropicProvider {
 
     pub fn from_env() -> Self {
         Self::new(AnthropicConfig::default())
+    }
+
+    /// Get the embedding model name from config or environment.
+    fn embedding_model(&self) -> String {
+        std::env::var("ANTHROPIC_EMBEDDING_MODEL")
+            .unwrap_or_else(|_| "voyage-3.5".to_string())
     }
 }
 
@@ -212,6 +218,58 @@ impl LlmProvider for AnthropicProvider {
             return Err("ANTHROPIC_API_KEY not set".to_string());
         }
         Ok(())
+    }
+
+    async fn embed_text(&self, text: &str) -> Result<Vec<f32>, LlmError> {
+        let api_key = self.config.api_key.as_ref().ok_or_else(|| LlmError::MissingApiKey {
+            provider: self.name().to_string(),
+        })?;
+
+        let embedding_model = self.embedding_model();
+        let body = serde_json::json!({
+            "model": embedding_model,
+            "input": text,
+        });
+
+        let resp = self
+            .client
+            .post("https://api.anthropic.com/v1/embeddings")
+            .header("Content-Type", "application/json")
+            .header("X-API-Key", api_key)
+            .header("anthropic-version", ANTHROPIC_API_VERSION)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text_err = resp.text().await.unwrap_or_default();
+            return Err(LlmError::NonOk {
+                code: status.as_u16(),
+                message: if text_err.len() > 500 {
+                    text_err[..500].to_string()
+                } else {
+                    text_err
+                },
+            });
+        }
+
+        let data: serde_json::Value = resp.json().await?;
+
+        let embedding = data
+            .get("embedding")
+            .and_then(|e| e.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_f64())
+                    .map(|f| f as f32)
+                    .collect()
+            })
+            .ok_or_else(|| {
+                LlmError::Shape("no embedding array in response".to_string())
+            })?;
+
+        Ok(embedding)
     }
 }
 

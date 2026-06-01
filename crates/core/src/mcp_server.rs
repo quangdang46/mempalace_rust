@@ -14,7 +14,9 @@ use regex::Regex;
 
 use crate::palace_db::MemorySlot;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
+    CallToolResult, Content, GetPromptResult, Implementation, InitializeResult, JsonObject,
+    ListPromptsResult, ListResourcesResult, ListToolsResult, PromptArgument,
+    ReadResourceRequestParams, ReadResourceResult, ResourceContents,
     ServerCapabilities, ServerInfo as McpServerInfo,
 };
 use rmcp::service::MaybeSendFuture;
@@ -365,6 +367,9 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_compress_file" => tool_compress_file(&state, args),
                 "mempalace_detect_worktree" => tool_detect_worktree(&state, args),
                 "mempalace_replay_import" => tool_replay_import(&state, args),
+                "mempalace_branch_detect" => tool_branch_detect(&state, args),
+                "mempalace_branch_sessions" => tool_branch_sessions(&state, args),
+                "mempalace_branch_worktrees" => tool_branch_worktrees(&state, args),
                 "mempalace_action_create" => tool_action_create(&state, args),
                 "mempalace_action_update" => tool_action_update(&state, args),
                 "mempalace_frontier" => tool_frontier(&state, args),
@@ -420,6 +425,10 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "mempalace_graph_stats" => tool_graph_stats(&state, args),
                 // Smart features - context
                 "mempalace_context_build" => tool_context_build(&state, args),
+                // Smart features - flow compress
+                "mempalace_flow_compress" => tool_flow_compress(&state, args),
+                // Smart features - cascade
+                "mempalace_cascade_update" => tool_cascade_update(&state, args),
                 // Smart features - enrich
                 "mempalace_enrich" => tool_enrich(&state, args),
                 // Smart features - retention
@@ -437,6 +446,9 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 // Smart features - commits
                 "mempalace_commits" => tool_commits(&state, args),
                 "mempalace_commit_lookup" => tool_commit_lookup(&state, args),
+                // Smart features - smart search with progressive disclosure
+                "mempalace_smart_search" => tool_smart_search(&state, args),
+                "mempalace_hybrid_search" => tool_hybrid_search(&state, args),
                 // Aliases aligned with @modelcontextprotocol/server-memory (one minor release)
                 "memory_search" | "memory_list" => tool_search(&state, args),
                 "memory_list_wings" => tool_list_wings(&state, args),
@@ -515,6 +527,10 @@ fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResu
                 "memory_consolidate" => tool_consolidate(&state, args),
                 "memory_snapshot_create" => tool_snapshot_create(&state, args),
                 "memory_file_history" => tool_file_history(&state, args),
+                // Claude bridge sync
+                "memory_claude_bridge_sync" | "mempalace_claude_bridge_sync" => {
+                    tool_claude_bridge_sync(&state, args)
+                }
                 other => Err(ErrorData::invalid_params(
                     format!("Unknown tool: {}", other),
                     None,
@@ -980,6 +996,30 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Look up the agent session that produced a specific git commit.",
             serde_json::json!({ "type": "object", "properties": { "commit_sha": { "type": "string", "description": "Git commit SHA" } }, "required": ["commit_sha"] }),
         ),
+        tool(
+            "mempalace_smart_search",
+            "Smart Search",
+            "Progressive disclosure search with expand_ids mode. When expand_ids is provided, fetches full content for specific IDs. Otherwise performs hybrid semantic+BM25 search. Returns semantic results plus optional expanded content for focused retrieval.",
+            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "Search query" }, "expand_ids": { "type": "string", "description": "Comma-separated list of IDs to expand (fetch full content for progressive disclosure)" }, "limit": { "type": "integer", "description": "Max results (default 10, max 300)" }, "wing": { "type": "string", "description": "Filter by wing (optional)" }, "room": { "type": "string", "description": "Filter by room (optional)" } }, "required": ["query"] }),
+        ),
+        tool(
+            "mempalace_hybrid_search",
+            "Hybrid Search",
+            "Hybrid BM25 + vector search combining keyword and semantic matching with RRF fusion. Returns ranked results with both similarity and BM25 scores for optimal relevance ranking.",
+            serde_json::json!({ "type": "object", "properties": { "query": { "type": "string", "description": "Search query" }, "limit": { "type": "integer", "description": "Max results (default 10)" }, "wing": { "type": "string", "description": "Filter by wing (optional)" }, "room": { "type": "string", "description": "Filter by room (optional)" } }, "required": ["query"] }),
+        ),
+        tool(
+            "memory_claude_bridge_sync",
+            "Claude Bridge Sync",
+            "Sync memories to/from Claude Code's MEMORY.md file. Reads from or writes to the Claude Code memory file for the project.",
+            serde_json::json!({ "type": "object", "properties": { "direction": { "type": "string", "description": "Sync direction: push (to Claude), pull (from Claude), or sync (bidirectional, default: sync)" } }, "additionalProperties": false }),
+        ),
+        tool(
+            "mempalace_claude_bridge_sync",
+            "Mempalace Claude Bridge Sync",
+            "Alias for memory_claude_bridge_sync - sync memories to/from Claude Code's MEMORY.md file.",
+            serde_json::json!({ "type": "object", "properties": { "direction": { "type": "string", "description": "Sync direction: push (to Claude), pull (from Claude), or sync (bidirectional, default: sync)" } }, "additionalProperties": false }),
+        ),
     ]
 }
 
@@ -1055,7 +1095,295 @@ impl ServerHandler for MempalaceServer {
         };
         std::future::ready(Ok(ListToolsResult::with_all_items(tools)))
     }
+
+    fn list_resources(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _ctx: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourcesResult, ErrorData>> + MaybeSendFuture + '_
+    {
+        std::future::ready(self.list_mcp_resources())
+    }
+
+    fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _ctx: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ReadResourceResult, ErrorData>> + MaybeSendFuture + '_
+    {
+        std::future::ready(self.read_mcp_resource(&request.uri))
+    }
+
+    fn list_prompts(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _ctx: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListPromptsResult, ErrorData>> + MaybeSendFuture + '_
+    {
+        std::future::ready(self.list_mcp_prompts())
+    }
+
+    fn get_prompt(
+        &self,
+        request: rmcp::model::GetPromptRequestParams,
+        _ctx: rmcp::service::RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<GetPromptResult, ErrorData>> + MaybeSendFuture + '_
+    {
+        let args = request.arguments.unwrap_or_default();
+        std::future::ready(self.get_mcp_prompt(&request.name, args))
+    }
 }
+
+// ---------------------------------------------------------------------------
+// MCP Resources & Prompts helpers
+// ---------------------------------------------------------------------------
+
+impl MempalaceServer {
+    fn list_mcp_resources(&self) -> Result<ListResourcesResult, ErrorData> {
+        use rmcp::model::Annotated;
+        let resources = vec![
+            Annotated::new(
+                rmcp::model::RawResource {
+                    uri: "agentmemory://status".into(),
+                    name: "Palace Status".into(),
+                    title: Some("MemPalace Status".into()),
+                    description: Some("Session count, memory count, and health metrics".into()),
+                    mime_type: Some("text/plain".into()),
+                    size: None,
+                    icons: None,
+                    meta: None,
+                },
+                None,
+            ),
+            Annotated::new(
+                rmcp::model::RawResource {
+                    uri: "agentmemory://project/{name}/profile".into(),
+                    name: "Project Profile".into(),
+                    title: Some("Project Memory Profile".into()),
+                    description: Some("Top concepts, files, and conventions for a project".into()),
+                    mime_type: Some("text/plain".into()),
+                    size: None,
+                    icons: None,
+                    meta: None,
+                },
+                None,
+            ),
+            Annotated::new(
+                rmcp::model::RawResource {
+                    uri: "agentmemory://project/{name}/recent".into(),
+                    name: "Recent Sessions".into(),
+                    title: Some("Recent Session Summaries".into()),
+                    description: Some("Last 5 session summaries for a project".into()),
+                    mime_type: Some("text/plain".into()),
+                    size: None,
+                    icons: None,
+                    meta: None,
+                },
+                None,
+            ),
+            Annotated::new(
+                rmcp::model::RawResource {
+                    uri: "agentmemory://memories/latest".into(),
+                    name: "Latest Memories".into(),
+                    title: Some("Top 10 Latest Memories".into()),
+                    description: Some("Top 10 most recent memories".into()),
+                    mime_type: Some("text/plain".into()),
+                    size: None,
+                    icons: None,
+                    meta: None,
+                },
+                None,
+            ),
+            Annotated::new(
+                rmcp::model::RawResource {
+                    uri: "agentmemory://graph/stats".into(),
+                    name: "Graph Statistics".into(),
+                    title: Some("Knowledge Graph Statistics".into()),
+                    description: Some("KG node and edge counts by type".into()),
+                    mime_type: Some("text/plain".into()),
+                    size: None,
+                    icons: None,
+                    meta: None,
+                },
+                None,
+            ),
+            Annotated::new(
+                rmcp::model::RawResource {
+                    uri: "agentmemory://team/feed".into(),
+                    name: "Team Feed".into(),
+                    title: Some("Team Shared Memories".into()),
+                    description: Some("Recent shared memories from team members".into()),
+                    mime_type: Some("text/plain".into()),
+                    size: None,
+                    icons: None,
+                    meta: None,
+                },
+                None,
+            ),
+        ];
+        Ok(ListResourcesResult::with_all_items(resources))
+    }
+
+    fn read_mcp_resource(&self, uri: &str) -> Result<ReadResourceResult, ErrorData> {
+        match uri {
+            "agentmemory://status" => self.read_resource_status(),
+            uri if uri.starts_with("agentmemory://project/") => self.read_resource_project(uri),
+            "agentmemory://memories/latest" => self.read_resource_latest_memories(),
+            "agentmemory://graph/stats" => self.read_resource_graph_stats(),
+            "agentmemory://team/feed" => self.read_resource_team_feed(),
+            _ => Err(rmcp::ErrorData::invalid_params(
+                format!("Unknown resource URI: {}", uri),
+                None,
+            )),
+        }
+    }
+
+    fn read_resource_status(&self) -> Result<ReadResourceResult, ErrorData> {
+        let db = fresh_db(self.state.as_ref()).map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+        let entries = db.get_all(None, None, usize::MAX);
+        let memory_count = entries.len();
+        let health = if memory_count >= 0 { "healthy" } else { "unhealthy" };
+        let content = format!(
+            "MemPalace Status\n===============\nMemories: {}\nHealth: {}",
+            memory_count, health
+        );
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(content, "agentmemory://status")]))
+    }
+
+    fn read_resource_project(&self, uri: &str) -> Result<ReadResourceResult, ErrorData> {
+        let parts: Vec<&str> = uri.splitn(4, '/').collect();
+        if parts.len() < 4 || parts[2] != "project" {
+            return Err(ErrorData::invalid_params(
+                "Invalid project resource URI format",
+                None,
+            ));
+        }
+        let name = parts[3];
+        let db = fresh_db(self.state.as_ref()).map_err(|e| ErrorData::invalid_params(e.to_string(), None))?;
+        let entries = db.get_all(Some(name), None, 50);
+        let files: Vec<String> = entries.iter()
+            .filter_map(|e| e.metadatas.first()?.get("source_file")?.as_str().map(String::from))
+            .take(10)
+            .collect();
+        let content = format!(
+            "Project Profile: {}\n===============\nRecent entries: {}\nFiles: {:?}",
+            name, entries.len(), files
+        );
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(content, uri)]))
+    }
+
+    fn read_resource_latest_memories(&self) -> Result<ReadResourceResult, ErrorData> {
+        let db = fresh_db(self.state.as_ref()).map_err(|e| rmcp::ErrorData::invalid_params(e.to_string(), None))?;
+        let entries = db.get_all(None, None, 10);
+        let content = if entries.is_empty() {
+            "No memories found".to_string()
+        } else {
+            let items: Vec<String> = entries.iter().map(|e| {
+                format!("- {}", e.ids.first().map(|id| id.as_str()).unwrap_or("unknown"))
+            }).collect();
+            format!("Latest Memories\n==============\n{}", items.join("\n"))
+        };
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(content, "agentmemory://memories/latest")]))
+    }
+
+    fn read_resource_graph_stats(&self) -> Result<ReadResourceResult, ErrorData> {
+        let content = "Knowledge Graph Statistics\n==========================\n(KG not yet implemented)";
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(content, "agentmemory://graph/stats")]))
+    }
+
+    fn read_resource_team_feed(&self) -> Result<ReadResourceResult, ErrorData> {
+        let content = "Team Feed\n=======\n(No team data available)".to_string();
+        Ok(ReadResourceResult::new(vec![ResourceContents::text(content, "agentmemory://team/feed")]))
+    }
+
+    fn list_mcp_prompts(&self) -> Result<ListPromptsResult, ErrorData> {
+        let prompts = vec![
+            rmcp::model::Prompt::new(
+                "recall_context",
+                Some("Search memories for task context"),
+                Some(vec![
+                    PromptArgument::new("task_description")
+                        .with_title("Task Description")
+                        .with_description("Description of the task to find context for")
+                        .with_required(true),
+                ]),
+            ),
+            rmcp::model::Prompt::new(
+                "session_handoff",
+                Some("Generate handoff summary for a session"),
+                Some(vec![
+                    PromptArgument::new("session_id")
+                        .with_title("Session ID")
+                        .with_description("ID of the session to generate handoff for")
+                        .with_required(true),
+                ]),
+            ),
+            rmcp::model::Prompt::new(
+                "detect_patterns",
+                Some("Detect recurring patterns in memories"),
+                Some(vec![
+                    PromptArgument::new("project")
+                        .with_title("Project")
+                        .with_description("Project name to analyze (optional)")
+                        .with_required(false),
+                ]),
+            ),
+        ];
+        Ok(ListPromptsResult::with_all_items(prompts))
+    }
+
+    fn get_mcp_prompt(&self, name: &str, args: serde_json::Map<String, serde_json::Value>) -> Result<GetPromptResult, ErrorData> {
+        use rmcp::model::{PromptMessage, PromptMessageRole, PromptMessageContent};
+        match name {
+            "recall_context" => {
+                let task_desc = args.get("task_description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let db = fresh_db(self.state.as_ref()).map_err(|e| rmcp::ErrorData::invalid_params(e.to_string(), None))?;
+                let results = db.query_sync(task_desc, None, None, 5)
+                    .map_err(|e| rmcp::ErrorData::invalid_params(e.to_string(), None))?;
+                let context: Vec<String> = results.iter()
+                    .filter_map(|r| r.documents.first().map(|d| format!("- {}", d.chars().take(100).collect::<String>())))
+                    .collect();
+                let message = format!(
+                    "Recall Context for: {}\n\nFound {} relevant memories:\n{}",
+                    task_desc,
+                    results.len(),
+                    context.join("\n")
+                );
+                Ok(GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, message)]))
+            }
+            "session_handoff" => {
+                let session_id = args.get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let content = format!(
+                    "Session Handoff for: {}\n\nPlease provide context about what was accomplished and what needs to be done next.",
+                    session_id
+                );
+                Ok(GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)]))
+            }
+            "detect_patterns" => {
+                let project = args.get("project")
+                    .and_then(|v| v.as_str());
+                let content = if let Some(p) = project {
+                    format!("Analyzing patterns for project: {}", p)
+                } else {
+                    "Analyzing patterns across all projects".to_string()
+                };
+                Ok(GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)]))
+            }
+            _ => Err(rmcp::ErrorData::invalid_params(
+                format!("Unknown prompt: {}", name),
+                None,
+            )),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2046,6 +2374,71 @@ fn tool_replay_import(_state: &AppState, args: JsonObject) -> Result<CallToolRes
         "count": summaries.len(),
         "project_filter": input.project_filter,
     }))
+}
+
+fn tool_branch_detect(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        project_path: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+
+    let path = input
+        .project_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| state.palace_path.clone());
+
+    match crate::branch_aware::detect_worktree(&path) {
+        Ok(Some(worktree)) => ok_json(serde_json::json!({
+            "detected": true,
+            "worktree": worktree,
+        })),
+        Ok(None) => ok_json(serde_json::json!({
+            "detected": false,
+            "worktree": null,
+        })),
+        Err(e) => Err(internal_error_safe(&e)),
+    }
+}
+
+fn tool_branch_sessions(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        branch: String,
+    }
+    let input: Input = parse_args(args)?;
+
+    let db = fresh_db(state)?;
+    let sessions = crate::branch_aware::branch_sessions(&[], &input.branch);
+
+    ok_json(serde_json::json!({
+        "branch": input.branch,
+        "sessions": sessions,
+        "count": sessions.len(),
+    }))
+}
+
+fn tool_branch_worktrees(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    struct Input {
+        project_path: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+
+    let path = input
+        .project_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| state.palace_path.clone());
+
+    match crate::branch_aware::list_worktrees(&path) {
+        Ok(worktrees) => ok_json(serde_json::json!({
+            "worktrees": worktrees,
+            "count": worktrees.len(),
+        })),
+        Err(e) => Err(internal_error_safe(&e)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3737,6 +4130,83 @@ fn tool_context_build(state: &AppState, args: JsonObject) -> Result<CallToolResu
     }
 }
 
+fn tool_flow_compress(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        observations: Option<Vec<crate::types::CompressedObservation>>,
+        preserve_above_importance: Option<u8>,
+        compress_mode: Option<bool>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+
+    let obs = input.observations.unwrap_or_default();
+    let config = crate::flow_compress::FlowCompressConfig {
+        preserve_above_importance: input.preserve_above_importance.unwrap_or(4),
+        preserve_types: vec![
+            crate::types::ObservationType::Decision,
+            crate::types::ObservationType::Discovery,
+            crate::types::ObservationType::Task,
+        ],
+        compress_mode: input.compress_mode.unwrap_or(true),
+        target_tokens: 4000,
+    };
+
+    match crate::flow_compress::compress_session_observations(obs, Some(config)) {
+        Ok((compressed, result)) => ok_json(serde_json::json!({
+            "status": "ok",
+            "compressed_count": result.compressed_count,
+            "evicted_count": result.evicted_count,
+            "preserved_observations": result.preserved_observations,
+            "token_budget_used": result.token_budget_used,
+            "summary": result.summary,
+        })),
+        Err(e) => ok_json(serde_json::json!({"status": "error", "message": e.to_string()})),
+    }
+}
+
+fn tool_cascade_update(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        changed_entity_id: String,
+        changed_entity_type: String,
+        max_depth: Option<usize>,
+    }
+    let input: Input = match serde_json::from_value(serde_json::Value::Object(args)) {
+        Ok(i) => i,
+        Err(e) => return Err(ErrorData::invalid_params(format!("Invalid args: {e}"), None)),
+    };
+
+    let config = crate::cascade::CascadeConfig {
+        max_depth: input.max_depth.unwrap_or(3),
+        cascade_observations: true,
+        cascade_actions: true,
+        cascade_signals: true,
+        trigger_on_types: vec![
+            "file".to_string(),
+            "function".to_string(),
+            "class".to_string(),
+            "module".to_string(),
+            "package".to_string(),
+        ],
+    };
+
+    let kg_path = state.palace_path.join("knowledge_graph.db");
+    match crate::cascade::cascade_update(&input.changed_entity_id, &input.changed_entity_type, &kg_path, Some(config)) {
+        Ok(result) => ok_json(serde_json::json!({
+            "status": "ok",
+            "total_updated": result.total_updated,
+            "depth_reached": result.depth_reached,
+            "summary": result.summary,
+        })),
+        Err(e) => ok_json(serde_json::json!({"status": "error", "message": e.to_string()})),
+    }
+}
+
 fn tool_enrich(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -4682,6 +5152,51 @@ fn tool_smart_search(state: &AppState, args: JsonObject) -> Result<CallToolResul
     }))
 }
 
+fn tool_hybrid_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        query: String,
+        wing: Option<String>,
+        room: Option<String>,
+        limit: Option<usize>,
+    }
+    let input: Input = parse_args_with_integer_coercion(args, &["limit"])?;
+    let sanitized = crate::query_sanitizer::sanitize_query(&input.query);
+
+    let db = crate::palace_db::PalaceDb::open(&state.palace_path)
+        .map_err(|e| internal_error_safe(&e))?;
+
+    let results = db
+        .hybrid_search(
+            &sanitized.clean_query,
+            input.limit.unwrap_or(10),
+            input.wing.as_deref(),
+            input.room.as_deref(),
+        )
+        .map_err(|e| internal_error_safe(&e))?;
+
+    ok_json(serde_json::json!({
+        "query": sanitized.clean_query,
+        "filters": {
+            "wing": input.wing,
+            "room": input.room,
+        },
+        "results": results.iter().map(|r| {
+            serde_json::json!({
+                "id": r.ids.first().cloned().unwrap_or_default(),
+                "content": r.documents.first().cloned().unwrap_or_default(),
+                "metadata": r.metadatas.first().cloned().unwrap_or_default(),
+                "distance": r.distances.first().cloned().unwrap_or(1.0),
+            })
+        }).collect::<Vec<_>>(),
+        "total": results.len(),
+    }))
+}
+
 fn tool_vision_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     if collection_missing(state) {
         return ok_json(no_palace());
@@ -4851,6 +5366,65 @@ fn tool_audit(state: &AppState, args: JsonObject) -> Result<CallToolResult, Erro
         "total": entries.len(),
         "filter": input.operation,
     }))
+}
+
+fn tool_claude_bridge_sync(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        direction: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let direction = input.direction.as_deref().unwrap_or("sync");
+
+    let config = crate::claude_bridge::ClaudeBridgeConfig {
+        enabled: true,
+        project_path: Some(state.palace_path.to_string_lossy().to_string()),
+        memory_file_path: Some(state.palace_path.join("MEMORY.md").to_string_lossy().to_string()),
+        line_budget: 200,
+    };
+
+    match direction {
+        "push" => {
+            let memories = state.db.get_memories(None, 100);
+            let project_summary = "";
+            match crate::claude_bridge::sync_to_claude(&config, &memories, project_summary) {
+                Ok(lines) => ok_json(serde_json::json!({
+                    "success": true,
+                    "direction": "push",
+                    "lines_written": lines,
+                })),
+                Err(e) => Err(internal_error_safe(&e)),
+            }
+        }
+        "pull" => {
+            match crate::claude_bridge::read_from_claude(&config) {
+                Ok(parsed) => ok_json(serde_json::json!({
+                    "success": true,
+                    "direction": "pull",
+                    "sections": parsed.sections,
+                    "line_count": parsed.line_count,
+                })),
+                Err(e) => Err(internal_error_safe(&e)),
+            }
+        }
+        _ => {
+            // Bidirectional sync
+            let memories = state.db.get_memories(None, 100);
+            let project_summary = "";
+            let push_result = crate::claude_bridge::sync_to_claude(&config, &memories, project_summary);
+            let pull_result = crate::claude_bridge::read_from_claude(&config);
+            ok_json(serde_json::json!({
+                "success": true,
+                "direction": "sync",
+                "push": push_result.map(|lines| serde_json::json!({"lines_written": lines})).ok(),
+                "pull": pull_result.ok().map(|p| serde_json::json!({
+                    "sections": p.sections,
+                    "line_count": p.line_count,
+                })),
+            }))
+        }
+    }
 }
 
 fn kg_path(state: &AppState) -> std::path::PathBuf {

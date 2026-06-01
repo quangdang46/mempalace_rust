@@ -442,7 +442,7 @@ enum Commands {
 #[derive(Subcommand)]
 enum HookAction {
     Run {
-        #[arg(long, value_parser = ["session-start", "stop", "precompact"])]
+        #[arg(long, value_parser = ["session-start", "session-end", "stop", "precompact", "post-tool-use", "post-tool-failure", "prompt-submit", "notification", "subagent-start", "subagent-stop", "task-completed"])]
         hook: String,
         #[arg(long, value_parser = ["claude-code", "codex"])]
         harness: String,
@@ -1424,9 +1424,17 @@ fn run_hook(hook_name: &str, harness: &str) -> Result<()> {
     let data: serde_json::Value =
         serde_json::from_reader(io::stdin()).unwrap_or_else(|_| json!({}));
     let response = match hook_name {
-        "session-start" => hook_session_start_response(&data, harness)?,
+        "session-start" => crate::hooks_cli::hook_session_start_response(&data, harness)?,
+        "session-end" => crate::hooks_cli::hook_session_end_response(&data, harness)?,
         "stop" => hook_stop_response(&data, harness)?,
         "precompact" => hook_precompact_response(&data, harness)?,
+        "post-tool-use" => crate::hooks_cli::hook_post_tool_use_response(&data, harness)?,
+        "post-tool-failure" => crate::hooks_cli::hook_post_tool_failure_response(&data, harness)?,
+        "prompt-submit" => crate::hooks_cli::hook_prompt_submit_response(&data, harness)?,
+        "notification" => crate::hooks_cli::hook_notification_response(&data, harness)?,
+        "subagent-start" => crate::hooks_cli::hook_subagent_start_response(&data, harness)?,
+        "subagent-stop" => crate::hooks_cli::hook_subagent_stop_response(&data, harness)?,
+        "task-completed" => crate::hooks_cli::hook_task_completed_response(&data, harness)?,
         _ => anyhow::bail!("Unknown hook: {hook_name}"),
     };
     emit_json(response)

@@ -1,6 +1,88 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+/// CLIP image embedder.
+///
+/// To enable CLIP support, resolve the ort version conflict between
+/// `fastembed` (needs ort 2.0.0-rc.5) and `open_clip_inference` (needs ort 2.0.0-rc.12).
+/// When the conflict is resolved, add `embed-clip = ["dep:open_clip_inference"]` to Cargo.toml
+/// and re-enable this implementation.
+pub struct ClipEmbedder;
+
+impl ClipEmbedder {
+    /// Create a new CLIP embedder. Currently returns an error as feature is disabled.
+    pub fn new() -> anyhow::Result<Self> {
+        #[cfg(feature = "embed-clip")]
+        {
+            Ok(Self)
+        }
+        #[cfg(not(feature = "embed-clip"))]
+        {
+            anyhow::bail!("clip feature not enabled; rebuild with --features embed-clip")
+        }
+    }
+
+    /// Create with a specific model name.
+    pub fn with_model(_model_name: &str) -> anyhow::Result<Self> {
+        Self::new()
+    }
+
+    /// Create from a local ONNX model file path.
+    #[cfg(feature = "embed-clip")]
+    pub fn with_onnx_path(path: &std::path::Path) -> anyhow::Result<Self> {
+        let _ = path;
+        Ok(Self)
+    }
+
+    #[cfg(not(feature = "embed-clip"))]
+    pub fn with_onnx_path(_path: &std::path::Path) -> anyhow::Result<Self> {
+        anyhow::bail!("clip feature not enabled; rebuild with --features embed-clip")
+    }
+}
+
+impl EmbeddingProvider for ClipEmbedder {
+    fn name(&self) -> &str {
+        "clip"
+    }
+
+    fn dimensions(&self) -> usize {
+        512
+    }
+
+    fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+        #[cfg(feature = "embed-clip")]
+        {
+            todo!("implement with open_clip_inference")
+        }
+        #[cfg(not(feature = "embed-clip"))]
+        {
+            anyhow::bail!("clip feature not enabled; rebuild with --features embed-clip")
+        }
+    }
+
+    fn embed_batch(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        #[cfg(feature = "embed-clip")]
+        {
+            todo!("implement with open_clip_inference")
+        }
+        #[cfg(not(feature = "embed-clip"))]
+        {
+            anyhow::bail!("clip feature not enabled; rebuild with --features embed-clip")
+        }
+    }
+
+    fn embed_image(&self, _src: &str) -> Result<Vec<f32>> {
+        #[cfg(feature = "embed-clip")]
+        {
+            todo!("implement with open_clip_inference")
+        }
+        #[cfg(not(feature = "embed-clip"))]
+        {
+            anyhow::bail!("clip feature not enabled; rebuild with --features embed-clip")
+        }
+    }
+}
+
 /// Trait for embedding providers (text and image).
 /// Matches upstream EmbeddingProvider interface.
 pub trait EmbeddingProvider: Send + Sync {

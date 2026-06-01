@@ -89,4 +89,15 @@ pub trait LlmProvider: Send + Sync + 'static {
     /// Fast availability probe. Returns `true` if the provider is reachable
     /// and properly configured.
     async fn check_available(&self) -> Result<(), String>;
+
+    /// Generate embeddings for text using this provider's embedding model.
+    ///
+    /// Returns a vector of f32 values representing the text.
+    /// Default implementation returns an error — providers with embedding support override this.
+    async fn embed_text(&self, text: &str) -> Result<Vec<f32>, LlmError> {
+        Err(LlmError::Shape(format!(
+            "embed_text not supported by {}",
+            self.name()
+        )))
+    }
 }

@@ -2284,6 +2284,136 @@ impl PalaceDb {
         query_results
     }
 
+    /// Get memories as typed Memory structs from documents.
+    /// Falls back to constructing minimal Memory entries when metadata is incomplete.
+    pub fn get_memories(
+        &self,
+        wing: Option<&str>,
+        limit: usize,
+    ) -> Vec<crate::types::Memory> {
+        let results = self.get_all(wing, None, limit);
+        results
+            .into_iter()
+            .flat_map(|qr| {
+                qr.ids
+                    .into_iter()
+                    .zip(qr.documents.into_iter())
+                    .zip(qr.metadatas.into_iter())
+                    .filter_map(|((id, content), metadata)| {
+                        let title = metadata
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&id)
+                            .to_string();
+                        let created_at = metadata
+                            .get("created_at")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                            .unwrap_or_else(chrono::Utc::now);
+                        let updated_at = metadata
+                            .get("updated_at")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&chrono::Utc))
+                            .unwrap_or(created_at);
+                        let memory_type = metadata
+                            .get("memory_type")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str::<crate::types::MemoryType>(s).ok())
+                            .unwrap_or(crate::types::MemoryType::Semantic);
+                        let concepts = metadata
+                            .get("concepts")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                            .unwrap_or_default();
+                        let files = metadata
+                            .get("files")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                            .unwrap_or_default();
+                        let session_ids = metadata
+                            .get("session_ids")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                            .unwrap_or_default();
+                        let strength = metadata
+                            .get("strength")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.5);
+                        let version = metadata
+                            .get("version")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(1) as u32;
+                        let parent_id = metadata
+                            .get("parent_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let supersedes = metadata
+                            .get("supersedes")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                            .unwrap_or_default();
+                        let related_ids = metadata
+                            .get("related_ids")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                            .unwrap_or_default();
+                        let source_observation_ids = metadata
+                            .get("source_observation_ids")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                            .unwrap_or_default();
+                        let is_latest = metadata
+                            .get("is_latest")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                        let forget_after = metadata
+                            .get("forget_after")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                            .map(|dt| dt.with_timezone(&chrono::Utc));
+                        let image_ref = metadata
+                            .get("image_ref")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let agent_id = metadata
+                            .get("agent_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let project = metadata
+                            .get("project")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+
+                        Some(crate::types::Memory {
+                            id,
+                            created_at,
+                            updated_at,
+                            memory_type,
+                            title,
+                            content,
+                            concepts,
+                            files,
+                            session_ids,
+                            strength,
+                            version,
+                            parent_id,
+                            supersedes,
+                            related_ids,
+                            source_observation_ids,
+                            is_latest,
+                            forget_after,
+                            image_ref,
+                            agent_id,
+                            project,
+                        })
+                    })
+            })
+            .collect()
+    }
+
     /// Compute synonymy edges between rooms (mp-082).
     ///
     /// Groups drawers by (wing, room), computes word-overlap similarity

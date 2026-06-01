@@ -74,13 +74,13 @@ pub fn evaluate_memory(
                 memory_id: memory.id.clone(),
                 should_forget: true,
                 reason: ForgetReason::Expired,
-                current_retention: calculate_retention(retention_score, config, 0.5, Some(now)),
+                current_retention: calculate_retention(retention_score, config, Some(now)),
             };
         }
     }
 
     // Check retention threshold
-    let retention = calculate_retention(retention_score, config, 0.5, Some(now));
+    let retention = calculate_retention(retention_score, config, Some(now));
     if retention < auto_config.min_retention {
         return ForgetEvaluation {
             memory_id: memory.id.clone(),

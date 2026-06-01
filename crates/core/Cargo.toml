@@ -13,6 +13,8 @@ store-usearch = ["dep:usearch"]
 embed-fastembed = ["dep:fastembed"]
 embed-model2vec = ["dep:model2vec-rs"]
 embed-tract = ["dep:tract-onnx", "dep:tokenizers", "dep:ndarray"]
+# embed-clip disabled due to ort version conflict with fastembed (requires ort 2.0.0-rc.5 but fastembed needs 2.0.0-rc.12)
+# To enable: add open_clip_inference and image deps when ort conflict is resolved
 sync = []
 llm-openai = []
 llm-anthropic = []
@@ -72,6 +74,10 @@ ndarray = { version = "0.16", optional = true }
 # `usearch` for `UsearchSqliteStore` behind feature `store-usearch` (mp-085).
 # mmap'd HNSW index with SIMD + optional PQ/SQ8 quantisation.
 usearch = { workspace = true, optional = true }
+
+# Note: open_clip_inference is not added as a dependency because it conflicts
+# with fastembed's ort version. For CLIP image embeddings, use embed-clip feature
+# after resolving the ort version conflict (requires ort 2.0.0-rc.5 vs 2.0.0-rc.12).
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
