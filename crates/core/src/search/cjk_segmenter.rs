@@ -1,7 +1,11 @@
 //! CJK script-aware segmentation.
 //!
 //! Splits text on script boundaries (Han / Hiragana / Katakana / Hangul) for search indexing.
-//! No external CJK word-segmenters (jieba/lindera) are used — pure script-boundary splitting.
+//!
+//! When the `cjk-jieba` feature is enabled, [`segment_cjk_with_jieba`] additionally
+//! runs the Han script runs through `jieba-rs` to produce true Chinese word
+//! tokens (1:1 with agentmemory's jieba path). When the feature is disabled
+//! (the default), Han runs are kept as whole-script runs via [`segment_cjk`].
 
 use unicode_script::UnicodeScript;
 
@@ -155,6 +159,32 @@ pub fn segment_cjk(text: &str) -> Vec<String> {
     }
 
     tokens
+}
+
+/// True Chinese word segmentation via `jieba-rs`, 1:1 with agentmemory.
+///
+/// Falls back to [`segment_cjk`] (script-boundary splitting) for the
+/// non-Han runs (Hiragana, Katakana, Hangul, Latin, Other). Only the
+/// Han runs are passed through jieba for word-level tokens.
+#[cfg(feature = "cjk-jieba")]
+pub fn segment_cjk_with_jieba(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    // First split on script boundaries, then re-segment the Han runs
+    // through jieba for true Chinese word tokens.
+    let mut out: Vec<String> = Vec::new();
+    for run in segment_cjk(text) {
+        if detect_script(&run) == Script::Han {
+            // Use jieba's HMM mode for ambiguous words (jieba-rs default).
+            let jieba = jieba_rs::Jieba::new();
+            out.extend(jieba.cut(&run, true).into_iter().map(String::from));
+        } else {
+            out.push(run);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
