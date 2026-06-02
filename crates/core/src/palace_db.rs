@@ -2600,7 +2600,10 @@ impl EmbeddingDb {
         self.documents.push((id.to_string(), text.to_string()));
         self.storage.add(&embedding, None)?;
         self.hnsw.insert(idx, &embedding, &self.storage, None)?;
-        Ok(idx)
+        Ok(idx).inspect(|_| {
+            #[cfg(feature = "telemetry")]
+            crate::telemetry::counter!("mempalace_insert_total", "status" => "success").increment(1);
+        })
     }
 
     pub async fn add_batch(&mut self, items: &[(String, String)]) -> anyhow::Result<()> {

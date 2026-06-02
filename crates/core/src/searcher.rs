@@ -171,6 +171,9 @@ pub async fn search_memories_with_rerank(
     max_per_session: Option<usize>,
     fusion_mode: Option<FusionMode>,
 ) -> anyhow::Result<SearchResponse> {
+    #[cfg(feature = "telemetry")]
+    let _telemetry_start = std::time::Instant::now();
+
     let sanitized = crate::query_sanitizer::sanitize_query(query);
 
     // #1498: stratify so the caller's error message tells the user the
@@ -283,6 +286,15 @@ pub async fn search_memories_with_rerank(
             room: room.map(String::from),
         },
         results: search_results,
+    })
+    .inspect(|_| {
+        #[cfg(feature = "telemetry")]
+        {
+            crate::telemetry::counter!("mempalace_search_total", "status" => "success").increment(1);
+            crate::telemetry::histogram!("mempalace_search_latency_ms")
+                .record(_telemetry_start.elapsed().as_secs_f64() * 1000.0);
+        }
+        let _ = ();
     })
 }
 

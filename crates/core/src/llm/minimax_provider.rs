@@ -80,6 +80,9 @@ impl MinimaxProvider {
 #[async_trait]
 impl LlmProvider for MinimaxProvider {
     async fn complete(&self, system: &str, user: &str) -> Result<LlmCompletion, LlmError> {
+        #[cfg(feature = "telemetry")]
+        let _telemetry_start = std::time::Instant::now();
+
         let body = MinimaxRequest {
             model: &self.config.model,
             max_tokens: self.max_tokens_for_request(),
@@ -140,6 +143,19 @@ impl LlmProvider for MinimaxProvider {
             model: self.config.model.clone(),
             provider: self.name().to_string(),
             usage,
+        })
+        .inspect(|_| {
+            #[cfg(feature = "telemetry")]
+            {
+                // Dynamic model label is deferred: the `metrics` macro
+                // requires `&'static str` for label values. Suffix the
+                // counter name with the provider so Prometheus still
+                // distinguishes minimax/anthropic/openai calls.
+                crate::telemetry::counter!("mempalace_llm_total_minimax").increment(1);
+                crate::telemetry::histogram!("mempalace_llm_latency_ms")
+                    .record(_telemetry_start.elapsed().as_secs_f64() * 1000.0);
+            }
+            let _ = ();
         })
     }
 
