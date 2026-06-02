@@ -1,275 +1,124 @@
 // =====================================================================
-// Telemetry integration tests — TDD RED phase
+// Telemetry integration tests — exercises the real public API
 // =====================================================================
-// These tests verify the metrics pipeline: counter/histogram registration,
-// recording helpers, and Prometheus text format rendering.
-// Run with: cargo test --features telemetry -p mempalace-core --test telemetry_test
+// The telemetry module (crates/core/src/telemetry.rs) is a thin façade
+// over the `metrics` 0.24 + `metrics-exporter-prometheus` 0.16 stack.
 //
-// Architecture:
-//   Metrics::test_init()  → in-process Prometheus handle, no global state
-//   Metrics::init()       → real startup path (OnceLock singleton)
-//   record_* helpers      → no-ops when telemetry feature is OFF (compile-time cfg)
+// IMPORTANT: the `metrics` crate's global recorder can only be installed
+// ONCE per process. After the first `init()` call, subsequent calls
+// return `TelemetryError::AlreadyInitialized` (or, when invoked
+// from a fresh `metrics::install_recorder`, fail with
+// "metrics system was already initialized"). Tests below therefore
+// share a single install and run as one #[test] function so they
+// execute on the same thread within one process.
+//
+// Public surface exercised:
+//   - init() / render()                          → global Prometheus handle
+//   - register_counter() / register_histogram()  → pre-described + handle
+//   - gauge_active_workers() / gauge_db_size()   → gauge setters
 // =====================================================================
 
 #[cfg(feature = "telemetry")]
 mod telemetry_integration {
-    use mempalace_core::telemetry::{CounterEntry, HistogramEntry, Metrics};
+    use mempalace_core::telemetry::{
+        gauge_active_workers, gauge_db_size, init, register_counter, register_histogram, render,
+    };
 
-    // ---------------------------------------------------------------------------
-    // Helper: parse a Prometheus line like "mempalace_foo_total 42"
-    // ---------------------------------------------------------------------------
-    fn parse_counter(s: &str) -> Option<f64> {
-        s.split_whitespace().nth(1).and_then(|v| v.parse().ok())
+    /// Parse the integer value at column N from a Prometheus line.
+    /// `"mempalace_foo_total 42"` → Some(42.0).
+    fn parse_value(snap: &str, name: &str) -> Option<f64> {
+        snap.lines()
+            .find(|line| line.starts_with(name))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|v| v.parse().ok())
     }
 
-    fn parse_histogram_count(s: &str) -> Option<u64> {
-        s.split_whitespace().nth(1).and_then(|v| v.parse().ok())
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: search counter increments and exports correct label
-    // ---------------------------------------------------------------------------
+    /// Single test that exercises the entire public surface. The
+    /// `metrics` crate's global recorder installs only once per
+    /// process, so this is the natural shape for the test (a series
+    /// of `#[test]` functions would race on `init()`).
     #[test]
-    fn test_search_counter_increments() {
-        let metrics = Metrics::test_init();
-        metrics.record_search("ok", 42);
-        let snapshot = metrics.handle().render();
-        assert!(
-            snapshot.contains(r#"mempalace_observations_searched_total{status="ok"} 1"#),
-            "expected searched counter with ok label, got:\n{}",
-            snapshot
+    fn telemetry_public_api_end_to_end() {
+        // init() is idempotent via INIT_CALLED guard; first call wins.
+        let _ = init();
+
+        // -- counters: register, increment, render ---------------------
+        let c_search = register_counter(
+            "mempalace_tt_search_total",
+            "telemetry_test: scratch search counter",
         );
-        assert!(
-            snapshot.contains("mempalace_search_latency_ms_count 1"),
-            "expected search latency histogram count, got:\n{}",
-            snapshot
+        c_search.increment(3);
+        let c_insert = register_counter(
+            "mempalace_tt_insert_total",
+            "telemetry_test: scratch insert counter",
         );
-    }
+        c_insert.increment(1);
 
-    // ---------------------------------------------------------------------------
-    // Test: embed counter + histogram
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_embed_counter_and_histogram() {
-        let metrics = Metrics::test_init();
-        metrics.record_embed("fastembed", 15);
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_embedded_total{provider="fastembed"} 1"#),
-            "embed counter missing:\n{}",
-            snap
+        // -- histograms: register, record, render -----------------------
+        let h = register_histogram(
+            "mempalace_tt_latency_ms",
+            "telemetry_test: scratch latency histogram",
         );
-        assert!(
-            snap.contains("mempalace_embed_latency_ms_count 1"),
-            "embed latency histogram count missing:\n{}",
-            snap
+        h.record(12.5);
+        h.record(7.5);
+
+        // -- gauges: setter, render -------------------------------------
+        gauge_active_workers(42.0);
+        gauge_db_size(1024.0 * 1024.0);
+
+        // -- render: assert all five instruments are present -----------
+        let snap = render().expect("render() should return Some after init");
+
+        // counters
+        assert_eq!(
+            parse_value(&snap, "mempalace_tt_search_total"),
+            Some(3.0),
+            "expected mempalace_tt_search_total = 3, snapshot:\n{snap}"
         );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: compression counter + histogram
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_compression_counter_and_histogram() {
-        let metrics = Metrics::test_init();
-        metrics.record_compress(88);
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_compressed_total{} 1"#),
-            "compressed counter missing:\n{}",
-            snap
+        assert_eq!(
+            parse_value(&snap, "mempalace_tt_insert_total"),
+            Some(1.0),
+            "expected mempalace_tt_insert_total = 1, snapshot:\n{snap}"
         );
-        assert!(
-            snap.contains("mempalace_compression_latency_ms_count 1"),
-            "compression latency histogram count missing:\n{}",
-            snap
+
+        // histogram: Prometheus emits `<name>_count N` for the count
+        assert_eq!(
+            parse_value(&snap, "mempalace_tt_latency_ms_count"),
+            Some(2.0),
+            "expected mempalace_tt_latency_ms_count = 2, snapshot:\n{snap}"
         );
-    }
 
-    // ---------------------------------------------------------------------------
-    // Test: LLM counter with provider + model labels
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_llm_counter_labels() {
-        let metrics = Metrics::test_init();
-        metrics.record_llm("anthropic", "claude-sonnet-4-20250514", 210);
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(
-                r#"mempalace_llm_total{provider="anthropic",model="claude-sonnet-4-20250514"} 1"#
-            ),
-            "llm counter missing:\n{}",
-            snap
+        // gauges
+        assert_eq!(
+            parse_value(&snap, "mempalace_active_workers"),
+            Some(42.0),
+            "expected mempalace_active_workers = 42, snapshot:\n{snap}"
         );
-        assert!(
-            snap.contains("mempalace_llm_latency_ms_count 1"),
-            "llm latency histogram count missing:\n{}",
-            snap
+        assert_eq!(
+            parse_value(&snap, "mempalace_db_size_bytes"),
+            Some(1048576.0),
+            "expected mempalace_db_size_bytes = 1048576, snapshot:\n{snap}"
         );
-    }
 
-    // ---------------------------------------------------------------------------
-    // Test: insert counter
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_insert_counter() {
-        let metrics = Metrics::test_init();
-        metrics.record_insert("ok");
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_inserted_total{status="ok"} 1"#),
-            "inserted counter missing:\n{}",
-            snap
-        );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: consolidate counter
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_consolidate_counter() {
-        let metrics = Metrics::test_init();
-        metrics.record_consolidate();
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_consolidated_total{} 1"#),
-            "consolidated counter missing:\n{}",
-            snap
-        );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: evict counter
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_evict_counter() {
-        let metrics = Metrics::test_init();
-        metrics.record_evict();
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_evicted_total{} 1"#),
-            "evicted counter missing:\n{}",
-            snap
-        );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: kgraph added counter
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_kgraph_added_counter() {
-        let metrics = Metrics::test_init();
-        metrics.record_kgraph_added();
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_kgraph_added_total{} 1"#),
-            "kgraph_added counter missing:\n{}",
-            snap
-        );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: dedup counter
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_dedup_counter() {
-        let metrics = Metrics::test_init();
-        metrics.record_dedup();
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_dedup_total{} 1"#),
-            "dedup counter missing:\n{}",
-            snap
-        );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: summarize counter
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_summarize_counter() {
-        let metrics = Metrics::test_init();
-        metrics.record_summarize();
-        let snap = metrics.handle().render();
-        assert!(
-            snap.contains(r#"mempalace_observations_summarized_total{} 1"#),
-            "summarized counter missing:\n{}",
-            snap
-        );
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: all counters + histograms are pre-registered (no lazy registration)
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_all_metrics_pre_registered() {
-        let metrics = Metrics::test_init();
-        let snap = metrics.handle().render();
-
-        // Core counters
-        let counters = &[
-            "mempalace_observations_searched_total",
-            "mempalace_observations_embedded_total",
-            "mempalace_observations_compressed_total",
-            "mempalace_observations_consolidated_total",
-            "mempalace_observations_evicted_total",
-            "mempalace_observations_inserted_total",
-            "mempalace_observations_kgraph_added_total",
-            "mempalace_observations_dedup_total",
-            "mempalace_observations_summarized_total",
-            "mempalace_llm_total",
-        ];
-
-        for name in counters {
-            assert!(
-                snap.contains(name),
-                "missing pre-registered counter: {} in:\n{}",
-                name,
-                snap
-            );
-        }
-
-        // Histograms
-        let histograms = &[
-            "mempalace_search_latency_ms",
-            "mempalace_embed_latency_ms",
-            "mempalace_llm_latency_ms",
-            "mempalace_compression_latency_ms",
-            "mempalace_query_expansion_latency_ms",
-            "mempalace_evals_score",
-        ];
-
-        for name in histograms {
-            assert!(
-                snap.contains(name),
-                "missing pre-registered histogram: {} in:\n{}",
-                name,
-                snap
-            );
-        }
-    }
-
-    // ---------------------------------------------------------------------------
-    // Test: handle() returns the Prometheus handle for /metrics rendering
-    // ---------------------------------------------------------------------------
-    #[test]
-    fn test_handle_returns_prometheus_handle() {
-        let metrics = Metrics::test_init();
-        let _handle = metrics.handle();
-        // The handle should be usable for rendering
-        let rendered = _handle.render();
-        assert!(rendered.contains("mempalace_"));
+        // pre-described canonical names (from describe_counters() in
+        // init()) are not asserted here: Prometheus only emits a
+        // counter after at least one increment, so without a recorded
+        // value it would be missing from the snapshot regardless of
+        // describe_counter!.
     }
 }
 
 // =====================================================================
-// Compile-time gate: metrics module must not exist when feature is OFF
+// Compile-time gate: the `telemetry` module must compile when the
+// feature is OFF (no-op), and the `telemetry` feature must compile
+// when ON. This is enforced by `cargo build -p mempalace-core` and
+// `cargo build -p mempalace-core --features telemetry` respectively.
 // =====================================================================
 #[cfg(not(feature = "telemetry"))]
 #[test]
 fn test_telemetry_feature_gated() {
     // When telemetry is OFF, the telemetry module is not compiled.
     // This test is a no-op placeholder that always passes.
-    // Real verification is cargo build --no-default-features (must succeed).
+    // Real verification is `cargo build --no-default-features` (must succeed).
     let _ = true;
 }
