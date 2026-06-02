@@ -200,9 +200,7 @@ impl ClipImageEmbedder {
         let vectors = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Vec<f32>>> {
             // fastembed's contract: one `Embedding` per input path.
             // We trust that invariant and return the vector directly.
-            model
-                .embed(paths, None)
-                .context("clip: embed batch failed")
+            model.embed(paths, None).context("clip: embed batch failed")
         })
         .await
         .context("clip: blocking task panicked")??;
