@@ -18,7 +18,6 @@ pub mod consolidation_pipeline;
 pub mod constants;
 pub mod dialect;
 pub mod doctor;
-pub mod eval;
 pub mod evict;
 pub mod knowledge_graph;
 pub mod layers;
@@ -192,16 +191,6 @@ pub use health::{
     get_health_monitor, init_health_monitor, CheckResult, HealthCheck, HealthMonitor, HealthReport,
     HealthStatus,
 };
-
-// Telemetry — Prometheus metrics via the `metrics` façade (D1).
-// Feature-gated behind `telemetry`. Default-off to avoid pulling in
-// prometheus-exporter for pure-CLI builds.
-
-#[cfg(feature = "telemetry")]
-pub mod telemetry;
-
-#[cfg(feature = "telemetry")]
-pub use telemetry::{init, render, shutdown};
 
 // =====================================================================
 // Phase 8 — AgentMemory MCP expansion (internal, evolving)

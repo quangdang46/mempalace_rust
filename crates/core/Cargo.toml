@@ -8,7 +8,7 @@ repository.workspace = true
 description.workspace = true
 
 [features]
-default = ["embed-fastembed", "cjk-jieba"]
+default = ["embed-fastembed"]
 store-usearch = ["dep:usearch"]
 embed-fastembed = ["dep:fastembed"]
 embed-model2vec = ["dep:model2vec-rs"]
@@ -34,10 +34,6 @@ embed-cohere = []
 # 512-d, L2-normalised). Re-uses fastembed's `ort` so there is no version conflict with
 # the text-embedder path. See `embed::clip_embedder::ClipImageEmbedder` for the API.
 embed-clip = ["embed-fastembed"]
-# True Chinese word segmentation via jieba-rs (1:1 with agentmemory's
-# jieba/tiny-segmenter). When disabled, falls back to script-boundary
-# splitting via `unicode-script` (the default).
-cjk-jieba = ["dep:jieba-rs"]
 sync = []
 llm-openai = []
 llm-anthropic = []
@@ -45,7 +41,6 @@ coordination = []
 vision = []
 rerank = []
 full = ["llm-openai", "llm-anthropic", "coordination", "vision", "rerank"]
-telemetry = ["dep:metrics-exporter-prometheus", "dep:metrics"]
 health = ["dep:sysinfo"]
 
 [dependencies]
@@ -72,7 +67,6 @@ rmcp = { version = "1.3", features = ["transport-io"] }
 embedvec = "0.5"
 edgebert = "0.4"
 unicode-script = "0.5"
-jieba-rs = { version = "0.10", optional = true }
 signal-hook = "0.3"
 async-trait = { workspace = true }
 base64 = { workspace = true }
@@ -81,11 +75,6 @@ filetime = { workspace = true }
 bm25 = { version = "2.3", default-features = false, features = ["default_tokenizer"] }
 sysinfo = { version = "0.32", optional = true }
 rand = { workspace = true }
-
-# Prometheus exporter for metrics (telemetry feature).
-metrics-exporter-prometheus = { version = "0.16", optional = true }
-# metrics facade 0.24 — the public API surface.
-metrics = { version = "0.24", optional = true }
 
 # `fastembed-rs` powers `FastEmbedEmbedder` behind feature
 # `embed-fastembed` (mp-012). Pulls in `ort` (C++ ONNX Runtime) and
