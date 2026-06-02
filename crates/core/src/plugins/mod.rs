@@ -7,6 +7,8 @@
 //
 // All plugins start with enabled=false; use enable()/disable() to toggle.
 
+pub mod skills;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
