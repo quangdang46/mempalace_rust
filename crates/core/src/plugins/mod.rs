@@ -7,6 +7,7 @@
 //
 // All plugins start with enabled=false; use enable()/disable() to toggle.
 
+pub mod lifecycle;
 pub mod skills;
 
 use serde::{Deserialize, Serialize};
