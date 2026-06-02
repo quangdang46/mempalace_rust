@@ -232,12 +232,6 @@ enum Commands {
         min_sessions: usize,
     },
 
-    /// Run hook logic (reads JSON from stdin, outputs JSON to stdout).
-    Hook {
-        #[command(subcommand)]
-        action: HookAction,
-    },
-
     /// Output skill instructions to stdout.
     #[command(disable_help_subcommand = true)]
     Instructions {
@@ -450,15 +444,6 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Discover and list installed third-party plugins
-    /// (scans `~/.mempalace/plugins/*/manifest.json` and `./plugins/*/manifest.json`).
-    Plugin {
-        #[arg(long, value_parser = ["list", "enable", "disable"])]
-        action: String,
-        /// Plugin name (required for enable/disable)
-        name: Option<String>,
-    },
-
     /// Remove MemPalace data and config from this machine.
     Remove {
         /// Skip the confirmation prompt.
@@ -497,16 +482,6 @@ enum Commands {
         /// Send SIGKILL instead of SIGTERM.
         #[arg(long)]
         kill: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum HookAction {
-    Run {
-        #[arg(long, value_parser = ["session-start", "session-end", "stop", "precompact", "post-tool-use", "post-tool-failure", "prompt-submit", "notification", "subagent-start", "subagent-stop", "task-completed", "post-commit", "pre-tool-use", "sdk-guard", "project-resolve"])]
-        hook: String,
-        #[arg(long, value_parser = ["claude-code", "codex"])]
-        harness: String,
     },
 }
 
@@ -1222,288 +1197,6 @@ fn cmd_search(
     Ok(())
 }
 
-fn cmd_hook(hook: &str, harness: &str) -> Result<()> {
-    run_hook(hook, harness)
-}
-
-fn cmd_instructions(name: &InstructionName) -> Result<()> {
-    let label = match name {
-        InstructionName::Init => "init",
-        InstructionName::Search => "search",
-        InstructionName::Mine => "mine",
-        InstructionName::Help => "help",
-        InstructionName::Status => "status",
-    };
-    run_instructions(label)?;
-    Ok(())
-}
-
-fn hook_state_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mempalace")
-        .join("hook_state")
-}
-
-fn precompact_state_file(session_id: &str) -> PathBuf {
-    hook_state_dir().join(format!("{session_id}_precompact_blocked_at"))
-}
-
-fn sanitize_session_id(session_id: &str) -> String {
-    let sanitized: String = session_id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
-    if sanitized.is_empty() {
-        "unknown".to_string()
-    } else {
-        sanitized
-    }
-}
-
-fn count_human_messages(transcript_path: &str) -> usize {
-    let path = PathBuf::from(transcript_path);
-    let Ok(content) = fs::read_to_string(path) else {
-        return 0;
-    };
-
-    content
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|entry| {
-            let message = entry.get("message");
-            if let Some(message) = message {
-                if message.get("role").and_then(|v| v.as_str()) == Some("user") {
-                    match message.get("content") {
-                        Some(serde_json::Value::String(content)) => {
-                            !content.contains("<command-message>")
-                        }
-                        Some(serde_json::Value::Array(blocks)) => {
-                            let joined = blocks
-                                .iter()
-                                .filter_map(|block| block.get("text").and_then(|v| v.as_str()))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            !joined.contains("<command-message>")
-                        }
-                        _ => true,
-                    }
-                } else {
-                    false
-                }
-            } else {
-                entry.get("type").and_then(|v| v.as_str()) == Some("event_msg")
-                    && entry
-                        .get("payload")
-                        .and_then(|v| v.get("type"))
-                        .and_then(|v| v.as_str())
-                        == Some("user_message")
-                    && !entry
-                        .get("payload")
-                        .and_then(|v| v.get("message"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .contains("<command-message>")
-            }
-        })
-        .count()
-}
-
-fn log_hook(message: &str) {
-    let state_dir = hook_state_dir();
-    if fs::create_dir_all(&state_dir).is_err() {
-        return;
-    }
-    let log_path = state_dir.join("hook.log");
-    let timestamp = chrono::Local::now().format("%H:%M:%S");
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .and_then(|mut f| {
-            std::io::Write::write_all(&mut f, format!("[{timestamp}] {message}\n").as_bytes())
-        });
-}
-
-fn maybe_auto_ingest(async_mode: bool) {
-    let Some(mempal_dir) = std::env::var_os("MEMPAL_DIR") else {
-        return;
-    };
-    let mempal_dir = PathBuf::from(mempal_dir);
-    if !mempal_dir.is_dir() {
-        return;
-    }
-    let log_path = hook_state_dir().join("hook.log");
-    let _ = fs::create_dir_all(hook_state_dir());
-    let stdout = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .ok();
-    let stderr = stdout.as_ref().and_then(|_| {
-        fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .ok()
-    });
-
-    let mut cmd = std::process::Command::new(
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("mpr")),
-    );
-    cmd.arg("mine").arg(&mempal_dir);
-    if let Some(out) = stdout {
-        cmd.stdout(out);
-    }
-    if let Some(err) = stderr {
-        cmd.stderr(err);
-    }
-
-    if async_mode {
-        let _ = cmd.spawn();
-    } else {
-        let _ = cmd.status();
-    }
-}
-
-fn parse_harness_input(
-    data: &serde_json::Value,
-    harness: &str,
-) -> Result<(String, bool, String, String)> {
-    if !matches!(harness, "claude-code" | "codex") {
-        anyhow::bail!("Unknown harness: {harness}");
-    }
-    Ok((
-        sanitize_session_id(
-            data.get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown"),
-        ),
-        data.get("stop_hook_active")
-            .and_then(|v| v.as_bool())
-            .or_else(|| {
-                data.get("stop_hook_active")
-                    .and_then(|v| v.as_str())
-                    .map(|v| matches!(v, "true" | "1" | "yes"))
-            })
-            .unwrap_or(false),
-        data.get("transcript_path")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        data.get("trigger")
-            .and_then(|v| v.as_str())
-            .unwrap_or("auto")
-            .to_ascii_lowercase(),
-    ))
-}
-
-fn emit_json(value: serde_json::Value) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
-}
-
-fn hook_session_start_response(
-    data: &serde_json::Value,
-    harness: &str,
-) -> Result<serde_json::Value> {
-    let (session_id, _, _, _) = parse_harness_input(data, harness)?;
-    log_hook(&format!("SESSION START for session {session_id}"));
-    fs::create_dir_all(hook_state_dir())?;
-    Ok(json!({}))
-}
-
-fn hook_stop_response(data: &serde_json::Value, harness: &str) -> Result<serde_json::Value> {
-    let (session_id, stop_hook_active, transcript_path, _) = parse_harness_input(data, harness)?;
-    if stop_hook_active {
-        return Ok(json!({}));
-    }
-
-    let exchange_count = count_human_messages(&transcript_path);
-    let state_dir = hook_state_dir();
-    let _ = fs::create_dir_all(&state_dir);
-    let last_save_file = state_dir.join(format!("{session_id}_last_save"));
-    let last_save = fs::read_to_string(&last_save_file)
-        .ok()
-        .and_then(|s| s.trim().parse::<usize>().ok())
-        .unwrap_or(0);
-    let since_last = exchange_count.saturating_sub(last_save);
-    log_hook(&format!(
-        "Session {session_id}: {exchange_count} exchanges, {since_last} since last save"
-    ));
-
-    if since_last >= SAVE_INTERVAL && exchange_count > 0 {
-        let _ = fs::write(&last_save_file, exchange_count.to_string());
-        log_hook(&format!("TRIGGERING SAVE at exchange {exchange_count}"));
-        maybe_auto_ingest(true);
-        Ok(json!({"decision":"block","reason":STOP_BLOCK_REASON}))
-    } else {
-        Ok(json!({}))
-    }
-}
-
-fn hook_precompact_response(data: &serde_json::Value, harness: &str) -> Result<serde_json::Value> {
-    let (session_id, _, transcript_path, trigger) = parse_harness_input(data, harness)?;
-    log_hook(&format!(
-        "PRE-COMPACT triggered for session {session_id} (trigger={trigger})"
-    ));
-
-    if trigger == "manual" {
-        log_hook("PRE-COMPACT manual trigger -- allowing compaction");
-        let _ = fs::remove_file(precompact_state_file(&session_id));
-        return Ok(json!({}));
-    }
-
-    let exchange_count = if transcript_path.is_empty() {
-        0
-    } else {
-        count_human_messages(&transcript_path)
-    };
-    let state_file = precompact_state_file(&session_id);
-    let _ = fs::create_dir_all(hook_state_dir());
-    let last_blocked_at = fs::read_to_string(&state_file)
-        .ok()
-        .and_then(|s| s.trim().parse::<usize>().ok());
-
-    if let Some(last_blocked_at) = last_blocked_at {
-        if exchange_count <= last_blocked_at {
-            log_hook(&format!(
-                "PRE-COMPACT already blocked at exchange {last_blocked_at} (now {exchange_count}) -- allowing compaction to prevent deadlock"
-            ));
-            let _ = fs::remove_file(&state_file);
-            return Ok(json!({}));
-        }
-    }
-
-    let _ = fs::write(&state_file, exchange_count.to_string());
-    maybe_auto_ingest(false);
-    Ok(json!({"decision":"block","reason":PRECOMPACT_BLOCK_REASON}))
-}
-
-fn run_hook(hook_name: &str, harness: &str) -> Result<()> {
-    let data: serde_json::Value =
-        serde_json::from_reader(io::stdin()).unwrap_or_else(|_| json!({}));
-    let response = match hook_name {
-        "session-start" => crate::hooks_cli::hook_session_start_response(&data, harness)?,
-        "session-end" => crate::hooks_cli::hook_session_end_response(&data, harness)?,
-        "stop" => hook_stop_response(&data, harness)?,
-        "precompact" => hook_precompact_response(&data, harness)?,
-        "post-tool-use" => crate::hooks_cli::hook_post_tool_use_response(&data, harness)?,
-        "post-tool-failure" => crate::hooks_cli::hook_post_tool_failure_response(&data, harness)?,
-        "prompt-submit" => crate::hooks_cli::hook_prompt_submit_response(&data, harness)?,
-        "notification" => crate::hooks_cli::hook_notification_response(&data, harness)?,
-        "subagent-start" => crate::hooks_cli::hook_subagent_start_response(&data, harness)?,
-        "subagent-stop" => crate::hooks_cli::hook_subagent_stop_response(&data, harness)?,
-        "task-completed" => crate::hooks_cli::hook_task_completed_response(&data, harness)?,
-        "post-commit" => crate::hooks_cli::hook_post_commit_response(&data, harness)?,
-        "pre-tool-use" => crate::hooks_cli::hook_pre_tool_use_response(&data, harness)?,
-        "sdk-guard" => crate::hooks_cli::hook_sdk_guard_response(&data, harness)?,
-        "project-resolve" => crate::hooks_cli::hook_project_resolve_response(&data, harness)?,
-        _ => anyhow::bail!("Unknown hook: {hook_name}"),
-    };
-    emit_json(response)
-}
 
 fn run_instructions(name: &str) -> Result<()> {
     let content = match name {
@@ -2489,9 +2182,6 @@ pub fn run() -> Result<()> {
             dry_run,
             min_sessions,
         } => cmd_split(dir, output_dir.as_ref(), *dry_run, *min_sessions)?,
-        Commands::Hook { action } => match action {
-            HookAction::Run { hook, harness } => cmd_hook(hook, harness)?,
-        },
         Commands::Instructions { name } => cmd_instructions(name)?,
         Commands::Repair(ref cmd) => cmd_repair(cmd, palace_arg)?,
         Commands::Status => cmd_status(palace_arg)?,
@@ -2605,9 +2295,6 @@ pub fn run() -> Result<()> {
         Commands::Connect { adapter, dry_run } => {
             crate::connect::run(adapter.as_deref(), *dry_run)?;
         }
-        Commands::Plugin { action, name } => {
-            cmd_plugin(action, name.as_deref())?;
-        }
         Commands::Remove { force, palace_only } => {
             cmd_remove(*force, *palace_only, palace_arg)?;
         }
@@ -2644,42 +2331,6 @@ fn cmd_vision(query: &str, limit: usize, palace_arg: Option<&str>) -> Result<()>
     ))?;
     searcher::print_search_response(&response);
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Plugin Command
-// ---------------------------------------------------------------------------
-
-fn cmd_plugin(action: &str, name: Option<&str>) -> Result<()> {
-    use crate::plugins;
-    match action {
-        "list" => {
-            let entries = plugins::list();
-            if entries.is_empty() {
-                println!("No plugins discovered.");
-                println!("(Scan paths: ~/.mempalace/plugins/* and ./plugins/*)");
-            } else {
-                for (n, _path, enabled) in entries {
-                    let status = if enabled { "enabled" } else { "disabled" };
-                    println!("  {n:<24} {status}");
-                }
-            }
-            Ok(())
-        }
-        "enable" => {
-            let n = name.ok_or_else(|| anyhow::anyhow!("plugin name required for enable"))?;
-            plugins::enable(n)?;
-            println!("enabled plugin: {n}");
-            Ok(())
-        }
-        "disable" => {
-            let n = name.ok_or_else(|| anyhow::anyhow!("plugin name required for disable"))?;
-            plugins::disable(n)?;
-            println!("disabled plugin: {n}");
-            Ok(())
-        }
-        _ => anyhow::bail!("unknown plugin action: {action} (use list/enable/disable)"),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2964,7 +2615,7 @@ mod tests {
         detect_mining_mode, hook_precompact_response, hook_session_start_response,
         hook_stop_response, merge_detected_into_registry, parse_harness_input, run_instructions,
         save_detected_entities, scan_and_detect_entities, Cli, Commands, DetectedEntities,
-        HookAction, InstructionName, MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT,
+        InstructionName, MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT,
         INSTRUCTION_MINE, INSTRUCTION_SEARCH, INSTRUCTION_STATUS, PRECOMPACT_BLOCK_REASON,
         SAVE_INTERVAL, STOP_BLOCK_REASON,
     };
@@ -3471,229 +3122,6 @@ mod tests {
                 panic!("instructions for `{name}` should succeed but errored: {e}")
             });
         }
-    }
-
-    #[test]
-    fn test_run_hook_session_start_outputs_empty_json() {
-        let _guard = test_env_lock()
-            .lock()
-            .expect("test env lock should be available");
-        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
-        std::env::set_var("HOME", temp_dir.path());
-        let response =
-            hook_session_start_response(&json!({"session_id": "run-test"}), "claude-code")
-                .expect("session-start hook should succeed");
-        assert_eq!(response, json!({}));
-        std::env::remove_var("HOME");
-    }
-
-    #[test]
-    fn test_run_hook_stop_blocks_at_interval() {
-        let _guard = test_env_lock()
-            .lock()
-            .expect("test env lock should be available");
-        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
-        std::env::set_var("HOME", temp_dir.path());
-        let transcript = temp_dir.path().join("t.jsonl");
-        let lines = (0..SAVE_INTERVAL)
-            .map(|i| format!(r#"{{"message":{{"role":"user","content":"msg {i}"}}}}"#))
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&transcript, lines).expect("should write transcript");
-        let response = hook_stop_response(
-            &json!({
-                "session_id": "test",
-                "stop_hook_active": false,
-                "transcript_path": transcript.display().to_string(),
-            }),
-            "claude-code",
-        )
-        .expect("stop hook should succeed");
-        assert_eq!(response["decision"], "block");
-        assert_eq!(response["reason"], STOP_BLOCK_REASON);
-        std::env::remove_var("HOME");
-    }
-
-    #[test]
-    fn test_run_hook_stop_passthrough_when_active_string() {
-        let response = hook_stop_response(
-            &json!({
-                "session_id": "test",
-                "stop_hook_active": "true",
-                "transcript_path": "/nonexistent.jsonl",
-            }),
-            "claude-code",
-        )
-        .expect("stop hook should passthrough when active string is true");
-        assert_eq!(response, json!({}));
-    }
-
-    #[test]
-    fn test_parse_harness_input_reads_trigger() {
-        let (session_id, stop_hook_active, transcript_path, trigger) = parse_harness_input(
-            &json!({
-                "session_id": "run-test",
-                "stop_hook_active": false,
-                "transcript_path": "/tmp/session.jsonl",
-                "trigger": "manual"
-            }),
-            "claude-code",
-        )
-        .expect("parse_harness_input should succeed");
-
-        assert_eq!(session_id, "run-test");
-        assert!(!stop_hook_active);
-        assert_eq!(transcript_path, "/tmp/session.jsonl");
-        assert_eq!(trigger, "manual");
-    }
-
-    #[test]
-    fn test_count_human_messages_supports_codex_format() {
-        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
-        let transcript = temp_dir.path().join("codex.jsonl");
-        std::fs::write(
-            &transcript,
-            concat!(
-                r#"{"type":"event_msg","payload":{"type":"user_message","message":"hello"}}"#,
-                "\n",
-                r#"{"type":"event_msg","payload":{"type":"user_message","message":"<command-message>status</command-message>"}}"#,
-                "\n"
-            ),
-        )
-        .expect("should write codex transcript");
-
-        assert_eq!(
-            count_human_messages(transcript.to_str().expect("path should be utf-8")),
-            1
-        );
-    }
-
-    #[test]
-    fn test_run_hook_precompact_blocks() {
-        let _guard = test_env_lock()
-            .lock()
-            .expect("test env lock should be available");
-        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
-        std::env::set_var("HOME", temp_dir.path());
-        let transcript = temp_dir.path().join("precompact.jsonl");
-        std::fs::write(
-            &transcript,
-            concat!(
-                r#"{"message":{"role":"user","content":"first"}}"#,
-                "\n",
-                r#"{"message":{"role":"assistant","content":"ok"}}"#,
-                "\n"
-            ),
-        )
-        .expect("should write transcript");
-        let response = hook_precompact_response(
-            &json!({
-                "session_id": "run-test",
-                "transcript_path": transcript.display().to_string(),
-                "trigger": "auto"
-            }),
-            "claude-code",
-        )
-        .expect("precompact hook should succeed");
-        assert_eq!(response["decision"], "block");
-        assert_eq!(response["reason"], PRECOMPACT_BLOCK_REASON);
-        std::env::remove_var("HOME");
-    }
-
-    #[test]
-    fn test_run_hook_precompact_manual_trigger_passes_through() {
-        let _guard = test_env_lock()
-            .lock()
-            .expect("test env lock should be available");
-        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
-        std::env::set_var("HOME", temp_dir.path());
-        let response = hook_precompact_response(
-            &json!({"session_id": "run-test", "trigger": "manual"}),
-            "claude-code",
-        )
-        .expect("manual precompact should succeed");
-        assert_eq!(response, json!({}));
-        std::env::remove_var("HOME");
-    }
-
-    #[test]
-    fn test_run_hook_precompact_deadlock_guard_allows_refire() {
-        let _guard = test_env_lock()
-            .lock()
-            .expect("test env lock should be available");
-        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
-        std::env::set_var("HOME", temp_dir.path());
-        let transcript = temp_dir.path().join("precompact.jsonl");
-        std::fs::write(
-            &transcript,
-            concat!(
-                r#"{"message":{"role":"user","content":"first"}}"#,
-                "\n",
-                r#"{"message":{"role":"assistant","content":"ok"}}"#,
-                "\n"
-            ),
-        )
-        .expect("should write transcript");
-        let payload = json!({
-            "session_id": "run-test",
-            "transcript_path": transcript.display().to_string(),
-            "trigger": "auto"
-        });
-
-        let first = hook_precompact_response(&payload, "claude-code")
-            .expect("first precompact should succeed");
-        assert_eq!(first["decision"], "block");
-
-        let second = hook_precompact_response(&payload, "claude-code")
-            .expect("second precompact should succeed");
-        assert_eq!(second, json!({}));
-        std::env::remove_var("HOME");
-    }
-
-    #[test]
-    fn test_run_hook_precompact_new_human_message_rearms_block() {
-        let _guard = test_env_lock()
-            .lock()
-            .expect("test env lock should be available");
-        let temp_dir = tempfile::TempDir::new().expect("tempdir should be created");
-        std::env::set_var("HOME", temp_dir.path());
-        let transcript = temp_dir.path().join("precompact.jsonl");
-        std::fs::write(
-            &transcript,
-            r#"{"message":{"role":"user","content":"first"}}"#,
-        )
-        .expect("should write initial transcript");
-        let payload = json!({
-            "session_id": "run-test",
-            "transcript_path": transcript.display().to_string(),
-            "trigger": "auto"
-        });
-
-        let first = hook_precompact_response(&payload, "claude-code")
-            .expect("first precompact should succeed");
-        assert_eq!(first["decision"], "block");
-
-        let second = hook_precompact_response(&payload, "claude-code")
-            .expect("second precompact should succeed");
-        assert_eq!(second, json!({}));
-
-        std::fs::write(
-            &transcript,
-            concat!(
-                r#"{"message":{"role":"user","content":"first"}}"#,
-                "\n",
-                r#"{"message":{"role":"assistant","content":"ok"}}"#,
-                "\n",
-                r#"{"message":{"role":"user","content":"second"}}"#,
-                "\n"
-            ),
-        )
-        .expect("should write updated transcript");
-
-        let third = hook_precompact_response(&payload, "claude-code")
-            .expect("third precompact should succeed");
-        assert_eq!(third["decision"], "block");
-        std::env::remove_var("HOME");
     }
 
     #[test]
