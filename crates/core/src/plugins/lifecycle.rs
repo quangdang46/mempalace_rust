@@ -80,7 +80,10 @@ mod tests {
     fn each_script_is_non_empty() {
         for (name, source) in LIFECYCLE_SCRIPTS {
             assert!(!source.is_empty(), "{name} is empty");
-            assert!(source.contains("AGENTMEMORY_URL"), "{name} missing AGENTMEMORY_URL");
+            assert!(
+                source.contains("AGENTMEMORY_URL"),
+                "{name} missing AGENTMEMORY_URL"
+            );
         }
     }
 }
