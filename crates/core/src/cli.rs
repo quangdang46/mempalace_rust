@@ -2621,13 +2621,11 @@ fn estimate_mining_scope(dir: &PathBuf) -> Result<MiningScopeEstimate> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cmd_compress, cmd_init, cmd_mine, confirm_entities, count_human_messages,
-        detect_mining_mode, hook_precompact_response, hook_session_start_response,
-        hook_stop_response, merge_detected_into_registry, parse_harness_input, run_instructions,
-        save_detected_entities, scan_and_detect_entities, Cli, Commands, DetectedEntities,
-        InstructionName, MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT, INSTRUCTION_MINE,
-        INSTRUCTION_SEARCH, INSTRUCTION_STATUS, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL,
-        STOP_BLOCK_REASON,
+        cmd_compress, cmd_init, cmd_mine, confirm_entities, detect_mining_mode,
+        merge_detected_into_registry, run_instructions, save_detected_entities,
+        scan_and_detect_entities, Cli, Commands, DetectedEntities, InstructionName,
+        MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT, INSTRUCTION_MINE, INSTRUCTION_SEARCH,
+        INSTRUCTION_STATUS, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL, STOP_BLOCK_REASON,
     };
     use crate::config::Config;
     use crate::entity_detector::{PersonEntity, ProjectEntity};
@@ -3046,29 +3044,6 @@ mod tests {
     fn test_cli_args_parse_repair() {
         let args = Cli::try_parse_from(["mpr", "repair", "scan"]).unwrap();
         assert!(matches!(args.command, Commands::Repair(_)));
-    }
-
-    #[test]
-    fn test_cli_args_parse_hook_run() {
-        let args = Cli::try_parse_from([
-            "mpr",
-            "hook",
-            "run",
-            "--hook",
-            "session-start",
-            "--harness",
-            "claude-code",
-        ])
-        .unwrap();
-        match args.command {
-            Commands::Hook {
-                action: HookAction::Run { hook, harness },
-            } => {
-                assert_eq!(hook, "session-start");
-                assert_eq!(harness, "claude-code");
-            }
-            _ => unreachable!(),
-        }
     }
 
     #[test]

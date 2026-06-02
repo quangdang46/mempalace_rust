@@ -6,26 +6,42 @@ on:
     branches: [main]
 env:
   CARGO_TERM_COLOR: always
-  MEMPALACE_SKIP_NETWORK_TESTS: "1"
 jobs:
   check:
-    name: Check
-    runs-on: ubuntu-latest
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-
-      # 1. Format gate (must pass)
       - run: cargo fmt --all -- --check
 
-      # 2. Build (catches type errors + dead code)
-      - run: cargo build --workspace
+      - name: Clippy (all features)
+        if: runner.os != 'Windows'
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # 3. Test (catches runtime bugs)
-      - run: cargo test --workspace --lib
+      - name: Clippy (default features)
+        if: runner.os == 'Windows'
+        run: cargo clippy --all-targets -- -D warnings
 
-      # 4. Compile benches (catches API drift, no run cost)
-      - run: cargo bench --no-run -p mempalace-core
+      - name: Test (all features)
+        if: runner.os != 'Windows'
+        env:
+          MEMPALACE_SKIP_NETWORK_TESTS: "1"
+        run: cargo test --workspace --all-features
+
+      - name: Test (default features)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace
+
+      # Compile (but don't run) criterion benches on every PR — mp-002 / Phase 0.
+      # Catches API drift in the bench harnesses without paying the multi-minute
+      # cost of actually running them.
+      - name: Compile benches
+        run: cargo bench --no-run -p mempalace-core
