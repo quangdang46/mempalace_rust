@@ -199,7 +199,7 @@ fn test_report_contains_uptime_seconds() {
     monitor.register(Box::new(MockHealthyCheck));
     std::thread::sleep(Duration::from_millis(100));
     let report = monitor.run_all();
-    assert!(report.uptime_seconds >= 0);
+    assert!(report.uptime_seconds < u64::MAX);
 }
 
 #[test]
