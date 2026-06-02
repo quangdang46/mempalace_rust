@@ -7,6 +7,8 @@
 /// - Weight normalization: zero out missing streams, normalize to sum=1.0
 use serde::{Deserialize, Serialize};
 
+use super::synonyms::SYNONYM_BM25_WEIGHT;
+
 /// RRF constant — controls how much rank position affects score.
 /// Higher K = flatter curve (less rank sensitivity).
 pub const RRF_K: f64 = 60.0;
@@ -57,6 +59,26 @@ impl Default for RrfConfig {
     fn default() -> Self {
         Self {
             bm25_weight: DEFAULT_BM25_WEIGHT,
+            vector_weight: DEFAULT_VECTOR_WEIGHT,
+            graph_weight: DEFAULT_GRAPH_WEIGHT,
+        }
+    }
+}
+
+impl RrfConfig {
+    /// Construct an `RrfConfig` that biases BM25 toward synonym
+    /// expansion hits. Uses [`SYNONYM_BM25_WEIGHT`] (0.7) for the BM25
+    /// stream so that synonym-matched documents rank competitively
+    /// with literal text matches, matching agentmemory's
+    /// `hybrid-search.ts` BM25+synonym weighting.
+    ///
+    /// Vector and graph weights are unchanged from [`Self::default`]
+    /// so the new bias is localised to the BM25 stream and existing
+    /// callers (e.g. `palace_db::search_memories`) keep their current
+    /// vector/graph behaviour.
+    pub fn with_synonyms() -> Self {
+        Self {
+            bm25_weight: SYNONYM_BM25_WEIGHT as f64,
             vector_weight: DEFAULT_VECTOR_WEIGHT,
             graph_weight: DEFAULT_GRAPH_WEIGHT,
         }

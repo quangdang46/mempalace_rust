@@ -654,6 +654,131 @@ impl HealthCheck for UptimeCheck {
 }
 
 // ---------------------------------------------------------------------------
+// Concrete checks — Event-loop lag
+// ---------------------------------------------------------------------------
+
+/// Event-loop lag check.
+///
+/// Measures how stale the most recent heartbeat from the async
+/// runtime is. The runtime's main task should call
+/// [`GlobalHealthMonitor::heartbeat`] (or hold a clone of
+/// [`EventLoopLagCheck::handle`] and call
+/// [`EventLoopHandle::beat`]) at least every
+/// `warn_threshold` milliseconds. A lag larger than the warn
+/// threshold indicates the runtime is too busy to schedule the
+/// heartbeat task; a lag larger than the crit threshold indicates
+/// the event loop is effectively stalled.
+///
+/// Matches agentmemory's `state/health.ts` event-loop-lag check:
+/// 100 ms warn, 500 ms crit, 1000 ms idle interval.
+pub struct EventLoopLagCheck {
+    handle: EventLoopHandle,
+    warn_ms: u64,
+    crit_ms: u64,
+}
+
+#[derive(Clone)]
+pub struct EventLoopHandle {
+    last_beat_ms: Arc<AtomicU64>,
+}
+
+impl EventLoopHandle {
+    /// Record a heartbeat at "now". Cheap; does not allocate.
+    pub fn beat(&self) {
+        let now_ms = crate::health::now_millis();
+        self.last_beat_ms.store(now_ms, Ordering::Relaxed);
+    }
+
+    /// Read the lag in milliseconds since the last heartbeat.
+    pub fn lag_ms(&self) -> u64 {
+        let last = self.last_beat_ms.load(Ordering::Relaxed);
+        let now = crate::health::now_millis();
+        now.saturating_sub(last)
+    }
+}
+
+impl EventLoopLagCheck {
+    pub fn new(warn_ms: u64, crit_ms: u64) -> Self {
+        Self {
+            handle: EventLoopHandle {
+                last_beat_ms: Arc::new(AtomicU64::new(crate::health::now_millis())),
+            },
+            warn_ms,
+            crit_ms,
+        }
+    }
+
+    pub fn handle(&self) -> EventLoopHandle {
+        self.handle.clone()
+    }
+}
+
+impl HealthCheck for EventLoopLagCheck {
+    fn name(&self) -> &str {
+        "event_loop_lag"
+    }
+
+    fn run(&self) -> CheckResult {
+        let lag = self.handle.lag_ms();
+        let value = lag as f64;
+        let warn = self.warn_ms as f64;
+        let crit = self.crit_ms as f64;
+
+        let status = if lag >= self.crit_ms {
+            HealthStatus::Critical
+        } else if lag >= self.warn_ms {
+            HealthStatus::Degraded
+        } else {
+            HealthStatus::Healthy
+        };
+
+        let message = match status {
+            HealthStatus::Critical => format!(
+                "Event-loop lag {}ms exceeds critical threshold {}ms",
+                lag, self.crit_ms
+            ),
+            HealthStatus::Degraded => format!(
+                "Event-loop lag {}ms exceeds warning threshold {}ms",
+                lag, self.warn_ms
+            ),
+            HealthStatus::Healthy => {
+                format!("Event-loop lag {}ms is healthy", lag)
+            }
+        };
+
+        CheckResult {
+            name: self.name().to_string(),
+            value,
+            threshold: warn,
+            status,
+            message,
+        }
+    }
+
+    fn threshold_warn(&self) -> f64 {
+        self.warn_ms as f64
+    }
+
+    fn threshold_crit(&self) -> f64 {
+        self.crit_ms as f64
+    }
+}
+
+/// Wall-clock millisecond timestamp (Unix epoch). Both
+/// [`EventLoopHandle::beat`] and [`EventLoopHandle::lag_ms`] sample
+/// from this same clock, so the difference is process-local even
+/// though the absolute value tracks wall time. `lag_ms` uses
+/// `saturating_sub` so a backwards clock jump is clamped to 0
+/// rather than panicking.
+fn now_millis() -> u64 {
+    use std::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
 // Global health monitor singleton (feature-gated)
 // ---------------------------------------------------------------------------
 
@@ -669,6 +794,7 @@ pub struct GlobalHealthMonitor {
     embedder: Arc<dyn crate::embed::Embedder>,
     worker_count: Arc<AtomicU64>,
     worker_limit: u64,
+    event_loop: EventLoopHandle,
 }
 
 #[cfg(feature = "health")]
@@ -682,6 +808,9 @@ impl GlobalHealthMonitor {
         let started_at = Instant::now();
         let worker_count = Arc::new(AtomicU64::new(0));
 
+        let event_loop_check = EventLoopLagCheck::new(100, 500);
+        let event_loop = event_loop_check.handle();
+
         let mut monitor = HealthMonitor::new();
         monitor.register(Box::new(UptimeCheck::new(started_at)));
         monitor.register(Box::new(CpuCheck::new()));
@@ -692,6 +821,7 @@ impl GlobalHealthMonitor {
             Arc::clone(&worker_count),
             worker_limit,
         )));
+        monitor.register(Box::new(event_loop_check));
 
         GlobalHealthMonitor {
             monitor: RwLock::new(monitor),
@@ -700,6 +830,7 @@ impl GlobalHealthMonitor {
             embedder,
             worker_count,
             worker_limit,
+            event_loop,
         }
     }
 
@@ -711,6 +842,21 @@ impl GlobalHealthMonitor {
     /// Decrement the active worker count.
     pub fn worker_stopped(&self) {
         self.worker_count.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Record an event-loop heartbeat. The async runtime should
+    /// call this on every tick (or at least every
+    /// [`EventLoopLagCheck`] warn threshold — 100 ms by default).
+    /// Cheap; just an atomic store.
+    pub fn heartbeat(&self) {
+        self.event_loop.beat();
+    }
+
+    /// Clone-able handle to the event-loop heartbeat. Useful when
+    /// wiring the heartbeat into a background task that already
+    /// holds an `Arc<...>` over the monitor.
+    pub fn event_loop_handle(&self) -> EventLoopHandle {
+        self.event_loop.clone()
     }
 
     /// Run all checks and return the report.
@@ -732,6 +878,7 @@ impl GlobalHealthMonitor {
             Arc::clone(&self.worker_count),
             self.worker_limit,
         )));
+        monitor.register(Box::new(EventLoopLagCheck::new(100, 500)));
         *self.monitor.write().await = monitor;
     }
 }
