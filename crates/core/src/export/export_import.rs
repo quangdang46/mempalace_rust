@@ -336,8 +336,8 @@ mod tests {
             serde_json::json!(42)
         );
         assert_eq!(
-            sqlite_value_to_json(Value::Real(3.14)),
-            serde_json::json!(3.14)
+            sqlite_value_to_json(Value::Real(3.14159_f64)),
+            serde_json::json!(3.14159_f64)
         );
         assert_eq!(
             sqlite_value_to_json(Value::Text("hi".into())),

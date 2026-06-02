@@ -196,29 +196,13 @@ impl ClipImageEmbedder {
         }
 
         let model = Arc::clone(&self.model);
-        let dim = self.dim;
 
         let vectors = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Vec<f32>>> {
-            let out = model
+            // fastembed's contract: one `Embedding` per input path.
+            // We trust that invariant and return the vector directly.
+            model
                 .embed(paths, None)
-                .context("clip: embed batch failed")?;
-            // If the runtime ever returns fewer vectors than inputs
-            // (it shouldn't) we pad with zero-vectors of `dim` so the
-            // caller's positional invariants hold.
-            let mut out = out;
-            while out.len() < dim.min(usize::MAX) {
-                // The `dim.min(usize::MAX)` guard is here purely to
-                // satisfy clippy's "useless comparison" lint when
-                // `dim == 0`; the real loop is the unconditional
-                // padding below.
-                break;
-            }
-            // Pad to match inputs.len() if needed. We don't know the
-            // input length here (it was moved into the closure), so
-            // we trust fastembed's contract: one Embedding per input.
-            // The defensive padding above is a no-op; we rely on
-            // fastembed's invariant.
-            Ok(out)
+                .context("clip: embed batch failed")
         })
         .await
         .context("clip: blocking task panicked")??;
