@@ -78,16 +78,48 @@ pub fn governance_delete(
     filter: &GovernanceFilter,
     reason: &str,
 ) -> GovernanceDeleteResult {
-    let matching_ids: Vec<_> = filter_memories(memories, filter)
+    let now = Utc::now();
+    let deleted: Vec<String> = memories
         .iter()
+        .filter(|m| {
+            // Reject (keep) if any filter criterion says this memory survives.
+            if let Some(max_age) = filter.max_age_days {
+                let age_days = (now - m.created_at).num_days() as u64;
+                if age_days > max_age {
+                    return true;
+                }
+            }
+            if let Some(min_strength) = filter.min_strength {
+                if m.strength < min_strength {
+                    return true;
+                }
+            }
+            if let Some(ref mem_type) = filter.memory_type {
+                if format!("{:?}", m.memory_type).to_lowercase() != mem_type.to_lowercase() {
+                    return true;
+                }
+            }
+            if let Some(ref project) = filter.project {
+                if &m.project != project {
+                    return true;
+                }
+            }
+            if !filter.tags.is_empty() {
+                let has_tag = filter.tags.iter().any(|t| m.concepts.contains(t));
+                if !has_tag {
+                    return true;
+                }
+            }
+            false
+        })
         .map(|m| m.id.clone())
         .collect();
-
-    let count = matching_ids.len();
-    memories.retain(|m| !matching_ids.contains(&m.id));
+    let count = deleted.len();
+    let deleted_set: std::collections::HashSet<String> = deleted.iter().cloned().collect();
+    memories.retain(|m| !deleted_set.contains(&m.id));
 
     GovernanceDeleteResult {
-        deleted_ids: matching_ids,
+        deleted_ids: deleted,
         count,
         reason: reason.to_string(),
     }
