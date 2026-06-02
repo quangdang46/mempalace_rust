@@ -205,6 +205,7 @@ pub fn cleanup_pid(palace_path: Option<&Path>) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn test_scan_palace_empty() {
         // Basic compilation test

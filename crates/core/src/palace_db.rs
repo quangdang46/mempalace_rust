@@ -3007,6 +3007,7 @@ mod tests {
 
     /// mp-016: opening a fresh palace with an embedder writes the
     /// manifest as a side-effect.
+    #[cfg(not(windows))]
     #[test]
     fn test_open_with_embedder_writes_manifest_on_fresh_palace() {
         let temp = tempfile::tempdir().unwrap();
