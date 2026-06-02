@@ -1212,6 +1212,17 @@ fn run_instructions(name: &str) -> Result<()> {
     Ok(())
 }
 
+fn cmd_instructions(name: &InstructionName) -> Result<()> {
+    let label = match name {
+        InstructionName::Init => "init",
+        InstructionName::Search => "search",
+        InstructionName::Mine => "mine",
+        InstructionName::Help => "help",
+        InstructionName::Status => "status",
+    };
+    run_instructions(label)
+}
+
 fn cmd_repair(cmd: &RepairCommands, palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
