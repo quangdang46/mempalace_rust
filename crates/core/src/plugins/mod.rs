@@ -7,8 +7,8 @@
 //
 // All plugins start with enabled=false; use enable()/disable() to toggle.
 
-pub mod lifecycle;
-pub mod skills;
+// plugin/ folder lives at repo root, mirroring agentmemory layout
+// pub mod plugin;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

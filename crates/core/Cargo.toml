@@ -8,7 +8,7 @@ repository.workspace = true
 description.workspace = true
 
 [features]
-default = ["embed-fastembed"]
+default = ["embed-fastembed", "cjk-jieba"]
 store-usearch = ["dep:usearch"]
 embed-fastembed = ["dep:fastembed"]
 embed-model2vec = ["dep:model2vec-rs"]

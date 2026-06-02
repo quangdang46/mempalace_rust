@@ -1,0 +1,12 @@
+{
+  "name": "mempalace-capture",
+  "version": "0.9.20",
+  "description": "OpenCode plugin for mempalace — full Claude Code hook parity: session lifecycle (create/idle/status/compacted/update/diff/delete/error), messages & prompts (chat.message, message.updated user+assistant, message.removed), tool lifecycle (ToolPart states with timing), part tracking (subtask, step-finish, reasoning, file, patch, compaction, agent, retry), file enrichment pipeline, permissions, task tracking (w/ priority), commands, config & model tracking. 22 hooks, 2 slash commands.",
+  "author": {
+    "name": "Tran Quang Dang",
+    "url": "https://github.com/quangdang46"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/quangdang46/mempalace",
+  "repository": "https://github.com/quangdang46/mempalace"
+}

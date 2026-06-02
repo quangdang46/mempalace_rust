@@ -1,0 +1,15 @@
+{
+  "name": "mempalace",
+  "version": "0.9.24",
+  "description": "Persistent memory for AI coding agents -- captures tool usage, compresses via LLM, injects context into future sessions. 12 hooks, 53 MCP tools, 8 skills, real-time viewer.",
+  "author": {
+    "name": "Tran Quang Dang",
+    "url": "https://github.com/quangdang46"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/quangdang46/mempalace",
+  "repository": "https://github.com/quangdang46/mempalace",
+  "skills": "skills/",
+  "mcpServers": ".mcp.copilot.json",
+  "hooks": "hooks/hooks.copilot.json"
+}

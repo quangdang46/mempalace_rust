@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mempalace": {
+      "command": "npx",
+      "args": ["-y", "@mempalace/mcp"],
+      "env": {
+        "MEMPALACE_URL": "${MEMPALACE_URL:-http://localhost:3111}",
+        "MEMPALACE_SECRET": "${MEMPALACE_SECRET:-}",
+        "MEMPALACE_TOOLS": "${MEMPALACE_TOOLS:-all}"
+      }
+    }
+  }
+}
