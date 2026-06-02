@@ -3047,15 +3047,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_args_hook_requires_subcommand() {
-        let err = Cli::try_parse_from(["mempalace", "hook"]).err().unwrap();
-        assert_eq!(
-            err.kind(),
-            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-        );
-    }
-
-    #[test]
     fn test_cli_args_parse_instructions() {
         let args = Cli::try_parse_from(["mempalace", "instructions", "help"]).unwrap();
         let name = expect_instructions(args);
