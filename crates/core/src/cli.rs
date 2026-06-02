@@ -2623,8 +2623,8 @@ mod tests {
     use super::{
         cmd_compress, cmd_init, cmd_mine, confirm_entities, detect_mining_mode,
         merge_detected_into_registry, run_instructions, save_detected_entities,
-        scan_and_detect_entities, Cli, Commands, DetectedEntities, InstructionName,
-        MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT, INSTRUCTION_MINE, INSTRUCTION_SEARCH,
+        scan_and_detect_entities, Cli, Commands, DetectedEntities, InstructionName, MiningMode,
+        INSTRUCTION_HELP, INSTRUCTION_INIT, INSTRUCTION_MINE, INSTRUCTION_SEARCH,
         INSTRUCTION_STATUS, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL, STOP_BLOCK_REASON,
     };
     use crate::config::Config;
