@@ -93,9 +93,6 @@ pub mod graph_retrieval;
 pub mod hermes_integration;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
-pub mod hooks_cli;
-#[doc(hidden)]
-#[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod i18n;
 pub mod insight_store;
 #[doc(hidden)]
@@ -228,10 +225,6 @@ pub mod skill_extract;
 pub mod sliding_window;
 #[doc(hidden)]
 pub mod verify;
-
-// Plugin discovery — scans filesystem for manifest.json files.
-pub mod plugins;
-
 // Agent adapter system — `mpr connect <agent-name>` for wiring MCP config.
 pub mod connect;
 

@@ -1197,7 +1197,6 @@ fn cmd_search(
     Ok(())
 }
 
-
 fn run_instructions(name: &str) -> Result<()> {
     let content = match name {
         "init" => INSTRUCTION_INIT,
@@ -2615,9 +2614,9 @@ mod tests {
         detect_mining_mode, hook_precompact_response, hook_session_start_response,
         hook_stop_response, merge_detected_into_registry, parse_harness_input, run_instructions,
         save_detected_entities, scan_and_detect_entities, Cli, Commands, DetectedEntities,
-        InstructionName, MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT,
-        INSTRUCTION_MINE, INSTRUCTION_SEARCH, INSTRUCTION_STATUS, PRECOMPACT_BLOCK_REASON,
-        SAVE_INTERVAL, STOP_BLOCK_REASON,
+        InstructionName, MiningMode, INSTRUCTION_HELP, INSTRUCTION_INIT, INSTRUCTION_MINE,
+        INSTRUCTION_SEARCH, INSTRUCTION_STATUS, PRECOMPACT_BLOCK_REASON, SAVE_INTERVAL,
+        STOP_BLOCK_REASON,
     };
     use crate::config::Config;
     use crate::entity_detector::{PersonEntity, ProjectEntity};
