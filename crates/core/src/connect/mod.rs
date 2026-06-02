@@ -31,15 +31,24 @@
 //! }
 //! ```
 
+pub mod amp;
 pub mod antigravity;
+pub mod claude_code;
 pub mod cline;
+pub mod codex;
 pub mod continue_dev;
+pub mod copilot_cli;
+pub mod cursor;
+pub mod droid;
+pub mod gemini_cli;
 pub mod json_mcp;
 pub mod kiro;
 pub mod openhuman;
 pub mod qwen;
 pub mod types;
+pub mod vscode;
 pub mod warp;
+pub mod windsurf;
 pub mod zed;
 
 pub use types::{ConnectOptions, ConnectResult};
@@ -78,6 +87,15 @@ fn all_adapters() -> Vec<Box<dyn ConnectAdapter>> {
         Box::new(openhuman::OpenHumanAdapter),
         Box::new(qwen::QwenAdapter),
         Box::new(antigravity::AntigravityAdapter),
+        Box::new(claude_code::ClaudeCodeAdapter),
+        Box::new(copilot_cli::CopilotCliAdapter),
+        Box::new(codex::CodexAdapter),
+        Box::new(cursor::CursorAdapter),
+        Box::new(gemini_cli::GeminiCliAdapter),
+        Box::new(windsurf::WindsurfAdapter),
+        Box::new(vscode::VsCodeAdapter),
+        Box::new(amp::AmpAdapter),
+        Box::new(droid::DroidAdapter),
     ]
 }
 
@@ -171,8 +189,7 @@ mod tests {
 
     #[test]
     fn test_list_adapters_count() {
-        // We implement exactly 8 adapters
-        assert_eq!(list_adapters().len(), 8);
+        assert_eq!(list_adapters().len(), 17);
     }
 
     #[test]
