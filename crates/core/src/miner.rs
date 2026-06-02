@@ -1796,10 +1796,10 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_text_multibyte_utf8_boundary() {
+    fn test_chunk_text_multibyte_utf8境界() {
         let miner = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(Miner::new(std::path::Path::new("/tmp"), "test", vec![]))
+            .block_on(Miner::new(std::env::temp_dir().as_path(), "test", vec![]))
             .expect("failed to create miner");
 
         let prefix = "a".repeat(CHUNK_SIZE - 1);
