@@ -501,6 +501,26 @@ pub trait MemoryProvider: Send + Sync + 'static {
     /// Search using a pre-computed embedding vector. Useful when the
     /// caller has already embedded (e.g. jcode's own embedder) and
     /// wants to reuse the vector rather than re-embed.
+    ///
+    /// ## Pre-embedding for batched queries
+    ///
+    /// If you have many queries to run in succession (a TUI agent doing
+    /// per-turn retrieval, a benchmark harness sweeping a query set, a
+    /// swarm coordinator fan-out), embed them once via
+    /// `provider.embedder().embed(query)` and pass the resulting
+    /// `Vec<f32>` here, rather than calling [`MemoryProvider::search`]
+    /// which re-embeds on every call. The embedder is exposed at
+    /// [`MemoryProvider::embedder`] for exactly this reason.
+    ///
+    /// ```ignore
+    /// let qv: Vec<f32> = provider.embedder().embed("auth decision")?;
+    /// let hits = provider.search_with_embedding(&qv, &SearchScope::default()).await?;
+    /// ```
+    ///
+    /// The embedder trait lives in `embed/mod.rs` — see
+    /// [`crate::embed::Embedder`] for the available backends (10 ship
+    /// in-tree: fastembed, model2vec, tract, clip, null, plus
+    /// openai/voyage/openrouter/gemini/cohere remote providers).
     async fn search_with_embedding(
         &self,
         query_vec: &[f32],
