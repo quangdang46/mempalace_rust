@@ -676,6 +676,8 @@ mod tests {
                         reinforcements: Vec::new(),
                         superseded_by: None,
                         active: true,
+                        confidence: 1.0,
+                        consolidation_strength: 1,
                     };
                     drawer.migrate_metadata();
                     drawers.push(drawer);
