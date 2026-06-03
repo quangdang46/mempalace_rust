@@ -174,6 +174,41 @@ pub fn default_retention_score(memory_id: &str) -> RetentionScore {
     }
 }
 
+/// Issue #30: jcode-compatible memory score.
+///
+/// Formula (matches jcode's `MemoryEntry::effective_confidence`):
+/// ```text
+///   score = confidence * 2^(-elapsed_days / half_life)
+///                * (1.0 + 0.1 * ln(max(1, access_count + 1)))
+/// ```
+///
+/// where `half_life` is the category-specific half-life (365d for
+/// `Correction`, 90d for `Preference`, 60d for `Entity`, 30d for
+/// `Fact` / default kinds, 45d for `Custom(_)`).
+///
+/// Returns 0.0 if `!drawer.active` — superseded memories are dormant
+/// until reactivated. Used by `MemoryProvider::recent()` as the
+/// ranking function.
+///
+/// The `now` parameter is exposed so tests can simulate time
+/// progression without sleeping.
+pub fn memory_score(
+    drawer: &crate::palace::Drawer,
+    now: DateTime<Utc>,
+) -> f64 {
+    if !drawer.active {
+        return 0.0;
+    }
+    let half_life = drawer.kind.half_life_days();
+    if half_life <= 0.0 {
+        return drawer.confidence;
+    }
+    let elapsed_days = (now - drawer.created_at).num_days().max(0) as f64;
+    let decay = (-std::f64::consts::LN_2 * elapsed_days / half_life).exp();
+    let access_boost = 1.0 + (drawer.access_count as f64 + 1.0).ln().max(0.0) * 0.1;
+    (drawer.confidence * decay * access_boost).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +387,55 @@ mod tests {
         assert_eq!(score.memory_id, "mem-test");
         assert!((score.retention_strength - 1.0).abs() < 0.01);
         assert_eq!(score.access_count, 0);
+    }
+
+    // Issue #30: memory_score
+
+    fn test_drawer(kind: crate::palace::DrawerKind, days_old: i64, access_count: u64) -> crate::palace::Drawer {
+        let mut d = crate::palace::Drawer::new("test content");
+        d.kind = kind;
+        d.created_at = Utc::now() - Duration::days(days_old);
+        d.confidence = 1.0;
+        d.access_count = access_count;
+        d.active = true;
+        d
+    }
+
+    #[test]
+    fn test_memory_score_fresh_fact_is_high() {
+        let d = test_drawer(crate::palace::DrawerKind::Fact, 0, 0);
+        let score = memory_score(&d, Utc::now());
+        // Fresh fact: confidence * 1.0 (no decay) * 1.0 (no access boost) = 1.0
+        assert!((score - 1.0).abs() < 0.01, "expected ~1.0, got {score}");
+    }
+
+    #[test]
+    fn test_memory_score_correction_decays_slower_than_fact() {
+        // After 30 days, a Correction (365d half-life) should score higher than a Fact (30d half-life)
+        let corr = test_drawer(crate::palace::DrawerKind::Correction, 30, 0);
+        let fact = test_drawer(crate::palace::DrawerKind::Fact, 30, 0);
+        let s_corr = memory_score(&corr, Utc::now());
+        let s_fact = memory_score(&fact, Utc::now());
+        assert!(
+            s_corr > s_fact,
+            "Correction should outscore Fact after 30d: corr={s_corr}, fact={s_fact}"
+        );
+    }
+
+    #[test]
+    fn test_memory_score_inactive_returns_zero() {
+        let mut d = test_drawer(crate::palace::DrawerKind::Fact, 0, 0);
+        d.active = false;
+        let score = memory_score(&d, Utc::now());
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn test_memory_score_access_count_boosts() {
+        let a = test_drawer(crate::palace::DrawerKind::Fact, 0, 0);
+        let b = test_drawer(crate::palace::DrawerKind::Fact, 0, 100);
+        let s_a = memory_score(&a, Utc::now());
+        let s_b = memory_score(&b, Utc::now());
+        assert!(s_b > s_a, "more accesses should boost score: a={s_a}, b={s_b}");
     }
 }
