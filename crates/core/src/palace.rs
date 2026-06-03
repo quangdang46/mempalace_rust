@@ -38,6 +38,7 @@
 //   worker tasks without leaking internal state.
 
 use async_trait::async_trait;
+use chrono::Utc;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -497,6 +498,32 @@ pub struct Drawer {
     /// `true`. Promoted from metadata in mp-migration 7/8.
     #[serde(default = "default_active")]
     pub active: bool,
+
+    // ---- First-class timestamps added in mp-25 ----
+    //
+    // These fields were previously stored only in `metadata` under
+    // the keys "created_at" / "filed_at" / "last_accessed". They are
+    // now typed fields so callers (jcode's `MemoryEntry`,
+    // `effective_confidence()`, `memory_score()`) can read them
+    // without parsing strings.
+    //
+    // `#[serde(default = "Utc::now")]` keeps backwards compatibility —
+    // drawers serialised before this change still load (they get
+    // `Utc::now()` at deserialise time, which is then overridden by
+    // `migrate_metadata` if the legacy metadata is present).
+    /// When this drawer was originally created. Mirrors
+    /// `metadata["created_at"]` (RFC 3339 string), with
+    /// `metadata["filed_at"]` as a fallback. Updated only at creation
+    /// time and lifted into a typed field in mp-25.
+    #[serde(default = "Utc::now")]
+    pub created_at: chrono::DateTime<Utc>,
+
+    /// When this drawer was last modified. Bumped by
+    /// [`Drawer::touch`] on every mutation and on re-upsert by
+    /// `PalaceStore::upsert`. Mirrors `metadata["last_accessed"]`
+    /// (RFC 3339 string) as a fallback during legacy migration.
+    #[serde(default = "Utc::now")]
+    pub updated_at: chrono::DateTime<Utc>,
 }
 
 fn default_active() -> bool {
@@ -521,6 +548,7 @@ pub struct Reinforcement {
 
 impl Drawer {
     pub fn new(content: impl Into<String>) -> Self {
+        let now = Utc::now();
         Self {
             id: None,
             content: content.into(),
@@ -537,7 +565,21 @@ impl Drawer {
             reinforcements: Vec::new(),
             superseded_by: None,
             active: true,
+            created_at: now,
+            updated_at: now,
         }
+    }
+
+    /// Bump `updated_at` to the current UTC time. Preserves
+    /// `created_at`. Called by mutating builder methods and by
+    /// `PalaceStore::upsert` on every write so re-upserts don't
+    /// silently rewrite history.
+    ///
+    /// mp-25: typed timestamps replace the ad-hoc
+    /// `metadata["last_accessed"]` string written by `boost` /
+    /// `decay` / `reinforce`.
+    pub fn touch(&mut self) {
+        self.updated_at = Utc::now();
     }
 
     pub fn kind(mut self, kind: DrawerKind) -> Self {
@@ -674,6 +716,57 @@ impl Drawer {
             }
         } else {
             self.metadata.remove("active");
+        }
+
+        // ---- mp-25: lift legacy timestamp metadata into typed fields ----
+        //
+        // The new typed `created_at` / `updated_at` fields default to
+        // `Utc::now()` at deserialise time (via `#[serde(default = "Utc::now")]`).
+        // That means a freshly-loaded legacy drawer already has a
+        // timestamp — but it's "now" rather than the original creation
+        // time. We override it here when the metadata carries a more
+        // accurate legacy value.
+        //
+        // created_at precedence:
+        //   1. metadata["created_at"] (RFC 3339) — the canonical jcode key
+        //   2. metadata["filed_at"]    (RFC 3339) — older alias
+        //   3. self.created_at         (the `Utc::now()` serde default)
+        // updated_at precedence:
+        //   1. metadata["last_accessed"] (RFC 3339) — most recent write
+        //   2. self.updated_at          (the `Utc::now()` serde default)
+        let parsed_created = self
+            .metadata
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|| {
+                self.metadata
+                    .get("filed_at")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+            });
+        if let Some(ts) = parsed_created {
+            // Only override if the parsed timestamp is *not* in the
+            // future relative to whatever serde gave us (sanity check).
+            if ts <= self.created_at {
+                self.created_at = ts;
+            }
+        }
+        // Always remove lifted keys so the legacy metadata doesn't
+        // re-introduce duplicates on the next round-trip.
+        self.metadata.remove("created_at");
+        self.metadata.remove("filed_at");
+
+        let parsed_updated = self.last_accessed;
+        if let Some(ts) = parsed_updated {
+            // Take the newer of the two so we never regress
+            // `updated_at` backwards (e.g. if the serde default was
+            // generated *after* `last_accessed` was written).
+            if ts > self.updated_at {
+                self.updated_at = ts;
+            }
         }
     }
 }
@@ -1616,6 +1709,204 @@ mod tests {
         let back: Drawer = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tags, vec!["a"]);
         assert_eq!(back.trust.as_deref(), Some("high"));
+    }
+
+    // ---- mp-25: created_at / updated_at timestamps ----
+
+    /// A freshly-built drawer has both timestamps set to roughly
+    /// `Utc::now()`, with `created_at == updated_at`.
+    #[test]
+    fn drawer_new_has_timestamps() {
+        let before = Utc::now();
+        let d = Drawer::new("hello");
+        let after = Utc::now();
+        assert!(d.created_at >= before && d.created_at <= after);
+        assert!(d.updated_at >= before && d.updated_at <= after);
+        // At construction, both timestamps should be equal (set from
+        // the same `now` variable in `new`).
+        assert_eq!(d.created_at, d.updated_at);
+    }
+
+    /// `touch()` bumps `updated_at` but leaves `created_at` alone.
+    #[test]
+    fn drawer_touch_bumps_updated_at_only() {
+        let d0 = Drawer::new("x");
+        let original_created = d0.created_at;
+        let original_updated = d0.updated_at;
+        // Force the clock forward a hair to make the bump observable.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let mut d = d0;
+        d.touch();
+        assert_eq!(d.created_at, original_created, "created_at must not move");
+        assert!(d.updated_at > original_updated, "updated_at must advance");
+    }
+
+    /// Calling `touch()` repeatedly always produces a non-decreasing
+    /// `updated_at` (and `created_at` is still untouched).
+    #[test]
+    fn drawer_touch_is_monotonic() {
+        let mut d = Drawer::new("x");
+        let original_created = d.created_at;
+        for _ in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            let prev = d.updated_at;
+            d.touch();
+            assert!(d.updated_at >= prev);
+        }
+        assert_eq!(d.created_at, original_created);
+    }
+
+    /// Round-tripping a drawer through JSON preserves both timestamps.
+    #[test]
+    fn drawer_timestamp_serde_roundtrip() {
+        let d = Drawer::new("hello");
+        let json = serde_json::to_string(&d).unwrap();
+        let back: Drawer = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.created_at, d.created_at);
+        assert_eq!(back.updated_at, d.updated_at);
+    }
+
+    /// A drawer serialised *without* the new timestamp fields loads
+    /// with `Utc::now()` defaults (backward compatibility).
+    #[test]
+    fn drawer_legacy_serde_load_with_timestamps() {
+        let json = r#"{
+            "content": "legacy drawer",
+            "kind": "fact",
+            "tier": "working"
+        }"#;
+        let before = Utc::now();
+        let d: Drawer = serde_json::from_str(json).unwrap();
+        let after = Utc::now();
+        // Serde default = Utc::now() at deserialise time.
+        assert!(d.created_at >= before && d.created_at <= after);
+        assert!(d.updated_at >= before && d.updated_at <= after);
+    }
+
+    /// `migrate_metadata()` lifts `metadata["created_at"]` (RFC 3339)
+    /// into the typed `created_at` field and removes the legacy key.
+    #[test]
+    fn drawer_migrate_lifts_created_at() {
+        let mut d = Drawer::new("legacy");
+        let original_created = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        d.metadata.insert(
+            "created_at".into(),
+            serde_json::Value::String(original_created.to_rfc3339()),
+        );
+        d.migrate_metadata();
+        assert_eq!(d.created_at, original_created);
+        assert!(!d.metadata.contains_key("created_at"));
+    }
+
+    /// `migrate_metadata()` falls back to `metadata["filed_at"]` when
+    /// `metadata["created_at"]` is absent.
+    #[test]
+    fn drawer_migrate_lifts_filed_at_as_fallback() {
+        let mut d = Drawer::new("legacy");
+        let filed = chrono::DateTime::parse_from_rfc3339("2021-06-15T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        d.metadata.insert(
+            "filed_at".into(),
+            serde_json::Value::String(filed.to_rfc3339()),
+        );
+        d.migrate_metadata();
+        assert_eq!(d.created_at, filed);
+        assert!(!d.metadata.contains_key("filed_at"));
+    }
+
+    /// `metadata["created_at"]` wins over `metadata["filed_at"]` when
+    /// both are present.
+    #[test]
+    fn drawer_migrate_created_at_beats_filed_at() {
+        let mut d = Drawer::new("legacy");
+        let created = chrono::DateTime::parse_from_rfc3339("2022-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let filed = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        d.metadata.insert(
+            "created_at".into(),
+            serde_json::Value::String(created.to_rfc3339()),
+        );
+        d.metadata.insert(
+            "filed_at".into(),
+            serde_json::Value::String(filed.to_rfc3339()),
+        );
+        d.migrate_metadata();
+        assert_eq!(d.created_at, created);
+    }
+
+    /// `migrate_metadata()` lifts `metadata["last_accessed"]` into
+    /// `updated_at` when the lifted value is newer than the existing
+    /// one (so we never regress the timestamp backwards).
+    #[test]
+    fn drawer_migrate_lifts_last_accessed_into_updated_at() {
+        let mut d = Drawer::new("legacy");
+        // Backdate the typed field so the lifted value wins.
+        d.updated_at = chrono::DateTime::parse_from_rfc3339("2019-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let last_access = chrono::DateTime::parse_from_rfc3339("2024-08-15T10:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        d.metadata.insert(
+            "last_accessed".into(),
+            serde_json::Value::String(last_access.to_rfc3339()),
+        );
+        d.migrate_metadata();
+        assert_eq!(d.updated_at, last_access);
+        assert!(!d.metadata.contains_key("last_accessed"));
+    }
+
+    /// A malformed timestamp in `metadata["created_at"]` is ignored
+    /// and the typed field keeps its serde default. The legacy key is
+    /// still removed (so a bad value doesn't poison future
+    /// round-trips).
+    #[test]
+    fn drawer_migrate_tolerates_bad_timestamp() {
+        let mut d = Drawer::new("legacy");
+        let original_created = d.created_at;
+        d.metadata.insert(
+            "created_at".into(),
+            serde_json::Value::String("not a real timestamp".into()),
+        );
+        d.migrate_metadata();
+        assert_eq!(d.created_at, original_created);
+        assert!(!d.metadata.contains_key("created_at"));
+    }
+
+    /// Simulates a re-upsert path: serialise → re-deserialise → touch
+    /// → serialise. The `created_at` should survive the round-trip
+    /// (serde preserves it as an RFC 3339 string) and `updated_at`
+    /// should advance after `touch()`.
+    #[test]
+    fn drawer_re_upsert_preserves_created_at_and_advances_updated_at() {
+        let mut d = Drawer::new("hello");
+        // Pin a known created_at so we can assert it survives.
+        d.created_at = chrono::DateTime::parse_from_rfc3339("2023-03-14T09:26:53Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        d.updated_at = d.created_at;
+
+        // Simulate the store round-trip.
+        let json = serde_json::to_string(&d).unwrap();
+        let mut back: Drawer = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.created_at, d.created_at);
+        assert_eq!(back.updated_at, d.updated_at);
+
+        // Simulate the next write happening later.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        back.touch();
+        assert_eq!(
+            back.created_at, d.created_at,
+            "created_at must be preserved across re-upsert"
+        );
+        assert!(back.updated_at > d.updated_at);
     }
 
     // mp-migration 8/8: graph_stats_legacy exists on the trait with the

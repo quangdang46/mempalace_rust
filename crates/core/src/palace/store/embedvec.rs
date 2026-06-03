@@ -105,10 +105,18 @@ impl PalaceStore for EmbedvecStore {
         }
 
         let mut inner = self.inner.lock().await;
+        // mp-25: touch() bumps `updated_at` on every write so the
+        // typed timestamp reflects the most recent upsert. The
+        // embedvec store doesn't persist metadata (it only stores
+        // the content vector), so `created_at` cannot be preserved
+        // across re-upserts at this tier — that's a pre-existing
+        // limitation. Higher tiers (usearch_sqlite) do preserve it
+        // via the `metadata` JSON column.
         let items: Vec<(String, String)> = drawers
             .into_iter()
             .enumerate()
-            .map(|(i, d)| {
+            .map(|(i, mut d)| {
+                d.touch();
                 let id =
                     d.id.map(|di| di.0)
                         .unwrap_or_else(|| format!("drawer-{}", i));
