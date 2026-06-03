@@ -526,6 +526,148 @@ pub trait MemoryProvider: Send + Sync + 'static {
     /// Statistics about the palace's knowledge graph.
     async fn graph_stats(&self) -> anyhow::Result<super::knowledge_graph::KgStats>;
 
+    // -----------------------------------------------------------------------
+    // Per-entry mutation methods (mp-migration 1/8)
+    //
+    // These methods give external consumers (jcode's adapter, third-party
+    // agents) a typed API for evolving drawer state without going through
+    // `add_drawer` (which is destructive) or raw `metadata` keys.
+    //
+    // All methods have default implementations that do a
+    // get-mutate-upsert dance. Implementations are encouraged to provide
+    // O(1) overrides when the underlying store supports it (e.g. an
+    // SQL `UPDATE WHERE id = ?`).
+    //
+    // The `where Self: Sized` bound is required because the default
+    // implementations take `self` by value into a free helper
+    // function (which needs `&dyn MemoryProvider` — a `?Sized` type).
+    // Trait implementers that need `?Sized` Self (very rare) can
+    // override these methods directly.
+    // -----------------------------------------------------------------------
+
+    /// Boost a drawer's relevance score. jcode's `boost_confidence`.
+    /// Default implementation reads the drawer, increments
+    /// `metadata["access_count"]`, updates `metadata["last_accessed"]`,
+    /// and upserts. `amount` is reserved for future use.
+    async fn boost(&self, id: &DrawerId, amount: f64) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        default_mutate_drawer(self, id, |d| {
+            let count = d
+                .metadata
+                .get("access_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .saturating_add(1);
+            d.metadata
+                .insert("access_count".to_string(), serde_json::json!(count));
+            d.metadata.insert(
+                "last_accessed".to_string(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
+            let _ = amount;
+        })
+        .await
+    }
+
+    /// Decay a drawer's relevance score. jcode's `decay_confidence`.
+    /// Default implementation updates `metadata["last_accessed"]` to
+    /// mark the decay event; the actual confidence value is
+    /// computed by `crate::retention::calculate_retention` at read time.
+    async fn decay(&self, id: &DrawerId, amount: f64) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        default_mutate_drawer(self, id, |d| {
+            d.metadata.insert(
+                "last_accessed".to_string(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
+            let _ = amount;
+        })
+        .await
+    }
+
+    /// Record a reinforcement — the same drawer was re-encountered in
+    /// a new session. jcode's `MemoryEntry::reinforce`.
+    /// Default implementation appends to
+    /// `metadata["reinforcements"]` and bumps `access_count`.
+    async fn reinforce(
+        &self,
+        id: &DrawerId,
+        session_id: &str,
+        message_index: usize,
+    ) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        let payload = serde_json::json!({
+            "session_id": session_id,
+            "message_index": message_index,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        default_mutate_drawer(self, id, move |d| {
+            let key = "reinforcements";
+            let mut arr: Vec<serde_json::Value> = d
+                .metadata
+                .get(key)
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            arr.push(payload);
+            d.metadata
+                .insert(key.to_string(), serde_json::Value::Array(arr));
+            let count = d
+                .metadata
+                .get("access_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .saturating_add(1);
+            d.metadata
+                .insert("access_count".to_string(), serde_json::json!(count));
+            d.metadata.insert(
+                "last_accessed".to_string(),
+                serde_json::json!(chrono::Utc::now().to_rfc3339()),
+            );
+        })
+        .await
+    }
+
+    /// Mark a drawer as superseded by another. jcode's
+    /// `MemoryEntry::supersede`. Default implementation sets
+    /// `metadata["superseded_by"]` and `metadata["active"] = false`
+    /// on the old drawer.
+    async fn supersede(&self, old_id: &DrawerId, new_id: &DrawerId) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        default_mutate_drawer(self, old_id, |d| {
+            d.metadata
+                .insert("superseded_by".to_string(), serde_json::json!(new_id.0));
+            d.metadata
+                .insert("active".to_string(), serde_json::json!(false));
+        })
+        .await
+    }
+
+    /// Set a single metadata key on a drawer. jcode's adapter uses
+    /// this for trust-level updates, source-URL updates, and similar
+    /// small per-entry edits.
+    async fn set_metadata(
+        &self,
+        id: &DrawerId,
+        key: String,
+        value: serde_json::Value,
+    ) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        default_mutate_drawer(self, id, |d| {
+            d.metadata.insert(key, value);
+        })
+        .await
+    }
+
     /// Stable identifier for this provider — used in audit logs and
     /// agent memory traces. Convention: `"mempalace:<palace_path_hash>"`.
     fn fingerprint(&self) -> &str;
@@ -579,6 +721,37 @@ pub struct Palace {
     pub llm: Option<Arc<dyn crate::llm::LlmProvider>>,
     /// Session store for lifecycle observations (Phase 0 / bead 0.3).
     pub sessions: Option<Arc<crate::session::SessionStore>>,
+}
+
+// ---------------------------------------------------------------------------
+// Default-implementation helpers (mp-migration 1/8)
+// ---------------------------------------------------------------------------
+
+/// Locate a drawer by id, run a mutation closure, and upsert the
+/// result. Used as the default implementation for the per-entry
+/// mutation methods on [`MemoryProvider`].
+///
+/// O(n) over `get_drawers(None, None)` — fine for the embedvec tier
+/// (≤5 k drawers). Implementations that target larger palaces
+/// (usearch, lancedb) should override the public mutation methods
+/// with a direct `WHERE id = ?` store call.
+///
+/// Walks the drawer list, finds the matching id, runs `f`, and
+/// upserts. Returns `Ok(())` silently if the id is not present —
+/// matches jcode's `forget` semantics (the "forget something that
+/// doesn't exist" case is a no-op, not an error).
+async fn default_mutate_drawer(
+    provider: &dyn MemoryProvider,
+    id: &DrawerId,
+    f: impl FnOnce(&mut Drawer),
+) -> anyhow::Result<()> {
+    let all = provider.get_drawers(None, None).await?;
+    let Some(mut drawer) = all.into_iter().find(|d| d.id.as_ref() == Some(id)) else {
+        return Ok(());
+    };
+    f(&mut drawer);
+    provider.store().upsert(vec![drawer]).await?;
+    Ok(())
 }
 
 impl std::fmt::Debug for Palace {
