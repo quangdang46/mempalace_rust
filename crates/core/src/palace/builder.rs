@@ -84,6 +84,12 @@ pub struct PalaceBuilder {
     store: Option<Arc<dyn super::PalaceStore>>,
     llm: Option<Arc<dyn crate::llm::LlmProvider>>,
     session_store: Option<Arc<crate::session::SessionStore>>,
+    /// mp-migration 5/8: optional callback fired from
+    /// `Palace::add_drawer` / `forget` / `search` etc. with an
+    /// `ActivityEvent`. Used by the jcode adapter to mirror jcode's
+    /// `MemoryEventSink = Arc<dyn Fn(ServerEvent)>` and feed the
+    /// `MemoryActivity` snapshot the TUI info widget reads.
+    activity_sink: Option<Arc<dyn Fn(super::ActivityEvent) + Send + Sync>>,
 }
 
 impl std::fmt::Debug for PalaceBuilder {
@@ -105,6 +111,7 @@ impl PalaceBuilder {
             store: None,
             llm: None,
             session_store: None,
+            activity_sink: None,
         }
     }
 
@@ -151,6 +158,21 @@ impl PalaceBuilder {
     /// When set, enables session tracking and observation storage.
     pub fn session_store(mut self, store: Arc<crate::session::SessionStore>) -> Self {
         self.session_store = Some(store);
+        self
+    }
+
+    /// Set the activity sink (mp-migration 5/8).
+    ///
+    /// When set, the [`Palace`] fires an [`super::ActivityEvent`] at
+    /// every meaningful point in the per-call pipeline (search start,
+    /// search done, found relevant, sidecar checking, extracting,
+    /// maintaining, tool action). jcode's adapter plugs this into
+    /// its `MemoryEventSink = Arc<dyn Fn(ServerEvent)>` to drive the
+    /// TUI info widget.
+    ///
+    /// Default: no sink. Calls complete silently.
+    pub fn activity_sink(mut self, sink: Arc<dyn Fn(super::ActivityEvent) + Send + Sync>) -> Self {
+        self.activity_sink = Some(sink);
         self
     }
 
@@ -227,6 +249,7 @@ impl PalaceBuilder {
             store,
             llm: self.llm,
             sessions: self.session_store,
+            activity_sink: self.activity_sink,
         })
     }
 }

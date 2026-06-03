@@ -579,6 +579,63 @@ pub struct Palace {
     pub llm: Option<Arc<dyn crate::llm::LlmProvider>>,
     /// Session store for lifecycle observations (Phase 0 / bead 0.3).
     pub sessions: Option<Arc<crate::session::SessionStore>>,
+    /// mp-migration 5/8: optional activity sink. When set, the
+    /// `Palace` impl fires `ActivityEvent`s at meaningful pipeline
+    /// points (search start/done, found relevant, tool action, etc).
+    /// Used by the jcode adapter to drive its `MemoryEventSink`.
+    pub activity_sink: Option<Arc<dyn Fn(ActivityEvent) + Send + Sync>>,
+}
+
+// ---------------------------------------------------------------------------
+// ActivityEvent (mp-migration 5/8)
+// ---------------------------------------------------------------------------
+
+/// A single lifecycle event from the palace's per-call pipeline.
+///
+/// Mirrors jcode's `MemoryEventKind` + `MemoryState` enums in a
+/// single struct. jcode's adapter maps these to its own
+/// `ServerEvent::MemoryActivity { activity }` shape.
+///
+/// The pipeline progresses as:
+///   Idle → Embedding → FoundRelevant → Idle
+///   Idle → Extracting → Idle
+///   Idle → Maintaining → Idle
+///   Idle → ToolAction → Idle  (for tool-driven calls)
+///
+/// `detail` carries an optional human-readable string (e.g. the
+/// query that was searched, the drawer id that was filed, the
+/// tag that was applied).
+#[derive(Debug, Clone)]
+pub struct ActivityEvent {
+    /// Pipeline state this event represents.
+    pub state: ActivityState,
+    /// Optional human-readable detail.
+    pub detail: Option<String>,
+    /// Wall-clock timestamp when the event was emitted.
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Pipeline state for an [`ActivityEvent`]. Mirrors jcode's
+/// `MemoryState` enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityState {
+    /// No activity. Default / after-pipeline.
+    Idle,
+    /// Running embedding search.
+    Embedding,
+    /// Sidecar (LLM) checking relevance of candidates.
+    SidecarChecking,
+    /// Embedding search found relevant results.
+    FoundRelevant,
+    /// Extracting memories from a transcript.
+    Extracting,
+    /// Background maintenance (consolidation, lesson decay, etc).
+    Maintaining,
+    /// Agent is using a memory tool (remember/recall/etc).
+    ToolAction {
+        /// "remember" | "recall" | "search" | "list" | "forget" | "tag" | "link" | "related"
+        action: &'static str,
+    },
 }
 
 impl std::fmt::Debug for Palace {
@@ -592,6 +649,19 @@ impl std::fmt::Debug for Palace {
 // ---------------------------------------------------------------------------
 
 impl Palace {
+    /// Fire an activity event if a sink is registered. mp-migration
+    /// 5/8. Called from the `impl MemoryProvider for Palace` methods
+    /// to publish state transitions; no-op when no sink is set.
+    fn emit_activity(&self, state: ActivityState, detail: Option<String>) {
+        if let Some(sink) = &self.activity_sink {
+            sink(ActivityEvent {
+                state,
+                detail,
+                timestamp: chrono::Utc::now(),
+            });
+        }
+    }
+
     fn derive_drawer_id(content: &str) -> DrawerId {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
