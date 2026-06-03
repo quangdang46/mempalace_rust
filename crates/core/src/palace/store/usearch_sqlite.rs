@@ -61,8 +61,52 @@ impl Inner {
             "INSERT OR REPLACE INTO drawers (id, content, kind, tier, wing, room, metadata)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
-        for drawer in drawers {
-            let id = drawer.id.map(|d| d.0).unwrap_or_default();
+        // mp-25: SELECT existing row's metadata first so we can preserve
+        // `created_at` across re-upserts. The schema doesn't have
+        // dedicated created_at/updated_at columns, so we piggyback on
+        // the `metadata` JSON column (re-parsed by `migrate_metadata`
+        // on the next read).
+        let mut lookup = self
+            .db
+            .prepare("SELECT metadata FROM drawers WHERE id = ?1")?;
+        for mut drawer in drawers {
+            let id = drawer.id.clone().map(|d| d.0).unwrap_or_default();
+            // Touch `updated_at` to mark this write. The serialised
+            // drawer that the caller passed in may carry a stale
+            // timestamp from when it was read out of the store
+            // minutes ago.
+            drawer.touch();
+            if let Some(prev_meta_str) = lookup
+                .query_row(rusqlite::params![id], |r| r.get::<_, String>(0))
+                .ok()
+            {
+                if let Ok(prev_meta) = serde_json::from_str::<
+                    std::collections::HashMap<String, serde_json::Value>,
+                >(&prev_meta_str)
+                {
+                    if let Some(prev_created) = prev_meta
+                        .get("created_at")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                    {
+                        // Preserve the original creation time, even if
+                        // the caller constructed a fresh Drawer that
+                        // says "now".
+                        drawer.created_at = prev_created;
+                    }
+                }
+            }
+            // Write the typed fields back into the metadata map so
+            // they survive the round-trip through SQLite.
+            drawer.metadata.insert(
+                "created_at".to_string(),
+                serde_json::Value::String(drawer.created_at.to_rfc3339()),
+            );
+            drawer.metadata.insert(
+                "updated_at".to_string(),
+                serde_json::Value::String(drawer.updated_at.to_rfc3339()),
+            );
             let kind = serde_json::to_string(&drawer.kind).unwrap_or_default();
             let tier = serde_json::to_string(&drawer.tier).unwrap_or_default();
             let metadata = serde_json::to_string(&drawer.metadata).unwrap_or_default();
@@ -117,6 +161,8 @@ impl Inner {
                 reinforcements: Vec::new(),
                 superseded_by: None,
                 active: true,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
             };
             drawer.migrate_metadata();
             Ok(Some(drawer))
@@ -162,6 +208,8 @@ impl Inner {
                 reinforcements: Vec::new(),
                 superseded_by: None,
                 active: true,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
             };
             drawer.migrate_metadata();
             drawers.push(drawer);

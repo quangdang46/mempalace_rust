@@ -676,6 +676,8 @@ mod tests {
                         reinforcements: Vec::new(),
                         superseded_by: None,
                         active: true,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
                     };
                     drawer.migrate_metadata();
                     drawers.push(drawer);
