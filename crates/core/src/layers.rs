@@ -649,7 +649,12 @@ mod tests {
                 for (i, id) in r.ids.iter().enumerate() {
                     let content = r.documents.get(i).cloned().unwrap_or_default();
                     let metadata = r.metadatas.get(i).cloned().unwrap_or_default();
-                    drawers.push(Drawer {
+                    // mp-migration 24/8: auto-migrate legacy drawers
+                    // on every read so callers (Layer 1 wake-up,
+                    // status, etc.) see the v1 (typed-field) shape
+                    // regardless of which Palace version wrote the
+                    // data.
+                    let mut drawer = Drawer {
                         id: Some(DrawerId(id.clone())),
                         content,
                         kind: DrawerKind::default(),
@@ -671,7 +676,9 @@ mod tests {
                         reinforcements: Vec::new(),
                         superseded_by: None,
                         active: true,
-                    });
+                    };
+                    drawer.migrate_metadata();
+                    drawers.push(drawer);
                 }
             }
             drawers.truncate(limit);

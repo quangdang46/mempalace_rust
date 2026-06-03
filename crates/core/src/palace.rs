@@ -39,6 +39,7 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use tracing::warn;
 
 pub mod builder;
 pub mod store;
@@ -420,7 +421,6 @@ pub struct Drawer {
     // direction (writing the typed field) is handled by
     // `migrate_metadata` which is called by `add_drawer` on the
     // embedvec path.
-
     /// First-class tags. Mirrors `metadata["tags"]` (Vec<String>).
     /// Promoted from metadata in mp-migration 7/8.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -554,8 +554,9 @@ impl Drawer {
     pub fn migrate_metadata(&mut self) {
         if self.tags.is_empty() {
             if let Some(v) = self.metadata.remove("tags") {
-                if let Ok(arr) = serde_json::from_value::<Vec<String>>(v) {
-                    self.tags = arr;
+                match serde_json::from_value::<Vec<String>>(v) {
+                    Ok(arr) => self.tags = arr,
+                    Err(e) => warn!("Drawer::migrate_metadata: failed to parse metadata['tags'] as Vec<String>: {}", e),
                 }
             }
         } else {
@@ -564,8 +565,12 @@ impl Drawer {
         }
         if self.trust.is_none() {
             if let Some(v) = self.metadata.remove("trust") {
-                if let Some(s) = v.as_str() {
-                    self.trust = Some(s.to_string());
+                match v.as_str() {
+                    Some(s) => self.trust = Some(s.to_string()),
+                    None => warn!(
+                        "Drawer::migrate_metadata: metadata['trust'] is not a string: {}",
+                        v
+                    ),
                 }
             }
         } else {
@@ -573,8 +578,12 @@ impl Drawer {
         }
         if self.access_count == 0 {
             if let Some(v) = self.metadata.remove("access_count") {
-                if let Some(n) = v.as_u64() {
-                    self.access_count = n;
+                match v.as_u64() {
+                    Some(n) => self.access_count = n,
+                    None => warn!(
+                        "Drawer::migrate_metadata: metadata['access_count'] is not a u64: {}",
+                        v
+                    ),
                 }
             }
         } else {
@@ -582,10 +591,12 @@ impl Drawer {
         }
         if self.last_accessed.is_none() {
             if let Some(v) = self.metadata.remove("last_accessed") {
-                if let Some(s) = v.as_str() {
-                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-                        self.last_accessed = Some(dt.with_timezone(&chrono::Utc));
-                    }
+                match v.as_str() {
+                    Some(s) => match chrono::DateTime::parse_from_rfc3339(s) {
+                        Ok(dt) => self.last_accessed = Some(dt.with_timezone(&chrono::Utc)),
+                        Err(e) => warn!("Drawer::migrate_metadata: failed to parse metadata['last_accessed'] as RFC 3339: {}", e),
+                    },
+                    None => warn!("Drawer::migrate_metadata: metadata['last_accessed'] is not a string: {}", v),
                 }
             }
         } else {
@@ -593,8 +604,9 @@ impl Drawer {
         }
         if self.reinforcements.is_empty() {
             if let Some(v) = self.metadata.remove("reinforcements") {
-                if let Ok(arr) = serde_json::from_value::<Vec<Reinforcement>>(v) {
-                    self.reinforcements = arr;
+                match serde_json::from_value::<Vec<Reinforcement>>(v) {
+                    Ok(arr) => self.reinforcements = arr,
+                    Err(e) => warn!("Drawer::migrate_metadata: failed to parse metadata['reinforcements'] as Vec<Reinforcement>: {}", e),
                 }
             }
         } else {
@@ -602,16 +614,26 @@ impl Drawer {
         }
         if self.superseded_by.is_none() {
             if let Some(v) = self.metadata.remove("superseded_by") {
-                if let Some(s) = v.as_str() {
-                    self.superseded_by = Some(DrawerId::new(s));
+                match v.as_str() {
+                    Some(s) => self.superseded_by = Some(DrawerId::new(s)),
+                    None => warn!(
+                        "Drawer::migrate_metadata: metadata['superseded_by'] is not a string: {}",
+                        v
+                    ),
                 }
             }
         } else {
             self.metadata.remove("superseded_by");
         }
-        if let Some(v) = self.metadata.remove("active") {
-            if let Some(b) = v.as_bool() {
-                self.active = b;
+        if self.active == default_active() {
+            if let Some(v) = self.metadata.remove("active") {
+                match v.as_bool() {
+                    Some(b) => self.active = b,
+                    None => warn!(
+                        "Drawer::migrate_metadata: metadata['active'] is not a bool: {}",
+                        v
+                    ),
+                }
             }
         } else {
             self.metadata.remove("active");
@@ -793,6 +815,12 @@ impl Palace {
 #[async_trait]
 impl MemoryProvider for Palace {
     async fn add_drawer(&self, drawer: Drawer) -> anyhow::Result<DrawerId> {
+        // mp-migration 24/8: auto-migrate legacy metadata on every
+        // write so this drawer is persisted in the new (v1) shape.
+        // Idempotent — repeated calls are no-ops once migrated.
+        let mut drawer = drawer;
+        drawer.migrate_metadata();
+
         let content = drawer.content.clone();
         let kind = drawer.kind;
         let id = Self::derive_drawer_id(&content);
@@ -882,6 +910,9 @@ impl MemoryProvider for Palace {
         scope: Option<&SearchScope>,
         limit: Option<usize>,
     ) -> anyhow::Result<Vec<Drawer>> {
+        // mp-migration 24/8: store-level reads (usearch_sqlite
+        // get_drawer_by_id/all_drawers, layers test adapter) already
+        // migrate. Palace delegates without duplicating work.
         self.store.get_drawers(scope, limit).await
     }
 
@@ -991,18 +1022,23 @@ mod tests {
         assert_eq!(d.access_count, 0);
         assert!(d.active);
         // Legacy data still in metadata.
-        assert_eq!(d.metadata.get("tags").unwrap(), &serde_json::json!(["a", "b"]));
+        assert_eq!(
+            d.metadata.get("tags").unwrap(),
+            &serde_json::json!(["a", "b"])
+        );
     }
 
     // mp-migration 7/8: migrate_metadata lifts legacy keys to typed fields.
     #[test]
     fn drawer_migrate_metadata() {
         let mut d = Drawer::new("legacy");
-        d.metadata.insert("tags".into(), serde_json::json!(["x", "y"]));
-        d.metadata.insert("trust".into(), serde_json::json!("medium"));
-        d.metadata.insert("access_count".into(), serde_json::json!(3));
         d.metadata
-            .insert("active".into(), serde_json::json!(true));
+            .insert("tags".into(), serde_json::json!(["x", "y"]));
+        d.metadata
+            .insert("trust".into(), serde_json::json!("medium"));
+        d.metadata
+            .insert("access_count".into(), serde_json::json!(3));
+        d.metadata.insert("active".into(), serde_json::json!(true));
         d.migrate_metadata();
         assert_eq!(d.tags, vec!["x", "y"]);
         assert_eq!(d.trust.as_deref(), Some("medium"));
@@ -1027,9 +1063,7 @@ mod tests {
     // mp-migration 7/8: round-trip serde preserves new fields.
     #[test]
     fn drawer_new_field_serde_roundtrip() {
-        let d = Drawer::new("hi")
-            .tags(vec!["a".into()])
-            .trust("high");
+        let d = Drawer::new("hi").tags(vec!["a".into()]).trust("high");
         let json = serde_json::to_string(&d).unwrap();
         let back: Drawer = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tags, vec!["a"]);
