@@ -393,6 +393,11 @@ pub struct Drawer {
     /// Arbitrary key-value metadata carried through to search results.
     /// Built-in keys: `source_file`, `created_at`, `filed_at`, `added_by`.
     /// Custom keys are allowed and forwarded to the vector store.
+    ///
+    /// New first-class fields ([`Drawer::tags`], [`Drawer::trust`],
+    /// [`Drawer::access_count`], etc.) are kept in sync with this map
+    /// by [`Drawer::migrate_metadata`] so callers that pre-date those
+    /// fields keep working.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub metadata: std::collections::HashMap<String, serde_json::Value>,
     /// IDs of drawers this drawer was derived from (mp-052 / ADR-10 / ADR-13).
@@ -401,6 +406,80 @@ pub struct Drawer {
     /// citation chains: "I used drawer #42 which came from session #abc-123".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub derived_from: Vec<DrawerId>,
+
+    // ---- First-class fields added in mp-migration 7/8 ----
+    //
+    // These fields were previously stored only in `metadata` under the
+    // keys "tags" / "trust" / "access_count" / "last_accessed" /
+    // "reinforcements" / "superseded_by" / "active". They are now
+    // promoted to typed fields for type-safe access from the
+    // `MemoryProvider` trait (boost/decay/reinforce/supersede/tag/link).
+    //
+    // `#[serde(default)]` keeps backwards compatibility — drawers
+    // serialised before this change still load cleanly. The reverse
+    // direction (writing the typed field) is handled by
+    // `migrate_metadata` which is called by `add_drawer` on the
+    // embedvec path.
+
+    /// First-class tags. Mirrors `metadata["tags"]` (Vec<String>).
+    /// Promoted from metadata in mp-migration 7/8.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+
+    /// Trust level. `"high" | "medium" | "low"`. Mirrors
+    /// `metadata["trust"]` (String). Promoted from metadata in
+    /// mp-migration 7/8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust: Option<String>,
+
+    /// How many times this drawer has been retrieved. Mirrors
+    /// `metadata["access_count"]` (u64). Promoted from metadata in
+    /// mp-migration 7/8. Updated by [`crate::retention::record_access`].
+    #[serde(default)]
+    pub access_count: u64,
+
+    /// Last time this drawer was retrieved. Mirrors
+    /// `metadata["last_accessed"]` (RFC 3339 string). Promoted from
+    /// metadata in mp-migration 7/8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_accessed: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// Reinforcement history. Mirrors `metadata["reinforcements"]`
+    /// (Vec<Reinforcement>). Promoted from metadata in mp-migration 7/8.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reinforcements: Vec<Reinforcement>,
+
+    /// If `Some`, this drawer has been superseded by the drawer with
+    /// this id. Mirrors `metadata["superseded_by"]` (String).
+    /// Promoted from metadata in mp-migration 7/8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<DrawerId>,
+
+    /// Whether this drawer is "active" (i.e. not superseded and not
+    /// deleted). Mirrors `metadata["active"]` (bool). Defaults to
+    /// `true`. Promoted from metadata in mp-migration 7/8.
+    #[serde(default = "default_active")]
+    pub active: bool,
+}
+
+fn default_active() -> bool {
+    true
+}
+
+/// A reinforcement breadcrumb — a record of when/where a drawer was
+/// reinforced (the same fact re-encountered in a new session).
+///
+/// Mirrors the `Reinforcement` struct in jcode's `memory_types::Reinforcement`.
+/// Promoted to a first-class type in mp-migration 7/8 so it can be
+/// referenced from the `MemoryProvider::reinforce` trait method.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct Reinforcement {
+    /// Session that reinforced the drawer.
+    pub session_id: String,
+    /// Message index within that session.
+    pub message_index: usize,
+    /// When the reinforcement happened.
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 impl Drawer {
@@ -414,6 +493,13 @@ impl Drawer {
             room: None,
             metadata: std::collections::HashMap::new(),
             derived_from: Vec::new(),
+            tags: Vec::new(),
+            trust: None,
+            access_count: 0,
+            last_accessed: None,
+            reinforcements: Vec::new(),
+            superseded_by: None,
+            active: true,
         }
     }
 
@@ -446,6 +532,90 @@ impl Drawer {
     pub fn derived_from(mut self, ids: Vec<DrawerId>) -> Self {
         self.derived_from = ids;
         self
+    }
+
+    /// Builder methods for the new first-class fields (mp-migration 7/8).
+    /// These mirror `metadata()` but write to the typed field.
+    pub fn tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    pub fn trust(mut self, trust: impl Into<String>) -> Self {
+        self.trust = Some(trust.into());
+        self
+    }
+
+    /// One-shot migration: if the typed fields are empty but the legacy
+    /// `metadata` keys are populated, lift them up. Idempotent — safe
+    /// to call repeatedly. Called by `add_drawer` on the embedvec path
+    /// before upsert so the typed fields always reflect the source of
+    /// truth on disk.
+    pub fn migrate_metadata(&mut self) {
+        if self.tags.is_empty() {
+            if let Some(v) = self.metadata.remove("tags") {
+                if let Ok(arr) = serde_json::from_value::<Vec<String>>(v) {
+                    self.tags = arr;
+                }
+            }
+        } else {
+            // Keep typed and metadata in sync.
+            self.metadata.remove("tags");
+        }
+        if self.trust.is_none() {
+            if let Some(v) = self.metadata.remove("trust") {
+                if let Some(s) = v.as_str() {
+                    self.trust = Some(s.to_string());
+                }
+            }
+        } else {
+            self.metadata.remove("trust");
+        }
+        if self.access_count == 0 {
+            if let Some(v) = self.metadata.remove("access_count") {
+                if let Some(n) = v.as_u64() {
+                    self.access_count = n;
+                }
+            }
+        } else {
+            self.metadata.remove("access_count");
+        }
+        if self.last_accessed.is_none() {
+            if let Some(v) = self.metadata.remove("last_accessed") {
+                if let Some(s) = v.as_str() {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                        self.last_accessed = Some(dt.with_timezone(&chrono::Utc));
+                    }
+                }
+            }
+        } else {
+            self.metadata.remove("last_accessed");
+        }
+        if self.reinforcements.is_empty() {
+            if let Some(v) = self.metadata.remove("reinforcements") {
+                if let Ok(arr) = serde_json::from_value::<Vec<Reinforcement>>(v) {
+                    self.reinforcements = arr;
+                }
+            }
+        } else {
+            self.metadata.remove("reinforcements");
+        }
+        if self.superseded_by.is_none() {
+            if let Some(v) = self.metadata.remove("superseded_by") {
+                if let Some(s) = v.as_str() {
+                    self.superseded_by = Some(DrawerId::new(s));
+                }
+            }
+        } else {
+            self.metadata.remove("superseded_by");
+        }
+        if let Some(v) = self.metadata.remove("active") {
+            if let Some(b) = v.as_bool() {
+                self.active = b;
+            }
+        } else {
+            self.metadata.remove("active");
+        }
     }
 }
 
@@ -773,5 +943,96 @@ mod tests {
         assert_eq!(d.wing, Some("driftwood".into()));
         assert_eq!(d.room, Some("auth-migration".into()));
         assert!(d.metadata.contains_key("source"));
+    }
+
+    // mp-migration 7/8: new Drawer fields default correctly.
+    #[test]
+    fn drawer_new_field_defaults() {
+        let d = Drawer::new("hello");
+        assert!(d.tags.is_empty());
+        assert!(d.trust.is_none());
+        assert_eq!(d.access_count, 0);
+        assert!(d.last_accessed.is_none());
+        assert!(d.reinforcements.is_empty());
+        assert!(d.superseded_by.is_none());
+        assert!(d.active);
+    }
+
+    // mp-migration 7/8: typed builder methods.
+    #[test]
+    fn drawer_typed_builders() {
+        let d = Drawer::new("use Clerk")
+            .tags(vec!["auth".into(), "decision".into()])
+            .trust("high");
+        assert_eq!(d.tags, vec!["auth", "decision"]);
+        assert_eq!(d.trust.as_deref(), Some("high"));
+    }
+
+    // mp-migration 7/8: backwards-compat serde load (old format).
+    #[test]
+    fn drawer_legacy_serde_load() {
+        // Simulates a JSON file written by the previous version where
+        // tags/trust/active were stored only in `metadata`.
+        let json = r#"{
+            "content": "legacy drawer",
+            "kind": "fact",
+            "tier": "working",
+            "metadata": {
+                "tags": ["a", "b"],
+                "trust": "low",
+                "access_count": 7,
+                "active": false
+            }
+        }"#;
+        let d: Drawer = serde_json::from_str(json).unwrap();
+        // Defaults applied to missing typed fields.
+        assert_eq!(d.tags, Vec::<String>::new());
+        assert_eq!(d.trust, None);
+        assert_eq!(d.access_count, 0);
+        assert!(d.active);
+        // Legacy data still in metadata.
+        assert_eq!(d.metadata.get("tags").unwrap(), &serde_json::json!(["a", "b"]));
+    }
+
+    // mp-migration 7/8: migrate_metadata lifts legacy keys to typed fields.
+    #[test]
+    fn drawer_migrate_metadata() {
+        let mut d = Drawer::new("legacy");
+        d.metadata.insert("tags".into(), serde_json::json!(["x", "y"]));
+        d.metadata.insert("trust".into(), serde_json::json!("medium"));
+        d.metadata.insert("access_count".into(), serde_json::json!(3));
+        d.metadata
+            .insert("active".into(), serde_json::json!(true));
+        d.migrate_metadata();
+        assert_eq!(d.tags, vec!["x", "y"]);
+        assert_eq!(d.trust.as_deref(), Some("medium"));
+        assert_eq!(d.access_count, 3);
+        // Metadata cleaned of lifted keys.
+        assert!(!d.metadata.contains_key("tags"));
+        assert!(!d.metadata.contains_key("trust"));
+        assert!(!d.metadata.contains_key("access_count"));
+        assert!(!d.metadata.contains_key("active"));
+    }
+
+    // mp-migration 7/8: migrate_metadata is idempotent.
+    #[test]
+    fn drawer_migrate_metadata_idempotent() {
+        let mut d = Drawer::new("legacy");
+        d.metadata.insert("tags".into(), serde_json::json!(["x"]));
+        d.migrate_metadata();
+        d.migrate_metadata();
+        assert_eq!(d.tags, vec!["x"]);
+    }
+
+    // mp-migration 7/8: round-trip serde preserves new fields.
+    #[test]
+    fn drawer_new_field_serde_roundtrip() {
+        let d = Drawer::new("hi")
+            .tags(vec!["a".into()])
+            .trust("high");
+        let json = serde_json::to_string(&d).unwrap();
+        let back: Drawer = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tags, vec!["a"]);
+        assert_eq!(back.trust.as_deref(), Some("high"));
     }
 }
