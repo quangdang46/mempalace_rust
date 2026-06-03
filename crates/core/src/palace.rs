@@ -218,7 +218,7 @@ impl SearchScope {
 ///
 /// Used by the library API to disambiguate reads that could touch either
 /// the global palace or the project-local palace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum MemoryScope {
     /// Read/write only the project-local palace (from
@@ -230,6 +230,43 @@ pub enum MemoryScope {
     /// Default for standalone CLI usage.
     #[default]
     Auto,
+    // -- mp-migration 3/8: jcode-compat multi-scope variants --
+    /// Read/write both local and global palaces in a single call
+    /// (jcode's `MemoryScope::All`). The default implementation
+    /// fans out to the local + global palaces and merges results.
+    All,
+    /// Read/write only the named wing (jcode's per-wing scoping).
+    /// String is the wing name (e.g. "driftwood", "wing_kai").
+    Wing(String),
+    /// Read/write only the named (wing, room) tuple.
+    Room { wing: String, room: String },
+}
+
+impl MemoryScope {
+    /// Does this scope include the project-local palace?
+    /// Maps to jcode's `MemoryScope::includes_project()`.
+    pub fn includes_project(&self) -> bool {
+        match self {
+            MemoryScope::Local | MemoryScope::Auto | MemoryScope::All => true,
+            MemoryScope::Global => false,
+            MemoryScope::Wing(_) | MemoryScope::Room { .. } => true, // named scopes are in the local palace
+        }
+    }
+
+    /// Does this scope include the global palace?
+    /// Maps to jcode's `MemoryScope::includes_global()`.
+    pub fn includes_global(&self) -> bool {
+        match self {
+            MemoryScope::Global | MemoryScope::All => true,
+            MemoryScope::Local | MemoryScope::Auto => false,
+            MemoryScope::Wing(_) | MemoryScope::Room { .. } => false, // named scopes are in the local palace
+        }
+    }
+
+    /// True if this is the jcode-compat `All` variant.
+    pub fn is_all(&self) -> bool {
+        matches!(self, MemoryScope::All)
+    }
 }
 
 /// Retrieval fusion mode for combining vector and graph-based search.
