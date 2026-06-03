@@ -544,6 +544,110 @@ pub trait MemoryProvider: Send + Sync + 'static {
         scope: Option<&SearchScope>,
         limit: Option<usize>,
     ) -> anyhow::Result<Vec<Drawer>>;
+
+    // -----------------------------------------------------------------------
+    // Retention-ranked recall (mp-migration 4/8)
+    // -----------------------------------------------------------------------
+
+    /// Return the N most retention-relevant drawers, sorted by
+    /// Ebbinghaus-style decay + access frequency. jcode's
+    /// `recall --mode recent` (no query) and the L1 wake-up layer
+    /// both need this.
+    ///
+    /// The default implementation walks `get_drawers(None, None)` and
+    /// scores each drawer with a simple formula that mirrors
+    /// `crate::retention::calculate_retention` but operates on
+    /// metadata fields rather than the typed `Memory` struct:
+    ///
+    /// ```text
+    ///   score = access_count / (1 + days_since_last_accessed)
+    /// ```
+    ///
+    /// Drawers that have never been accessed fall back to
+    /// `last_updated` (or, if neither is recorded, to `now`)
+    /// and start with `access_count = 0`.
+    ///
+    /// Implementations with a wired KG should override and use
+    /// `kg.helpfulness_score(id)` (which already factors in
+    /// episodic memory feedback) — that gives strictly better
+    /// ranking than the metadata-only default.
+    async fn recent(
+        &self,
+        limit: usize,
+        scope: Option<&SearchScope>,
+    ) -> anyhow::Result<Vec<SearchHit>>
+    where
+        Self: Sized,
+    {
+        use std::cmp::Ordering;
+
+        let now = chrono::Utc::now();
+        // Pull a generous superset and trim to `limit` after ranking.
+        // For embedvec (≤5 k drawers) this is one call; larger
+        // palaces should override with an indexed path.
+        let pull_limit = if scope.is_some() { limit.max(64) } else { 4096 };
+        let drawers = self.get_drawers(scope, Some(pull_limit)).await?;
+
+        // Score each drawer.
+        let mut scored: Vec<(Drawer, f64)> = drawers
+            .into_iter()
+            .map(|d| {
+                let access_count: u64 = d
+                    .metadata
+                    .get("access_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let last_accessed: Option<chrono::DateTime<chrono::Utc>> = d
+                    .metadata
+                    .get("last_accessed")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc));
+                let last_updated = last_accessed.unwrap_or(now);
+                let days = (now - last_updated).num_days().max(0) as f64;
+                let score = (access_count as f64 + 1.0) / (1.0 + days);
+                (d, score)
+            })
+            .collect();
+
+        // Highest score first; tie-break by most-recently-accessed.
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| {
+                    let a_time =
+                        a.0.metadata
+                            .get("last_accessed")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                    let b_time =
+                        b.0.metadata
+                            .get("last_accessed")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                    b_time.cmp(a_time)
+                })
+        });
+
+        Ok(scored
+            .into_iter()
+            .take(limit)
+            .map(|(d, score)| SearchHit {
+                text: d.content,
+                wing: d.wing,
+                room: d.room,
+                source_file: d
+                    .metadata
+                    .get("source_file")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                similarity: score,
+                bm25_score: None,
+                combined_score: None,
+            })
+            .collect())
+    }
 }
 
 // ---------------------------------------------------------------------------
