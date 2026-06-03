@@ -602,16 +602,23 @@ impl Drawer {
         }
     }
 
-    /// Bump `updated_at` to the current UTC time. Preserves
-    /// `created_at`. Called by mutating builder methods and by
-    /// `PalaceStore::upsert` on every write so re-upserts don't
-    /// silently rewrite history.
+    /// Bump `updated_at` to the current UTC time and refresh
+    /// `last_accessed` so subsequent Ebbinghaus decay starts from this
+    /// point. Preserves `created_at`. Called by mutating builder
+    /// methods and by `PalaceStore::upsert` on every write so re-upserts
+    /// don't silently rewrite history. Also used by
+    /// `MemoryProvider::boost` and `MemoryProvider::reinforce` to refresh
+    /// the decay clock (issue #26).
     ///
     /// mp-25: typed timestamps replace the ad-hoc
     /// `metadata["last_accessed"]` string written by `boost` /
     /// `decay` / `reinforce`.
+    /// mp-26: combined with the legacy `last_accessed` refresh in one
+    /// method so callers can use a single `touch()` for both concerns.
     pub fn touch(&mut self) {
-        self.updated_at = Utc::now();
+        let now = Utc::now();
+        self.updated_at = now;
+        self.last_accessed = Some(now);
     }
 
     pub fn kind(mut self, kind: DrawerKind) -> Self {
@@ -667,14 +674,6 @@ impl Drawer {
     pub fn consolidation_strength(mut self, strength: u32) -> Self {
         self.consolidation_strength = strength;
         self
-    }
-
-    /// Update `last_accessed` to `now` so subsequent Ebbinghaus decay
-    /// starts from this point. Used by `MemoryProvider::boost` and
-    /// `MemoryProvider::reinforce` to refresh the decay clock
-    /// (issue #26).
-    pub fn touch(&mut self) {
-        self.last_accessed = Some(chrono::Utc::now());
     }
 
     /// One-shot migration: if the typed fields are empty but the legacy
