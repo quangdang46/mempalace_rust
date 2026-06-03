@@ -377,6 +377,9 @@ pub fn extract_memories(text: &str, min_confidence: f32) -> Vec<Classification> 
 
         // Score against all types
         let mut scores = std::collections::HashMap::new();
+        // Issue #29: keep the matched marker strings so callers can
+        // promote them to drawer tags without re-running the regexes.
+        let mut keywords: Vec<String> = Vec::new();
         let all_markers = [
             ("decision", DECISION_MARKERS),
             ("preference", PREFERENCE_MARKERS),
@@ -386,9 +389,10 @@ pub fn extract_memories(text: &str, min_confidence: f32) -> Vec<Classification> 
         ];
 
         for (mem_type, markers) in &all_markers {
-            let (score, _) = score_markers(&prose, markers);
+            let (score, mut marker_keywords) = score_markers(&prose, markers);
             if score > 0.0 {
                 scores.insert(*mem_type, score);
+                keywords.append(&mut marker_keywords);
             }
         }
 
@@ -426,11 +430,15 @@ pub fn extract_memories(text: &str, min_confidence: f32) -> Vec<Classification> 
             continue;
         }
 
+        keywords.sort();
+        keywords.dedup();
+
         memories.push(Classification {
             memory_type: final_type,
             confidence,
             text: segment.trim().to_string(),
             chunk_index: memories.len(),
+            keywords,
         });
     }
 
@@ -566,6 +574,13 @@ pub struct Classification {
     pub confidence: f32,
     pub text: String,
     pub chunk_index: usize,
+    /// Marker keywords / phrases that triggered the classification.
+    /// Populated by [`extract_memories`] (issue #29) so callers can
+    /// promote them to drawer tags without re-running the regexes.
+    /// Empty for `classify()`-style helpers that don't keep the score
+    /// breakdown.
+    #[non_exhaustive]
+    pub keywords: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -584,6 +599,46 @@ impl MemoryType {
             MemoryType::Milestone => "milestone",
             MemoryType::Problem => "problem",
             MemoryType::Emotional => "emotional",
+        }
+    }
+
+    /// Map a heuristic memory type onto mempalace's `DrawerKind`
+    /// vocabulary (issue #29).
+    ///
+    /// This is the canonical bridge from `general_extractor`'s
+    /// regex-classified output to the palace's storage
+    /// taxonomy. Used by
+    /// [`crate::palace::MemoryProvider::extract_from_transcript`].
+    ///
+    /// Mapping:
+    /// ```text
+    ///   Decision   -> Fact         (a choice / configuration is a fact)
+    ///   Preference -> Preference   (direct match)
+    ///   Milestone  -> Discovery    (a "we finally got it" is a discovery)
+    ///   Problem    -> Advice       (a "this broke / here is the fix"
+    ///                               is advice for next time)
+    ///   Emotional  -> Raw          (verbatim feelings — no hall)
+    /// ```
+    ///
+    /// The `text` argument lets a `Problem` carrying strong "fix /
+    /// wrong / bug" markers map to a Correction-style hall once that
+    /// variant lands in `DrawerKind`; today it still resolves to
+    /// `Advice`, which is the closest existing match (issue #28
+    /// tracks the broader kind-alignment work).
+    pub fn to_drawer_kind(&self, text: &str) -> crate::palace::DrawerKind {
+        match self {
+            MemoryType::Decision => crate::palace::DrawerKind::Fact,
+            MemoryType::Preference => crate::palace::DrawerKind::Preference,
+            MemoryType::Milestone => crate::palace::DrawerKind::Discovery,
+            MemoryType::Problem => {
+                // The "Correction" sub-flavor is reserved for when
+                // DrawerKind grows a Correction variant (issue #28).
+                // For now, route problems to Advice — both are
+                // "here's what to do about it" halls.
+                let _ = text; // acknowledged but unused today
+                crate::palace::DrawerKind::Advice
+            }
+            MemoryType::Emotional => crate::palace::DrawerKind::Raw,
         }
     }
 }
