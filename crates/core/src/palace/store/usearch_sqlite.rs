@@ -107,6 +107,13 @@ impl Inner {
                 room: row.get(5)?,
                 metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
                 derived_from: vec![],
+                tags: Vec::new(),
+                trust: None,
+                access_count: 0,
+                last_accessed: None,
+                reinforcements: Vec::new(),
+                superseded_by: None,
+                active: true,
             }))
         } else {
             Ok(None)
@@ -141,6 +148,13 @@ impl Inner {
                 room: row.get(5)?,
                 metadata: serde_json::from_str(&metadata_str).unwrap_or_default(),
                 derived_from: vec![],
+                tags: Vec::new(),
+                trust: None,
+                access_count: 0,
+                last_accessed: None,
+                reinforcements: Vec::new(),
+                superseded_by: None,
+                active: true,
             });
         }
         Ok(drawers)

@@ -664,6 +664,13 @@ mod tests {
                             .map(String::from),
                         metadata,
                         derived_from: Vec::new(),
+                        tags: Vec::new(),
+                        trust: None,
+                        access_count: 0,
+                        last_accessed: None,
+                        reinforcements: Vec::new(),
+                        superseded_by: None,
+                        active: true,
                     });
                 }
             }
