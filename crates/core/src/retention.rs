@@ -206,7 +206,12 @@ pub fn memory_score(
     let elapsed_days = (now - drawer.created_at).num_days().max(0) as f64;
     let decay = (-std::f64::consts::LN_2 * elapsed_days / half_life).exp();
     let access_boost = 1.0 + (drawer.access_count as f64 + 1.0).ln().max(0.0) * 0.1;
-    (drawer.confidence * decay * access_boost).clamp(0.0, 1.0)
+    // Note: we don't clamp the final score to 1.0 — the access_boost
+    // is intentionally unbounded so a heavily-accessed drawer can score
+    // above 1.0 (this is how jcode surfaces "high-traffic" memories).
+    // Decay always returns <= 1.0, so the score is bounded above by
+    // `access_boost` and below by 0.0.
+    (drawer.confidence * decay * access_boost).max(0.0)
 }
 
 #[cfg(test)]
