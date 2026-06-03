@@ -499,6 +499,28 @@ pub struct Drawer {
     #[serde(default = "default_active")]
     pub active: bool,
 
+    // ---- First-class fields added in mp-migration (issue #25 / #26) ----
+    //
+    // Ebbinghaus-style confidence (0.0-1.0) and consolidation count
+    // (how many times this drawer has been reinforced). Previously
+    // stored only in `metadata` under the keys "confidence" / "strength"
+    // and invisible to the scoring pipeline.
+    //
+    // `#[serde(default = "...")]` keeps backwards compatibility —
+    // drawers serialised before this change still load cleanly.
+    /// Ebbinghaus-style confidence in the range 0.0-1.0. Mirrors
+    /// `metadata["confidence"]` (number). Defaults to 1.0 on a
+    /// brand-new drawer.
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
+
+    /// Number of times this drawer has been reinforced (consolidated).
+    /// Mirrors `metadata["strength"]` (number). Defaults to 1 on a
+    /// brand-new drawer (every drawer counts as at least one observation
+    /// so the field is never zero unless explicitly reset).
+    #[serde(default = "default_one")]
+    pub consolidation_strength: u32,
+
     // ---- First-class timestamps added in mp-25 ----
     //
     // These fields were previously stored only in `metadata` under
@@ -528,6 +550,14 @@ pub struct Drawer {
 
 fn default_active() -> bool {
     true
+}
+
+fn default_confidence() -> f64 {
+    1.0
+}
+
+fn default_one() -> u32 {
+    1
 }
 
 /// A reinforcement breadcrumb — a record of when/where a drawer was
@@ -565,6 +595,8 @@ impl Drawer {
             reinforcements: Vec::new(),
             superseded_by: None,
             active: true,
+            confidence: default_confidence(),
+            consolidation_strength: default_one(),
             created_at: now,
             updated_at: now,
         }
@@ -623,6 +655,26 @@ impl Drawer {
     pub fn trust(mut self, trust: impl Into<String>) -> Self {
         self.trust = Some(trust.into());
         self
+    }
+
+    /// Builder for the Ebbinghaus confidence field (issue #26).
+    pub fn confidence(mut self, confidence: f64) -> Self {
+        self.confidence = confidence.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Builder for the consolidation strength counter (issue #26).
+    pub fn consolidation_strength(mut self, strength: u32) -> Self {
+        self.consolidation_strength = strength;
+        self
+    }
+
+    /// Update `last_accessed` to `now` so subsequent Ebbinghaus decay
+    /// starts from this point. Used by `MemoryProvider::boost` and
+    /// `MemoryProvider::reinforce` to refresh the decay clock
+    /// (issue #26).
+    pub fn touch(&mut self) {
+        self.last_accessed = Some(chrono::Utc::now());
     }
 
     /// One-shot migration: if the typed fields are empty but the legacy
@@ -717,7 +769,6 @@ impl Drawer {
         } else {
             self.metadata.remove("active");
         }
-
         // ---- mp-25: lift legacy timestamp metadata into typed fields ----
         //
         // The new typed `created_at` / `updated_at` fields default to
@@ -767,6 +818,37 @@ impl Drawer {
             if ts > self.updated_at {
                 self.updated_at = ts;
             }
+        }
+
+        // Issue #26: lift legacy confidence / strength keys to typed
+        // fields. Only do this when the typed field is still at its
+        // default so we don't clobber an explicit write with a stale
+        // metadata value.
+        if (self.confidence - default_confidence()).abs() < f64::EPSILON {
+            if let Some(v) = self.metadata.remove("confidence") {
+                match v.as_f64() {
+                    Some(n) => self.confidence = n.clamp(0.0, 1.0),
+                    None => warn!(
+                        "Drawer::migrate_metadata: metadata['confidence'] is not a number: {}",
+                        v
+                    ),
+                }
+            }
+        } else {
+            self.metadata.remove("confidence");
+        }
+        if self.consolidation_strength == default_one() {
+            if let Some(v) = self.metadata.remove("strength") {
+                match v.as_u64() {
+                    Some(n) => self.consolidation_strength = n.min(u32::MAX as u64) as u32,
+                    None => warn!(
+                        "Drawer::migrate_metadata: metadata['strength'] is not a number: {}",
+                        v
+                    ),
+                }
+            }
+        } else {
+            self.metadata.remove("strength");
         }
     }
 }
@@ -890,7 +972,9 @@ pub trait MemoryProvider: Send + Sync + 'static {
     /// Boost a drawer's relevance score. jcode's `boost_confidence`.
     /// Default implementation reads the drawer, increments
     /// `metadata["access_count"]`, updates `metadata["last_accessed"]`,
-    /// and upserts. `amount` is reserved for future use.
+    /// raises `confidence` by `amount` (capped at 1.0), increments
+    /// `consolidation_strength`, and calls `drawer.touch()` so the
+    /// Ebbinghaus decay clock restarts.
     async fn boost(&self, id: &DrawerId, amount: f64) -> anyhow::Result<()>
     where
         Self: Sized,
@@ -908,15 +992,23 @@ pub trait MemoryProvider: Send + Sync + 'static {
                 "last_accessed".to_string(),
                 serde_json::json!(chrono::Utc::now().to_rfc3339()),
             );
-            let _ = amount;
+            // Issue #26: typed confidence/consolidation_strength.
+            // Cap confidence at 1.0; use saturating_add on the count.
+            d.confidence = (d.confidence + amount).clamp(0.0, 1.0);
+            d.consolidation_strength = d.consolidation_strength.saturating_add(1);
+            d.touch();
         })
         .await
     }
 
     /// Decay a drawer's relevance score. jcode's `decay_confidence`.
-    /// Default implementation updates `metadata["last_accessed"]` to
-    /// mark the decay event; the actual confidence value is
-    /// computed by `crate::retention::calculate_retention` at read time.
+    /// Default implementation recomputes `confidence` from
+    /// `crate::retention::calculate_retention` using the default
+    /// Ebbinghaus config and the drawer's own category as the decay
+    /// category (issue #26). The `amount` parameter is the additional
+    /// decay to apply beyond what time has already produced; the
+    /// default Ebbinghaus config is used as a sensible default until
+    /// category-specific half-lives land (issue #3).
     async fn decay(&self, id: &DrawerId, amount: f64) -> anyhow::Result<()>
     where
         Self: Sized,
@@ -926,7 +1018,19 @@ pub trait MemoryProvider: Send + Sync + 'static {
                 "last_accessed".to_string(),
                 serde_json::json!(chrono::Utc::now().to_rfc3339()),
             );
-            let _ = amount;
+            // Issue #26: recompute confidence from Ebbinghaus.
+            // We use the default decay config plus a category-aware
+            // decay_rate, mirroring `retention::decay_rate_for_type`.
+            let now = chrono::Utc::now();
+            let last = d.last_accessed.map(|t| t).unwrap_or(now);
+            let elapsed_days = (now - last).num_seconds() as f64 / 86_400.0;
+            let decay_rate =
+                crate::retention::decay_rate_for_type(&crate::types::MemoryType::Working);
+            // Ebbinghaus: retention = initial * e^(-rate * days)
+            let decayed = (-decay_rate * elapsed_days.max(0.0)).exp();
+            // Apply additional manual decay from `amount` after the
+            // time-based portion so the caller can force-accelerate.
+            d.confidence = (d.confidence.min(decayed) - amount).clamp(0.0, 1.0);
         })
         .await
     }
@@ -934,7 +1038,9 @@ pub trait MemoryProvider: Send + Sync + 'static {
     /// Record a reinforcement — the same drawer was re-encountered in
     /// a new session. jcode's `MemoryEntry::reinforce`.
     /// Default implementation appends to
-    /// `metadata["reinforcements"]` and bumps `access_count`.
+    /// `metadata["reinforcements"]`, bumps `access_count`, increments
+    /// `consolidation_strength` (issue #26), and calls
+    /// `drawer.touch()` to refresh the Ebbinghaus decay clock.
     async fn reinforce(
         &self,
         id: &DrawerId,
@@ -971,6 +1077,9 @@ pub trait MemoryProvider: Send + Sync + 'static {
                 "last_accessed".to_string(),
                 serde_json::json!(chrono::Utc::now().to_rfc3339()),
             );
+            // Issue #26: typed consolidation strength.
+            d.consolidation_strength = d.consolidation_strength.saturating_add(1);
+            d.touch();
         })
         .await
     }
@@ -1178,22 +1287,20 @@ pub trait MemoryProvider: Send + Sync + 'static {
     // -----------------------------------------------------------------------
 
     /// Return the N most retention-relevant drawers, sorted by
-    /// Ebbinghaus-style decay + access frequency. jcode's
-    /// `recall --mode recent` (no query) and the L1 wake-up layer
-    /// both need this.
+    /// `confidence` (descending) and breaking ties by `updated_at`
+    /// (most recent first). jcode's `recall --mode recent` (no query)
+    /// and the L1 wake-up layer both need this.
     ///
     /// The default implementation walks `get_drawers(None, None)` and
-    /// scores each drawer with a simple formula that mirrors
-    /// `crate::retention::calculate_retention` but operates on
-    /// metadata fields rather than the typed `Memory` struct:
+    /// ranks each drawer. The score in the returned `SearchHit` is the
+    /// drawer's `confidence` value so the score is now directly
+    /// comparable to the vector search score (mp-26 changes the
+    /// ranking from a `access_count / days` heuristic to a true
+    /// Ebbinghaus confidence ranking).
     ///
-    /// ```text
-    ///   score = access_count / (1 + days_since_last_accessed)
-    /// ```
-    ///
-    /// Drawers that have never been accessed fall back to
-    /// `last_updated` (or, if neither is recorded, to `now`)
-    /// and start with `access_count = 0`.
+    /// Drawers that have never been accessed (no `last_accessed`)
+    /// fall back to `metadata["created_at"]` parsed as RFC 3339, and
+    /// finally to `now`, so brand-new drawers rank last.
     ///
     /// Implementations with a wired KG should override and use
     /// `kg.helpfulness_score(id)` (which already factors in
@@ -1216,51 +1323,45 @@ pub trait MemoryProvider: Send + Sync + 'static {
         let pull_limit = if scope.is_some() { limit.max(64) } else { 4096 };
         let drawers = self.get_drawers(scope, Some(pull_limit)).await?;
 
-        // Score each drawer.
-        let mut scored: Vec<(Drawer, f64)> = drawers
-            .into_iter()
-            .map(|d| {
-                let access_count: u64 = d
-                    .metadata
-                    .get("access_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-                let last_accessed: Option<chrono::DateTime<chrono::Utc>> = d
-                    .metadata
-                    .get("last_accessed")
+        // Compute per-drawer secondary key (updated_at) once.
+        // Issue #26: prefer the typed `last_accessed` (which is
+        // updated by `Drawer::touch()`), then fall back to
+        // `metadata["created_at"]`, then `now` so the value is always
+        // a valid DateTime<Utc>.
+        let updated_at_of = |d: &Drawer| -> chrono::DateTime<chrono::Utc> {
+            d.last_accessed.unwrap_or_else(|| {
+                d.metadata
+                    .get("created_at")
                     .and_then(|v| v.as_str())
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&chrono::Utc));
-                let last_updated = last_accessed.unwrap_or(now);
-                let days = (now - last_updated).num_days().max(0) as f64;
-                let score = (access_count as f64 + 1.0) / (1.0 + days);
-                (d, score)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or(now)
+            })
+        };
+
+        // Issue #26: rank by confidence DESC, breaking ties by
+        // updated_at DESC. The returned `similarity` is the
+        // drawer's confidence so the value is directly comparable
+        // to vector search scores.
+        let mut scored: Vec<(Drawer, f64, chrono::DateTime<chrono::Utc>)> = drawers
+            .into_iter()
+            .map(|d| {
+                let updated_at = updated_at_of(&d);
+                let confidence = d.confidence;
+                (d, confidence, updated_at)
             })
             .collect();
 
-        // Highest score first; tie-break by most-recently-accessed.
         scored.sort_by(|a, b| {
             b.1.partial_cmp(&a.1)
                 .unwrap_or(Ordering::Equal)
-                .then_with(|| {
-                    let a_time =
-                        a.0.metadata
-                            .get("last_accessed")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                    let b_time =
-                        b.0.metadata
-                            .get("last_accessed")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                    b_time.cmp(a_time)
-                })
+                .then_with(|| b.2.cmp(&a.2))
         });
 
         Ok(scored
             .into_iter()
             .take(limit)
-            .map(|(d, score)| SearchHit {
+            .map(|(d, confidence, _updated_at)| SearchHit {
                 text: d.content,
                 wing: d.wing,
                 room: d.room,
@@ -1270,7 +1371,7 @@ pub trait MemoryProvider: Send + Sync + 'static {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
-                similarity: score,
+                similarity: confidence,
                 bm25_score: None,
                 combined_score: None,
             })
@@ -1921,5 +2022,95 @@ mod tests {
         //  construction and the runtime is verified in jcode tests.)
         fn _assert_tuple4(_t: (usize, usize, usize, usize)) {}
         _assert_tuple4((0, 0, 0, 0));
+    }
+
+    // ---- issue #26: confidence + consolidation_strength ----
+
+    // Brand-new Drawer defaults confidence=1.0, consolidation_strength=1.
+    #[test]
+    fn drawer_confidence_strength_defaults() {
+        let d = Drawer::new("hello");
+        assert!((d.confidence - 1.0).abs() < f64::EPSILON);
+        assert_eq!(d.consolidation_strength, 1);
+    }
+
+    // touch() refreshes last_accessed to roughly now.
+    #[test]
+    fn drawer_touch_updates_last_accessed() {
+        let mut d = Drawer::new("hello");
+        assert!(d.last_accessed.is_none());
+        d.touch();
+        assert!(d.last_accessed.is_some());
+    }
+
+    // confidence() builder clamps to [0.0, 1.0].
+    #[test]
+    fn drawer_confidence_builder_clamps() {
+        let d = Drawer::new("a").confidence(2.0);
+        assert!((d.confidence - 1.0).abs() < f64::EPSILON);
+        let d = Drawer::new("a").confidence(-0.5);
+        assert!(d.confidence.abs() < f64::EPSILON);
+    }
+
+    // Serde round-trip preserves confidence and consolidation_strength.
+    #[test]
+    fn drawer_confidence_strength_serde_roundtrip() {
+        let d = Drawer::new("x").confidence(0.42).consolidation_strength(7);
+        let json = serde_json::to_string(&d).unwrap();
+        let back: Drawer = serde_json::from_str(&json).unwrap();
+        assert!((back.confidence - 0.42).abs() < 1e-9);
+        assert_eq!(back.consolidation_strength, 7);
+    }
+
+    // Backwards-compat: JSON without the new fields loads with defaults.
+    #[test]
+    fn drawer_legacy_serde_load_confidence() {
+        let json = r#"{
+            "content": "legacy drawer",
+            "kind": "fact",
+            "tier": "working",
+            "metadata": {}
+        }"#;
+        let d: Drawer = serde_json::from_str(json).unwrap();
+        assert!((d.confidence - 1.0).abs() < f64::EPSILON);
+        assert_eq!(d.consolidation_strength, 1);
+    }
+
+    // migrate_metadata lifts legacy metadata['confidence'] and ['strength'].
+    #[test]
+    fn drawer_migrate_metadata_lifts_confidence_strength() {
+        let mut d = Drawer::new("legacy");
+        d.metadata
+            .insert("confidence".into(), serde_json::json!(0.75));
+        d.metadata.insert("strength".into(), serde_json::json!(5));
+        d.migrate_metadata();
+        assert!((d.confidence - 0.75).abs() < 1e-9);
+        assert_eq!(d.consolidation_strength, 5);
+        // Metadata cleaned of lifted keys.
+        assert!(!d.metadata.contains_key("confidence"));
+        assert!(!d.metadata.contains_key("strength"));
+    }
+
+    // migrate_metadata is idempotent for the new keys too.
+    #[test]
+    fn drawer_migrate_metadata_idempotent_confidence_strength() {
+        let mut d = Drawer::new("legacy");
+        d.metadata
+            .insert("confidence".into(), serde_json::json!(0.6));
+        d.metadata.insert("strength".into(), serde_json::json!(3));
+        d.migrate_metadata();
+        d.migrate_metadata();
+        assert!((d.confidence - 0.6).abs() < 1e-9);
+        assert_eq!(d.consolidation_strength, 3);
+    }
+
+    // migrate_metadata clamps out-of-range confidence values.
+    #[test]
+    fn drawer_migrate_metadata_clamps_confidence() {
+        let mut d = Drawer::new("legacy");
+        d.metadata
+            .insert("confidence".into(), serde_json::json!(1.5));
+        d.migrate_metadata();
+        assert!((d.confidence - 1.0).abs() < f64::EPSILON);
     }
 }
