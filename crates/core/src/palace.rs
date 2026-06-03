@@ -947,6 +947,120 @@ pub trait MemoryProvider: Send + Sync + 'static {
         Ok((memories, tags, edges, clusters))
     }
 
+    // -----------------------------------------------------------------------
+    // Tag and link methods (mp-migration 2/8)
+    //
+    // jcode's `MemoryManager::tag_memory` / `link_memories` are the
+    // canonical graph-mutation entry points. mempalace stores these
+    // as KG triples (predicate = "has_tag" / "relates_to") so the
+    // same data backs both `mempalace_kg_query` and jcode's adapter.
+    //
+    // The default implementations here use the metadata path (so
+    // they don't depend on the KG being wired into Palace) and
+    // mirror the values in shapes that match the eventual KG
+    // triples:
+    //   tag → metadata["tags"] (Vec<String>)
+    //         + metadata["tag:<name>"] = true (cheap lookup)
+    //   link → metadata["links"] (Vec<{target, weight}>)
+    // Implementations that have a wired KG should override and use
+    // KnowledgeGraph::add_triple directly.
+    // -----------------------------------------------------------------------
+
+    /// Add a tag to a drawer. jcode's `MemoryManager::tag_memory`.
+    async fn tag(&self, id: &DrawerId, tag: &str) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        default_mutate_drawer(self, id, |d| {
+            let mut tags: Vec<String> = d
+                .metadata
+                .get("tags")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            if !tags.iter().any(|t| t == tag) {
+                tags.push(tag.to_string());
+            }
+            d.metadata
+                .insert("tags".to_string(), serde_json::json!(tags));
+            d.metadata
+                .insert(format!("tag:{}", tag), serde_json::json!(true));
+        })
+        .await
+    }
+
+    /// Remove a tag from a drawer. jcode's
+    /// `MemoryManager::untag_memory`.
+    async fn untag(&self, id: &DrawerId, tag: &str) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        default_mutate_drawer(self, id, |d| {
+            let mut tags: Vec<String> = d
+                .metadata
+                .get("tags")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            tags.retain(|t| t != tag);
+            d.metadata
+                .insert("tags".to_string(), serde_json::json!(tags));
+            d.metadata.remove(&format!("tag:{}", tag));
+        })
+        .await
+    }
+
+    /// Link two drawers with a weighted edge. jcode's
+    /// `MemoryManager::link_memories`.
+    async fn link(&self, from_id: &DrawerId, to_id: &DrawerId, weight: f32) -> anyhow::Result<()>
+    where
+        Self: Sized,
+    {
+        default_mutate_drawer(self, from_id, |d| {
+            let mut links: Vec<serde_json::Value> = d
+                .metadata
+                .get("links")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            links.retain(|l| l.get("target").and_then(|v| v.as_str()) != Some(to_id.0.as_str()));
+            links.push(serde_json::json!({
+                "target": to_id.0,
+                "weight": weight,
+            }));
+            d.metadata
+                .insert("links".to_string(), serde_json::json!(links));
+        })
+        .await
+    }
+
+    /// List all tags used in the palace, with usage counts.
+    /// jcode's closest equivalent is `graph_stats.1` (the second
+    /// element of the 4-tuple).
+    ///
+    /// Returns `Vec<(tag, count)>` sorted by count desc, then tag
+    /// asc (deterministic). The default implementation aggregates
+    /// from `get_drawers`; implementations with a wired KG should
+    /// override and use `kg.query_relationship(predicate="has_tag")`
+    /// for an O(1) path.
+    async fn list_tags(&self) -> anyhow::Result<Vec<(String, usize)>>
+    where
+        Self: Sized,
+    {
+        use std::collections::HashMap;
+        let drawers = self.get_drawers(None, None).await?;
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for d in &drawers {
+            if let Some(arr) = d.metadata.get("tags") {
+                if let Ok(tags) = serde_json::from_value::<Vec<String>>(arr.clone()) {
+                    for t in tags {
+                        *counts.entry(t).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        let mut out: Vec<(String, usize)> = counts.into_iter().collect();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        Ok(out)
+    }
+
     /// Stable identifier for this provider — used in audit logs and
     /// agent memory traces. Convention: `"mempalace:<palace_path_hash>"`.
     fn fingerprint(&self) -> &str;
