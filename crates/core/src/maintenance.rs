@@ -51,6 +51,10 @@ const PRUNE_CONFIDENCE_THRESHOLD: f64 = 0.15;
 /// Pruning: minimum age in hours for a drawer to be pruned.
 const PRUNE_AGE_HOURS: i64 = 24;
 
+/// Maximum verified IDs to embed for cluster refinement. Caps the
+/// re-embedding cost so large retrieval sets don't block maintenance.
+const MAX_CLUSTER_EMBED: usize = 20;
+
 /// Stopwords to filter during tag inference.
 const STOPWORDS: &[&str] = &[
     "the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it", "for", "not", "on",
@@ -264,13 +268,15 @@ impl MaintenanceEngine {
             return Ok(());
         };
 
-        // Build an embedding map for verified drawer IDs.
+        // Build an embedding map for verified drawer IDs, capped to
+        // MAX_CLUSTER_EMBED to avoid expensive re-embedding of large sets.
         let all_drawers = self.palace.get_drawers(None, None).await?;
         let mut embeddings: HashMap<DrawerId, Vec<f32>> = HashMap::new();
+        let verified_set: HashSet<&DrawerId> = ctx.verified_ids.iter().take(MAX_CLUSTER_EMBED).collect();
 
         for drawer in &all_drawers {
             if let Some(ref id) = drawer.id {
-                if ctx.verified_ids.contains(id) {
+                if verified_set.contains(id) {
                     // We need the embedding; embed the content.
                     match self.palace.embedder().embed(&drawer.content).await {
                         Ok(emb) => {
@@ -450,7 +456,8 @@ fn truncate(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_chars])
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{truncated}...")
     }
 }
 

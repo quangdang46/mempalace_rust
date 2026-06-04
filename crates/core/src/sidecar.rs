@@ -238,7 +238,8 @@ Output ONLY the formatted lines, no other text. If no NEW memories worth extract
                 system.push_str("- ");
                 // Truncate long existing memories to keep the prompt compact.
                 let truncated = if mem.len() > 150 {
-                    format!("{}...", &mem[..147])
+                    let truncated: String = mem.chars().take(147).collect();
+                    format!("{truncated}...")
                 } else {
                     mem.clone()
                 };

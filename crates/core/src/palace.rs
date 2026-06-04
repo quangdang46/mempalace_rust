@@ -1117,15 +1117,18 @@ pub trait MemoryProvider: Send + Sync + 'static {
                 serde_json::json!(chrono::Utc::now().to_rfc3339()),
             );
             // Issue #26: recompute confidence from Ebbinghaus.
-            // We use the default decay config plus a category-aware
-            // decay_rate, mirroring `retention::decay_rate_for_type`.
+            // Category-aware decay using the drawer's own half-life
+            // (matches jcode's effective_confidence formula).
             let now = chrono::Utc::now();
             let last = d.last_accessed.map(|t| t).unwrap_or(now);
             let elapsed_days = (now - last).num_seconds() as f64 / 86_400.0;
-            let decay_rate =
-                crate::retention::decay_rate_for_type(&crate::types::MemoryType::Working);
-            // Ebbinghaus: retention = initial * e^(-rate * days)
-            let decayed = (-decay_rate * elapsed_days.max(0.0)).exp();
+            let half_life = d.kind.half_life_days();
+            // Ebbinghaus: decay = e^(-elapsed * ln(2) / half_life)
+            let decayed = if half_life > 0.0 {
+                (-std::f64::consts::LN_2 * elapsed_days.max(0.0) / half_life).exp()
+            } else {
+                1.0
+            };
             // Apply additional manual decay from `amount` after the
             // time-based portion so the caller can force-accelerate.
             d.confidence = (d.confidence.min(decayed) - amount).clamp(0.0, 1.0);
@@ -1529,11 +1532,12 @@ pub trait MemoryProvider: Send + Sync + 'static {
 fn project_cascade_to_hits(
     scored: Vec<(DrawerId, f32)>,
     scope: Option<&SearchScope>,
+    content_map: &std::collections::HashMap<String, String>,
 ) -> Vec<SearchHit> {
     scored
         .into_iter()
         .map(|(id, score)| SearchHit {
-            text: id.0.clone(),
+            text: content_map.get(&id.0).cloned().unwrap_or_else(|| id.0.clone()),
             wing: scope.and_then(|s| s.wing.clone()),
             room: scope.and_then(|s| s.room.clone()),
             source_file: String::new(),
@@ -1729,6 +1733,20 @@ impl Palace {
                 warn!("maintenance engine failed: {}", e);
             }
         });
+    }
+
+    /// Build a map from drawer id → content for cascade result projection.
+    /// Used by `related` and `cascade_search_with_embedding` to populate
+    /// `SearchHit::text` with actual content rather than bare IDs.
+    async fn build_drawer_content_map(&self) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let drawers = self.store.get_drawers(None, None).await?;
+        let mut map = std::collections::HashMap::new();
+        for d in &drawers {
+            if let Some(ref id) = d.id {
+                map.insert(id.0.clone(), d.content.clone());
+            }
+        }
+        Ok(map)
     }
 
     fn derive_drawer_id(content: &str) -> DrawerId {
@@ -2299,14 +2317,17 @@ impl MemoryProvider for Palace {
         // final result list at 50 to match `SearchScope` defaults.
         let max_depth = depth.max(1);
         let limit = 50usize;
-        let kg = kg_lock.lock().expect("kg mutex poisoned");
-        let scored = crate::cascade_retrieval::cascade_retrieve(
-            &kg,
-            &[(id.clone(), 1.0_f32)],
-            max_depth,
-            limit,
-        );
-        Ok(project_cascade_to_hits(scored, None))
+        let scored = {
+            let kg = kg_lock.lock().expect("kg mutex poisoned");
+            crate::cascade_retrieval::cascade_retrieve(
+                &kg,
+                &[(id.clone(), 1.0_f32)],
+                max_depth,
+                limit,
+            )
+        };
+        let content_map = self.build_drawer_content_map().await?;
+        Ok(project_cascade_to_hits(scored, None, &content_map))
     }
 
     async fn cascade_search_with_embedding(
@@ -2338,10 +2359,12 @@ impl MemoryProvider for Palace {
         let Some(kg_lock) = self.kg() else {
             return Ok(ann_hits.into_iter().take(max_results).collect::<Vec<_>>());
         };
-        let kg = kg_lock.lock().expect("kg mutex poisoned");
-        let scored =
-            crate::cascade_retrieval::cascade_retrieve(&kg, &seeds, depth.max(1), max_results);
-        Ok(project_cascade_to_hits(scored, Some(scope)))
+        let scored = {
+            let kg = kg_lock.lock().expect("kg mutex poisoned");
+            crate::cascade_retrieval::cascade_retrieve(&kg, &seeds, depth.max(1), max_results)
+        };
+        let content_map = self.build_drawer_content_map().await?;
+        Ok(project_cascade_to_hits(scored, Some(scope), &content_map))
     }
 
     async fn extract_from_transcript(

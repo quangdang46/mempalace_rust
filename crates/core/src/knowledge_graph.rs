@@ -551,21 +551,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 let mut stmt = self.conn.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
-                eprintln!("TRACE: query_outgoing tt branch, eid={}, tt={}", eid, tt);
                 let mut rows = stmt.query(params![eid, tt, tt])?;
-                let mut cnt = 0;
                 while let Some(row) = rows.next()? {
-                    cnt += 1;
-                    let te: Option<String> = row.get("t_expired")?;
-                    let vt: Option<String> = row.get("valid_to")?;
-                    let tc: Option<String> = row.get("t_created")?;
-                    eprintln!(
-                        "  ROW: t_created={:?}, t_expired={:?}, valid_to={:?}",
-                        tc, te, vt
-                    );
                     results.push(self.row_to_entity_result(row, "outgoing", eid)?);
                 }
-                eprintln!("TRACE: returned {} rows", cnt);
             } else {
                 let mut stmt = self.conn.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1"
@@ -615,8 +604,6 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 )?;
                 let mut rows = stmt.query(params![eid, tt, tt])?;
                 while let Some(row) = rows.next()? {
-                    let tc: Option<String> = row.get("t_created")?;
-                    eprintln!("  INCOMING ROW: t_created={:?}", tc);
                     results.push(self.row_to_entity_result_incoming(row, "incoming", eid)?);
                 }
             } else {
@@ -991,7 +978,6 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let weight = kind.traversal_weight() as f64;
         let sub_id = Self::entity_id(from);
         let obj_id = Self::entity_id(to);
-        let now = chrono::Utc::now().to_rfc3339();
 
         // Ensure both endpoints exist in the entities table.
         self.conn.execute(
@@ -1003,7 +989,25 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             params![obj_id, to],
         )?;
 
-        let triple_id = format!("me_{}_{}_{}_{}", sub_id, kind_str, obj_id, &now[..8]);
+        // Deterministic triple ID: same (from, kind, to) always produces the
+        // same ID, making add_memory_edge idempotent (matching jcode's
+        // add_edge dedup behaviour).
+        let triple_id = format!("me_{}_{}_{}", sub_id, kind_str, obj_id);
+
+        // Check for existing edge (idempotent — skip if already present).
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM triples WHERE subject = ?1 AND edge_kind = ?2 AND object = ?3",
+                params![sub_id, kind_str, obj_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if exists {
+            return Ok(triple_id);
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
 
         self.conn.execute(
             "INSERT INTO triples \

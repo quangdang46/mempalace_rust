@@ -98,10 +98,14 @@ pub fn cascade_retrieve(
     for (id, score) in seed_ids {
         let eid = normalize_entity_id(&id.0);
         let prev = best.get(&eid).copied();
+        // Use a small epsilon for zero/invalid scores so the BFS can
+        // still traverse edges from these seeds. Without this, a store
+        // that returns similarity=0.0 (BM25-only, missing embedding)
+        // would produce an empty cascade result.
         let score = if score.is_finite() && *score > 0.0 {
             *score
         } else {
-            0.0
+            1e-6
         };
         match prev {
             Some(p) if p >= score => {} // keep existing max
