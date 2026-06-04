@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn test_cluster_centroid_roundtrip_blob() {
         // Verify that embedding_to_blob -> blob_to_embedding is lossless.
-        let original = vec![0.1f32, -0.5, 3.14159, 0.0, 100.0];
+        let original = vec![0.1f32, -0.5, std::f32::consts::PI, 0.0, 100.0];
         let blob = KnowledgeGraph::embedding_to_blob(&original);
         let recovered = KnowledgeGraph::blob_to_embedding(&blob);
         assert_eq!(original.len(), recovered.len());
