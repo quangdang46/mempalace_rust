@@ -200,6 +200,8 @@ pub mod branch_aware;
 #[doc(hidden)]
 pub mod cascade;
 #[doc(hidden)]
+pub mod cascade_retrieval;
+#[doc(hidden)]
 pub mod claude_bridge;
 #[doc(hidden)]
 pub mod compress_file;

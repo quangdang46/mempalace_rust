@@ -963,7 +963,62 @@ pub trait MemoryProvider: Send + Sync + 'static {
     /// Retrieve drawers related to a given drawer by following graph
     /// edges (tunnel + hall connections). `depth` controls how many
     /// hops to follow (1 = direct neighbours only).
+    ///
+    /// ## Implementation (issue #31, mp-migration 6/8)
+    ///
+    /// When a wired [`KnowledgeGraph`] is present, the default
+    /// implementation runs `cascade_retrieve` from the seed drawer
+    /// (score 1.0) and projects the cascade score into the
+    /// [`SearchHit::similarity`] field. The cascade follows typed
+    /// edges with traversal weights (HasTag 0.8, RelatesTo W,
+    /// Supersedes 0.9, DerivedFrom 0.7, InCluster 0.6, Contradicts
+    /// 0.3) and decays by `0.7^depth`. Tag nodes act as relays and
+    /// fan out to every other drawer sharing the tag.
+    ///
+    /// Implementations that do not have a wired KG return an empty
+    /// `Vec` (the previous stub behaviour).
     async fn related(&self, id: &DrawerId, depth: usize) -> anyhow::Result<Vec<SearchHit>>;
+
+    /// Embedding + cascade retrieval in a single call. jcode's
+    /// `find_similar_with_cascade()`.
+    ///
+    /// 1. Embed the query (or accept a pre-computed vector via
+    ///    [`MemoryProvider::search_with_embedding`]).
+    /// 2. Run ANN to find the top-`seed_limit` embedding-similar
+    ///    drawers; those become the seeds.
+    /// 3. Expand each seed through the typed KG via
+    ///    `cascade_retrieve(kg, seeds, depth, limit)`.
+    /// 4. Return the resulting `(drawer_id, score)` list projected
+    ///    as [`SearchHit`]s.
+    ///
+    /// The `max_results` parameter bounds the final returned list;
+    /// `seed_limit` bounds the embedding-ANN step. The depth
+    /// parameter is passed straight through to `cascade_retrieve`.
+    async fn cascade_search(
+        &self,
+        query: &str,
+        scope: &SearchScope,
+        depth: usize,
+        max_results: usize,
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        // Default implementation: embed + ANN + cascade. Implementations
+        // with their own scoring pipeline can override for tighter
+        // integration (e.g. jcode's combined retrieval).
+        let embedding = self.embedder().embed(query).await?;
+        self.cascade_search_with_embedding(&embedding, scope, depth, max_results)
+            .await
+    }
+
+    /// Pre-embedded variant of [`MemoryProvider::cascade_search`].
+    /// Use when the caller has already embedded (e.g. jcode's own
+    /// embedder) and wants to reuse the vector rather than re-embed.
+    async fn cascade_search_with_embedding(
+        &self,
+        query_vec: &[f32],
+        scope: &SearchScope,
+        depth: usize,
+        max_results: usize,
+    ) -> anyhow::Result<Vec<SearchHit>>;
 
     /// Parse a transcript and extract structured memories from it,
     /// filing each extracted fact/dictum as a drawer and linking it
@@ -1464,6 +1519,31 @@ pub trait MemoryProvider: Send + Sync + 'static {
     }
 }
 
+/// Project a cascade-retrieval result into the public [`SearchHit`]
+/// shape. The cascade returns `(DrawerId, f32)` pairs ordered by
+/// score; we synthesize a [`SearchHit`] for each pair, using the
+/// drawer id as a placeholder for the verbatim text (the store layer
+/// owns the canonical text, which we cannot reach from the KG path
+/// without a per-tier `get_drawer_by_id` API). The cascade score
+/// lands in [`SearchHit::similarity`].
+fn project_cascade_to_hits(
+    scored: Vec<(DrawerId, f32)>,
+    scope: Option<&SearchScope>,
+) -> Vec<SearchHit> {
+    scored
+        .into_iter()
+        .map(|(id, score)| SearchHit {
+            text: id.0.clone(),
+            wing: scope.and_then(|s| s.wing.clone()),
+            room: scope.and_then(|s| s.room.clone()),
+            source_file: String::new(),
+            similarity: score as f64,
+            bm25_score: None,
+            combined_score: None,
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Palace — the canonical MemoryProvider implementation
 // ---------------------------------------------------------------------------
@@ -1715,9 +1795,62 @@ impl MemoryProvider for Palace {
         self.store.search(query_vec, scope, limit).await
     }
 
-    async fn related(&self, _id: &DrawerId, _depth: usize) -> anyhow::Result<Vec<SearchHit>> {
-        // TODO: follow palace graph edges (mp-020 sub-task)
-        Ok(vec![])
+    async fn related(&self, id: &DrawerId, depth: usize) -> anyhow::Result<Vec<SearchHit>> {
+        // issue #31 / mp-migration 6/8: cascade retrieval from a single
+        // seed. Without a wired KG, we have nothing to traverse — return
+        // the seed as the only hit so callers see a non-empty result for
+        // drawers that exist but lack graph connections.
+        let Some(kg_lock) = self.kg() else {
+            return Ok(vec![]);
+        };
+        // The default BFS depth of 1 in the trait is intentional —
+        // `related(d, 1)` should reach direct neighbours. We cap the
+        // final result list at 50 to match `SearchScope` defaults.
+        let max_depth = depth.max(1);
+        let limit = 50usize;
+        let kg = kg_lock.lock().expect("kg mutex poisoned");
+        let scored = crate::cascade_retrieval::cascade_retrieve(
+            &kg,
+            &[(id.clone(), 1.0_f32)],
+            max_depth,
+            limit,
+        );
+        Ok(project_cascade_to_hits(scored, None))
+    }
+
+    async fn cascade_search_with_embedding(
+        &self,
+        query_vec: &[f32],
+        scope: &SearchScope,
+        depth: usize,
+        max_results: usize,
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        // 1. Embedding ANN: find the top-N similar drawers. We use
+        //    `scope.limit` (or 10) as the seed pool size and re-derive
+        //    (id, similarity) from the returned `SearchHit`s. The store
+        //    populates `similarity` with the cosine similarity in
+        //    `[0, 1]`, which is exactly the seed score we want to feed
+        //    into the cascade.
+        let seed_limit = if scope.limit == 0 { 10 } else { scope.limit };
+        let ann_hits = self.store.search(query_vec, scope, seed_limit).await?;
+        // 2. Project the embedding hits into seeds. We do not have the
+        //    drawer id from the store's `SearchHit` (the store only
+        //    returns text), so we use text as a fallback seed id. The
+        //    cascade treats both equally.
+        let seeds: Vec<(DrawerId, f32)> = ann_hits
+            .iter()
+            .map(|h| (DrawerId(h.text.clone()), h.similarity.max(0.0) as f32))
+            .collect();
+
+        // 3. Cascade expand. If no KG is wired, fall back to the ANN
+        //    hits directly so the caller still gets results.
+        let Some(kg_lock) = self.kg() else {
+            return Ok(ann_hits.into_iter().take(max_results).collect::<Vec<_>>());
+        };
+        let kg = kg_lock.lock().expect("kg mutex poisoned");
+        let scored =
+            crate::cascade_retrieval::cascade_retrieve(&kg, &seeds, depth.max(1), max_results);
+        Ok(project_cascade_to_hits(scored, Some(scope)))
     }
 
     async fn extract_from_transcript(

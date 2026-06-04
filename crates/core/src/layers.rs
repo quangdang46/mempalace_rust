@@ -616,6 +616,15 @@ mod tests {
         async fn related(&self, _id: &DrawerId, _depth: usize) -> anyhow::Result<Vec<SearchHit>> {
             panic!("related not implemented in test adapter")
         }
+        async fn cascade_search_with_embedding(
+            &self,
+            _query_vec: &[f32],
+            _scope: &SearchScope,
+            _depth: usize,
+            _max_results: usize,
+        ) -> anyhow::Result<Vec<SearchHit>> {
+            panic!("cascade_search_with_embedding not implemented in test adapter")
+        }
         async fn extract_from_transcript(
             &self,
             _transcript: &str,
