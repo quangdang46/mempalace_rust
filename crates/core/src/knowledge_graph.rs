@@ -80,6 +80,17 @@ pub struct KgStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
+pub struct ClusterEntry {
+    pub id: String,
+    pub name: Option<String>,
+    pub centroid: Vec<f32>,
+    pub member_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EntityQueryResult {
     pub direction: String,
     pub subject: String,
@@ -169,6 +180,15 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 query TEXT NOT NULL,
                 outcome TEXT NOT NULL,
                 feedback_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS clusters (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                centroid BLOB,
+                member_count INTEGER,
+                created_at TEXT,
+                updated_at TEXT
             );
             ",
         )?;
@@ -1112,6 +1132,153 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         )?;
         let rows = stmt.query_map(params![drawer_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    // -----------------------------------------------------------------------
+    // mp-034 (issue #34): cluster management
+    //
+    // Clusters group related memory drawers together. Each cluster has a
+    // centroid embedding (average of member embeddings) and is linked to
+    // its members via InCluster edges in the triples table.
+    // -----------------------------------------------------------------------
+
+    /// Serialize an `&[f32]` embedding into a little-endian byte blob for
+    /// SQLite BLOB storage.
+    pub(crate) fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
+        embedding.iter().flat_map(|f| f.to_le_bytes()).collect()
+    }
+
+    /// Deserialize a little-endian byte blob back into a `Vec<f32>`.
+    pub(crate) fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
+        blob.chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    }
+
+    /// Create a new cluster entry and link members via InCluster edges.
+    ///
+    /// If the cluster ID already exists, the entry is replaced (upsert).
+    /// Each member gets an `InCluster` typed edge pointing at the cluster
+    /// entity so `query_outgoing_by_kind(InCluster)` works without extra
+    /// plumbing.
+    pub fn create_cluster(
+        &mut self,
+        id: &str,
+        name: Option<&str>,
+        centroid: &[f32],
+        members: &[String],
+    ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let blob = Self::embedding_to_blob(centroid);
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO clusters (id, name, centroid, member_count, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![id, name, blob, members.len() as i64, now, now],
+        )?;
+
+        // Ensure the cluster itself exists as an entity so InCluster edges
+        // have valid foreign keys.
+        self.conn.execute(
+            "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
+            rusqlite::params![id, name.unwrap_or(id)],
+        )?;
+
+        // Add InCluster edges from each member to the cluster.
+        // Skip members that already have an InCluster edge to this cluster
+        // (makes the operation idempotent for refine_clusters merges).
+        let kind = crate::types::MemoryEdgeKind::InCluster;
+        let kind_str = kind.as_str();
+        for member_id in members {
+            let sub_id = Self::entity_id(member_id);
+            let existing: bool = self.conn.query_row(
+                "SELECT COUNT(*) > 0 FROM triples \
+                 WHERE subject = ?1 AND object = ?2 AND edge_kind = ?3 AND valid_to IS NULL",
+                rusqlite::params![sub_id, id, kind_str],
+                |row| row.get(0),
+            )?;
+            if !existing {
+                self.add_memory_edge(member_id, id, &kind)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Retrieve a cluster by ID.
+    pub fn get_cluster(&self, id: &str) -> anyhow::Result<Option<ClusterEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, centroid, member_count, created_at, updated_at \
+             FROM clusters WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
+            let blob: Vec<u8> = row.get(2)?;
+            Ok(ClusterEntry {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                centroid: Self::blob_to_embedding(&blob),
+                member_count: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get all member entity IDs that have an InCluster edge pointing at the
+    /// given cluster.
+    pub fn get_cluster_members(&self, cluster_id: &str) -> anyhow::Result<Vec<String>> {
+        let kind_str = crate::types::MemoryEdgeKind::InCluster.as_str();
+        let mut stmt = self.conn.prepare(
+            "SELECT s.name FROM triples t \
+             JOIN entities s ON t.subject = s.id \
+             WHERE t.object = ?1 AND t.edge_kind = ?2 AND t.valid_to IS NULL",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![cluster_id, kind_str], |row| {
+            row.get::<_, String>(0)
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Update the human-readable name of a cluster.
+    pub fn update_cluster_name(&self, id: &str, name: &str) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let changed = self.conn.execute(
+            "UPDATE clusters SET name = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![name, now, id],
+        )?;
+        if changed == 0 {
+            anyhow::bail!("cluster not found: {}", id);
+        }
+        // Also update the entity name so it appears correctly in the KG.
+        self.conn.execute(
+            "UPDATE entities SET name = ?1 WHERE id = ?2",
+            rusqlite::params![name, id],
+        )?;
+        Ok(())
+    }
+
+    /// List all clusters, ordered by creation time.
+    pub fn list_clusters(&self) -> anyhow::Result<Vec<ClusterEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, centroid, member_count, created_at, updated_at \
+             FROM clusters ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let blob: Vec<u8> = row.get(2)?;
+            Ok(ClusterEntry {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                centroid: Self::blob_to_embedding(&blob),
+                member_count: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
