@@ -173,6 +173,12 @@ pub mod timeline;
 pub mod vision;
 pub mod working_memory;
 
+/// LLM-based extraction sidecar (issue #32). Feature-gated behind
+/// `llm-sidecar` — when disabled, `extract_from_transcript` uses
+/// heuristic-only extraction via `general_extractor`.
+#[cfg(feature = "llm-sidecar")]
+pub mod sidecar;
+
 // =====================================================================
 // Health monitoring (feature-gated)
 // =====================================================================
@@ -200,7 +206,11 @@ pub mod branch_aware;
 #[doc(hidden)]
 pub mod cascade;
 #[doc(hidden)]
+pub mod cascade_retrieval;
+#[doc(hidden)]
 pub mod claude_bridge;
+#[doc(hidden)]
+pub mod clusters;
 #[doc(hidden)]
 pub mod compress_file;
 #[doc(hidden)]
@@ -234,6 +244,13 @@ pub mod connect;
 
 #[doc(hidden)]
 pub mod background;
+
+/// Post-retrieval maintenance engine (issue #35). Runs 7 maintenance
+/// tasks after every search+verify cycle: link discovery, confidence
+/// boost/decay, gap detection, cluster refinement, tag inference, and
+/// pruning.
+#[doc(hidden)]
+pub mod maintenance;
 
 // =====================================================================
 // New-architecture surface (mp-010 onwards) — Embedder trait

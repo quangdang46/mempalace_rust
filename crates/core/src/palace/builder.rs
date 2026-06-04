@@ -90,6 +90,17 @@ pub struct PalaceBuilder {
     /// `MemoryEventSink = Arc<dyn Fn(ServerEvent)>` and feed the
     /// `MemoryActivity` snapshot the TUI info widget reads.
     activity_sink: Option<Arc<dyn Fn(super::ActivityEvent) + Send + Sync>>,
+    /// mp-027 (issue #27): optional wired [`KnowledgeGraph`] for
+    /// typed memory edges. When set, the default
+    /// [`super::MemoryProvider::tag`] / [`super::MemoryProvider::link`]
+    /// / [`super::MemoryProvider::supersede`] implementations also
+    /// write `HasTag` / `RelatesTo` / `Supersedes` typed edges.
+    kg: Option<Arc<std::sync::Mutex<crate::knowledge_graph::KnowledgeGraph>>>,
+    /// Issue #33: enable sidecar relevance verification on search.
+    /// When `true`, the `search` pipeline runs the sidecar's
+    /// `check_relevance` on every hit and filters out irrelevant results.
+    /// Default: `false`.
+    verify_search_results: bool,
 }
 
 impl std::fmt::Debug for PalaceBuilder {
@@ -112,6 +123,8 @@ impl PalaceBuilder {
             llm: None,
             session_store: None,
             activity_sink: None,
+            kg: None,
+            verify_search_results: false,
         }
     }
 
@@ -173,6 +186,43 @@ impl PalaceBuilder {
     /// Default: no sink. Calls complete silently.
     pub fn activity_sink(mut self, sink: Arc<dyn Fn(super::ActivityEvent) + Send + Sync>) -> Self {
         self.activity_sink = Some(sink);
+        self
+    }
+
+    /// Wire a [`KnowledgeGraph`] for typed memory edges (mp-027, issue #27).
+    ///
+    /// When set, the default [`super::MemoryProvider::tag`] /
+    /// [`super::MemoryProvider::link`] / [`super::MemoryProvider::supersede`]
+    /// implementations also create `HasTag` / `RelatesTo` / `Supersedes`
+    /// typed edges with the canonical jcode traversal weights, so cascade
+    /// retrieval can use the dedicated `edge_kind` and `weight` columns
+    /// instead of parsing the predicate string.
+    ///
+    /// The KG is wrapped in a `Mutex` because the underlying SQLite
+    /// connection requires exclusive access for writes (`add_memory_edge`
+    /// takes `&mut KnowledgeGraph`).
+    ///
+    /// Default: no KG. Typed-edge writes are skipped, and the default
+    /// impls fall back to the drawer-metadata path only.
+    pub fn kg(mut self, kg: Arc<std::sync::Mutex<crate::knowledge_graph::KnowledgeGraph>>) -> Self {
+        self.kg = Some(kg);
+        self
+    }
+
+    /// Enable sidecar relevance verification on search results (issue #33).
+    ///
+    /// When `true`, the [`super::MemoryProvider::search`] pipeline runs
+    /// the sidecar's `check_relevance` on every hit and filters out
+    /// irrelevant results before returning. Requires the `llm-sidecar`
+    /// feature and an LLM provider to be configured.
+    ///
+    /// Also enables contradiction detection on [`super::MemoryProvider::add_drawer`]:
+    /// new drawers are checked against similar existing drawers, and
+    /// contradictions create `Contradicts` KG edges + trigger supersede.
+    ///
+    /// Default: `false` (no verification, raw search results).
+    pub fn verify_search_results(mut self, enabled: bool) -> Self {
+        self.verify_search_results = enabled;
         self
     }
 
@@ -250,6 +300,8 @@ impl PalaceBuilder {
             llm: self.llm,
             sessions: self.session_store,
             activity_sink: self.activity_sink,
+            kg: self.kg,
+            verify_search_results: self.verify_search_results,
         })
     }
 }

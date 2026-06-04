@@ -261,6 +261,98 @@ pub enum GraphEdgeType {
     Implements,
 }
 
+/// Memory-specific edge kinds used by `KnowledgeGraph`.
+///
+/// jcode's `MemoryGraph` has six typed edge kinds with traversal weights that
+/// drive cascade retrieval. mempalace stores them in the `triples` table with
+/// dedicated `edge_kind` and `weight` columns so callers can filter and
+/// weight edges without parsing the predicate string.
+///
+/// `RelatesTo` carries its own per-edge weight; the other variants use the
+/// canonical traversal weights returned by [`MemoryEdgeKind::traversal_weight`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum MemoryEdgeKind {
+    HasTag,
+    InCluster,
+    RelatesTo { weight: f32 },
+    Supersedes,
+    Contradicts,
+    DerivedFrom,
+}
+
+impl MemoryEdgeKind {
+    /// Default traversal weight for this edge kind. Used during cascade
+    /// retrieval and as the stored `weight` column for kinds that don't
+    /// carry their own per-edge weight. `RelatesTo` returns the user-supplied
+    /// weight, defaulting to 1.0.
+    pub fn traversal_weight(&self) -> f32 {
+        match self {
+            Self::HasTag => 0.8,
+            Self::InCluster => 0.6,
+            Self::RelatesTo { weight } => *weight,
+            Self::Supersedes => 0.9,
+            Self::Contradicts => 0.3,
+            Self::DerivedFrom => 0.7,
+        }
+    }
+
+    /// Stable name used for the `edge_kind` column and the `predicate` field
+    /// in the triples table. `RelatesTo` collapses to `"relates_to"` so the
+    /// per-edge weight lives in the dedicated `weight` column rather than
+    /// being encoded into the predicate.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::HasTag => "has_tag",
+            Self::InCluster => "in_cluster",
+            Self::RelatesTo { .. } => "relates_to",
+            Self::Supersedes => "supersedes",
+            Self::Contradicts => "contradicts",
+            Self::DerivedFrom => "derived_from",
+        }
+    }
+
+    /// Parse a stored `edge_kind` column back into a typed edge kind. For
+    /// `RelatesTo`, the per-edge weight comes from the separate `weight`
+    /// column; this method only recovers the variant shape and uses a
+    /// default weight of 1.0. Use [`MemoryEdgeKind::from_kind_and_weight`]
+    /// when the weight is also known.
+    pub fn from_kind_str(s: &str) -> Option<Self> {
+        match s {
+            "has_tag" | "HasTag" => Some(Self::HasTag),
+            "in_cluster" | "InCluster" => Some(Self::InCluster),
+            "relates_to" | "RelatesTo" => Some(Self::RelatesTo { weight: 1.0 }),
+            "supersedes" | "Supersedes" => Some(Self::Supersedes),
+            "contradicts" | "Contradicts" => Some(Self::Contradicts),
+            "derived_from" | "DerivedFrom" => Some(Self::DerivedFrom),
+            _ => None,
+        }
+    }
+
+    /// Parse a stored `(edge_kind, weight)` pair back into a typed edge kind.
+    /// The weight is honoured for `RelatesTo` and ignored for the fixed-weight
+    /// variants (the canonical `traversal_weight` is always returned).
+    pub fn from_kind_and_weight(kind: &str, _weight: Option<f64>) -> Option<Self> {
+        match kind {
+            "has_tag" | "HasTag" => Some(Self::HasTag),
+            "in_cluster" | "InCluster" => Some(Self::InCluster),
+            "relates_to" | "RelatesTo" => Some(Self::RelatesTo {
+                weight: _weight.map(|w| w as f32).unwrap_or(1.0),
+            }),
+            "supersedes" | "Supersedes" => Some(Self::Supersedes),
+            "contradicts" | "Contradicts" => Some(Self::Contradicts),
+            "derived_from" | "DerivedFrom" => Some(Self::DerivedFrom),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for MemoryEdgeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Edge types specific to action graphs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1318,6 +1410,94 @@ mod tests {
         ] {
             let json = serde_json::to_string(&variant).unwrap();
             let parsed: GraphEdgeType = serde_json::from_str(&json).unwrap();
+            assert_eq!(variant, parsed);
+        }
+    }
+
+    #[test]
+    fn memory_edge_kind_traversal_weights() {
+        // jcode's canonical traversal weights (issue #27).
+        assert_eq!(MemoryEdgeKind::HasTag.traversal_weight(), 0.8);
+        assert_eq!(MemoryEdgeKind::InCluster.traversal_weight(), 0.6);
+        assert_eq!(MemoryEdgeKind::Supersedes.traversal_weight(), 0.9);
+        assert_eq!(MemoryEdgeKind::Contradicts.traversal_weight(), 0.3);
+        assert_eq!(MemoryEdgeKind::DerivedFrom.traversal_weight(), 0.7);
+        // RelatesTo honours the user-supplied weight, default 1.0.
+        assert_eq!(
+            MemoryEdgeKind::RelatesTo { weight: 0.42 }.traversal_weight(),
+            0.42
+        );
+        assert_eq!(
+            MemoryEdgeKind::RelatesTo { weight: 1.0 }.traversal_weight(),
+            1.0
+        );
+    }
+
+    #[test]
+    fn memory_edge_kind_as_str() {
+        assert_eq!(MemoryEdgeKind::HasTag.as_str(), "has_tag");
+        assert_eq!(MemoryEdgeKind::InCluster.as_str(), "in_cluster");
+        assert_eq!(
+            MemoryEdgeKind::RelatesTo { weight: 0.5 }.as_str(),
+            "relates_to"
+        );
+        assert_eq!(MemoryEdgeKind::Supersedes.as_str(), "supersedes");
+        assert_eq!(MemoryEdgeKind::Contradicts.as_str(), "contradicts");
+        assert_eq!(MemoryEdgeKind::DerivedFrom.as_str(), "derived_from");
+    }
+
+    #[test]
+    fn memory_edge_kind_from_kind_str() {
+        assert_eq!(
+            MemoryEdgeKind::from_kind_str("has_tag"),
+            Some(MemoryEdgeKind::HasTag)
+        );
+        assert_eq!(
+            MemoryEdgeKind::from_kind_str("supersedes"),
+            Some(MemoryEdgeKind::Supersedes)
+        );
+        assert_eq!(
+            MemoryEdgeKind::from_kind_str("relates_to"),
+            Some(MemoryEdgeKind::RelatesTo { weight: 1.0 })
+        );
+        // Accept the original PascalCase form too.
+        assert_eq!(
+            MemoryEdgeKind::from_kind_str("DerivedFrom"),
+            Some(MemoryEdgeKind::DerivedFrom)
+        );
+        assert_eq!(MemoryEdgeKind::from_kind_str("nonsense"), None);
+    }
+
+    #[test]
+    fn memory_edge_kind_from_kind_and_weight() {
+        assert_eq!(
+            MemoryEdgeKind::from_kind_and_weight("has_tag", Some(0.8)),
+            Some(MemoryEdgeKind::HasTag)
+        );
+        // RelatesTo round-trips with its weight preserved.
+        let rt = MemoryEdgeKind::from_kind_and_weight("relates_to", Some(0.42)).unwrap();
+        match rt {
+            MemoryEdgeKind::RelatesTo { weight } => {
+                assert!((weight - 0.42).abs() < 1e-6);
+            }
+            _ => panic!("expected RelatesTo"),
+        }
+        // None for unknown kind.
+        assert_eq!(MemoryEdgeKind::from_kind_and_weight("nope", None), None);
+    }
+
+    #[test]
+    fn memory_edge_kind_serde_roundtrip() {
+        for variant in [
+            MemoryEdgeKind::HasTag,
+            MemoryEdgeKind::InCluster,
+            MemoryEdgeKind::RelatesTo { weight: 0.75 },
+            MemoryEdgeKind::Supersedes,
+            MemoryEdgeKind::Contradicts,
+            MemoryEdgeKind::DerivedFrom,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let parsed: MemoryEdgeKind = serde_json::from_str(&json).unwrap();
             assert_eq!(variant, parsed);
         }
     }
