@@ -192,10 +192,7 @@ pub fn default_retention_score(memory_id: &str) -> RetentionScore {
 ///
 /// The `now` parameter is exposed so tests can simulate time
 /// progression without sleeping.
-pub fn memory_score(
-    drawer: &crate::palace::Drawer,
-    now: DateTime<Utc>,
-) -> f64 {
+pub fn memory_score(drawer: &crate::palace::Drawer, now: DateTime<Utc>) -> f64 {
     if !drawer.active {
         return 0.0;
     }
@@ -396,7 +393,11 @@ mod tests {
 
     // Issue #30: memory_score
 
-    fn test_drawer(kind: crate::palace::DrawerKind, days_old: i64, access_count: u64) -> crate::palace::Drawer {
+    fn test_drawer(
+        kind: crate::palace::DrawerKind,
+        days_old: i64,
+        access_count: u64,
+    ) -> crate::palace::Drawer {
         let mut d = crate::palace::Drawer::new("test content");
         d.kind = kind;
         d.created_at = Utc::now() - Duration::days(days_old);
@@ -441,6 +442,9 @@ mod tests {
         let b = test_drawer(crate::palace::DrawerKind::Fact, 0, 100);
         let s_a = memory_score(&a, Utc::now());
         let s_b = memory_score(&b, Utc::now());
-        assert!(s_b > s_a, "more accesses should boost score: a={s_a}, b={s_b}");
+        assert!(
+            s_b > s_a,
+            "more accesses should boost score: a={s_a}, b={s_b}"
+        );
     }
 }

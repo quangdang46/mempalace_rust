@@ -1772,7 +1772,9 @@ impl MemoryProvider for Palace {
         let mut added: Vec<DrawerId> = Vec::with_capacity(classifications.len());
 
         for classification in classifications {
-            let kind = classification.memory_type.to_drawer_kind(&classification.text);
+            let kind = classification
+                .memory_type
+                .to_drawer_kind(&classification.text);
 
             // Build the drawer. Tags come from the extractor's
             // keywords (the matched marker strings), which is what
@@ -1810,19 +1812,13 @@ impl MemoryProvider for Palace {
                     Ok(hits) => {
                         if let Some(top) = hits.first() {
                             if top.similarity >= 0.90 {
-                                let existing_id =
-                                    Self::derive_drawer_id(&top.text);
+                                let existing_id = Self::derive_drawer_id(&top.text);
                                 // Best-effort reinforce — don't fail the
                                 // whole extraction if the reinforce
                                 // path trips (e.g. the drawer was
                                 // concurrently deleted).
-                                if let Err(e) = self
-                                    .reinforce(
-                                        &existing_id,
-                                        session_id,
-                                        added.len(),
-                                    )
-                                    .await
+                                if let Err(e) =
+                                    self.reinforce(&existing_id, session_id, added.len()).await
                                 {
                                     warn!(
                                         "extract_from_transcript: reinforce failed for existing drawer {}: {}",
@@ -1834,17 +1830,11 @@ impl MemoryProvider for Palace {
                         }
                     }
                     Err(e) => {
-                        warn!(
-                            "extract_from_transcript: dedup search failed: {}",
-                            e
-                        );
+                        warn!("extract_from_transcript: dedup search failed: {}", e);
                     }
                 },
                 Err(e) => {
-                    warn!(
-                        "extract_from_transcript: embed for dedup failed: {}",
-                        e
-                    );
+                    warn!("extract_from_transcript: embed for dedup failed: {}", e);
                 }
             }
 
