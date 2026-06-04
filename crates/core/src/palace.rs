@@ -1537,7 +1537,10 @@ fn project_cascade_to_hits(
     scored
         .into_iter()
         .map(|(id, score)| SearchHit {
-            text: content_map.get(&id.0).cloned().unwrap_or_else(|| id.0.clone()),
+            text: content_map
+                .get(&id.0)
+                .cloned()
+                .unwrap_or_else(|| id.0.clone()),
             wing: scope.and_then(|s| s.wing.clone()),
             room: scope.and_then(|s| s.room.clone()),
             source_file: String::new(),
@@ -1738,7 +1741,9 @@ impl Palace {
     /// Build a map from drawer id → content for cascade result projection.
     /// Used by `related` and `cascade_search_with_embedding` to populate
     /// `SearchHit::text` with actual content rather than bare IDs.
-    async fn build_drawer_content_map(&self) -> anyhow::Result<std::collections::HashMap<String, String>> {
+    async fn build_drawer_content_map(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
         let drawers = self.store.get_drawers(None, None).await?;
         let mut map = std::collections::HashMap::new();
         for d in &drawers {

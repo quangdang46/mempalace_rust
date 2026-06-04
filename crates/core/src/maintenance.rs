@@ -272,7 +272,8 @@ impl MaintenanceEngine {
         // MAX_CLUSTER_EMBED to avoid expensive re-embedding of large sets.
         let all_drawers = self.palace.get_drawers(None, None).await?;
         let mut embeddings: HashMap<DrawerId, Vec<f32>> = HashMap::new();
-        let verified_set: HashSet<&DrawerId> = ctx.verified_ids.iter().take(MAX_CLUSTER_EMBED).collect();
+        let verified_set: HashSet<&DrawerId> =
+            ctx.verified_ids.iter().take(MAX_CLUSTER_EMBED).collect();
 
         for drawer in &all_drawers {
             if let Some(ref id) = drawer.id {
