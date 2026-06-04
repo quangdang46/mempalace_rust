@@ -173,6 +173,12 @@ pub mod timeline;
 pub mod vision;
 pub mod working_memory;
 
+/// LLM-based extraction sidecar (issue #32). Feature-gated behind
+/// `llm-sidecar` — when disabled, `extract_from_transcript` uses
+/// heuristic-only extraction via `general_extractor`.
+#[cfg(feature = "llm-sidecar")]
+pub mod sidecar;
+
 // =====================================================================
 // Health monitoring (feature-gated)
 // =====================================================================

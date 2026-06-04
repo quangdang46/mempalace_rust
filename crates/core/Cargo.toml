@@ -40,6 +40,10 @@ llm-anthropic = []
 coordination = []
 vision = []
 rerank = []
+# LLM-based extraction sidecar (issue #32). Enables `sidecar::Sidecar`
+# which calls an LLM to extract memories, check relevance, and detect
+# contradictions. Falls back to heuristic-only when not enabled.
+llm-sidecar = []
 full = ["llm-openai", "llm-anthropic", "coordination", "vision", "rerank"]
 health = ["dep:sysinfo"]
 

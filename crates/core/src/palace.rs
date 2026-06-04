@@ -1725,6 +1725,341 @@ impl Palace {
             agent_id: None,
         }
     }
+
+    /// Issue #32: build a [`Sidecar`] from the palace's LLM provider.
+    ///
+    /// Returns `None` when no LLM provider is configured (the palace
+    /// was opened without `llm` set), in which case
+    /// `extract_from_transcript` falls back to heuristic-only.
+    ///
+    /// The sidecar is created fresh on each call (lightweight — just a
+    /// trait-object pointer). If a future profiling pass shows the
+    /// construction is hot, we can cache it behind `OnceCell`.
+    #[cfg(feature = "llm-sidecar")]
+    fn sidecar(&self) -> Option<crate::sidecar::Sidecar> {
+        self.llm
+            .as_ref()
+            .map(|arc| crate::sidecar::Sidecar::new(Box::new(CloneLLM(arc.clone()))))
+    }
+
+    /// Issue #29: heuristic-only extraction path.
+    ///
+    /// Runs `general_extractor::extract_memories` and files the result
+    /// as drawers. This is the original extraction pipeline from #29,
+    /// preserved as a standalone method so the sidecar path can call
+    /// it too.
+    async fn extract_from_transcript_heuristic(
+        &self,
+        transcript: &str,
+        session_id: &str,
+    ) -> anyhow::Result<Vec<DrawerId>> {
+        let classifications = crate::general_extractor::extract_memories(transcript, 0.3);
+        if classifications.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let dedup_scope = SearchScope {
+            limit: 1,
+            ..SearchScope::default()
+        };
+
+        let mut added: Vec<DrawerId> = Vec::with_capacity(classifications.len());
+
+        for classification in classifications {
+            let kind = classification
+                .memory_type
+                .to_drawer_kind(&classification.text);
+
+            let mut tags: Vec<String> = classification
+                .keywords
+                .iter()
+                .map(|k| k.to_lowercase())
+                .filter(|k| !k.is_empty())
+                .collect();
+            tags.sort();
+            tags.dedup();
+            tags.push(classification.memory_type.as_str().to_string());
+
+            let drawer = Drawer::new(classification.text.clone())
+                .kind(kind)
+                .tier(MemoryTier::Episodic)
+                .confidence(1.0)
+                .tags(tags)
+                .metadata("source", session_id)
+                .metadata("extracted_at", chrono::Utc::now().to_rfc3339())
+                .metadata("extractor", "general_extractor")
+                .metadata("extractor_confidence", classification.confidence as f64);
+
+            let mut kept_id: Option<DrawerId> = None;
+            match self.embedder.embed(&classification.text).await {
+                Ok(vec) => match self.search_with_embedding(&vec, &dedup_scope).await {
+                    Ok(hits) => {
+                        if let Some(top) = hits.first() {
+                            if top.similarity >= 0.90 {
+                                let existing_id = Self::derive_drawer_id(&top.text);
+                                if let Err(e) =
+                                    self.reinforce(&existing_id, session_id, added.len()).await
+                                {
+                                    warn!(
+                                        "extract_from_transcript: reinforce failed for existing drawer {}: {}",
+                                        existing_id, e
+                                    );
+                                }
+                                kept_id = Some(existing_id);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("extract_from_transcript: dedup search failed: {}", e);
+                    }
+                },
+                Err(e) => {
+                    warn!("extract_from_transcript: embed for dedup failed: {}", e);
+                }
+            }
+
+            let id = match kept_id {
+                Some(id) => id,
+                None => self.add_drawer(drawer).await?,
+            };
+            added.push(id);
+        }
+
+        self.wire_derived_from_edges(&added);
+        Ok(added)
+    }
+
+    /// Issue #32: combined heuristic + LLM extraction with merge.
+    ///
+    /// Runs both extraction paths, deduplicates by content similarity
+    /// (0.90 threshold), and gives LLM results precedence on conflict.
+    ///
+    /// Only compiled when `llm-sidecar` is active.
+    #[cfg(feature = "llm-sidecar")]
+    async fn extract_from_transcript_with_sidecar(
+        &self,
+        transcript: &str,
+        session_id: &str,
+        sc: &crate::sidecar::Sidecar,
+    ) -> anyhow::Result<Vec<DrawerId>> {
+        let existing_contents: Vec<String> = Vec::new();
+
+        let llm_memories = match sc.extract_memories(transcript, &existing_contents).await {
+            Ok(memories) => memories,
+            Err(e) => {
+                warn!(
+                    "extract_from_transcript: LLM sidecar extraction failed ({}), falling back to heuristic-only",
+                    e
+                );
+                return self
+                    .extract_from_transcript_heuristic(transcript, session_id)
+                    .await;
+            }
+        };
+
+        let classifications = crate::general_extractor::extract_memories(transcript, 0.3);
+
+        if llm_memories.is_empty() && classifications.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let dedup_scope = SearchScope {
+            limit: 1,
+            ..SearchScope::default()
+        };
+
+        let mut added: Vec<DrawerId> = Vec::new();
+
+        // Process LLM extractions first (they take precedence).
+        for mem in &llm_memories {
+            let tags = vec![format!("{:?}", mem.category).to_lowercase()];
+            let drawer = Drawer::new(&mem.content)
+                .kind(mem.category.clone())
+                .tier(MemoryTier::Episodic)
+                .confidence(1.0)
+                .tags(tags)
+                .metadata("source", session_id)
+                .metadata("extracted_at", chrono::Utc::now().to_rfc3339())
+                .metadata("extractor", "sidecar")
+                .metadata("trust", &mem.trust);
+
+            let id = self
+                .file_or_reinforce_drawer(drawer, &dedup_scope, session_id, &mut added)
+                .await?;
+            added.push(id);
+        }
+
+        // Process heuristic extractions, skipping those too similar
+        // to already-filed LLM results.
+        let llm_contents: Vec<&str> = llm_memories.iter().map(|m| m.content.as_str()).collect();
+        for classification in &classifications {
+            if text_is_similar_to_any(&classification.text, &llm_contents, 0.90) {
+                continue;
+            }
+
+            let kind = classification
+                .memory_type
+                .to_drawer_kind(&classification.text);
+
+            let mut tags: Vec<String> = classification
+                .keywords
+                .iter()
+                .map(|k| k.to_lowercase())
+                .filter(|k| !k.is_empty())
+                .collect();
+            tags.sort();
+            tags.dedup();
+            tags.push(classification.memory_type.as_str().to_string());
+
+            let drawer = Drawer::new(&classification.text)
+                .kind(kind)
+                .tier(MemoryTier::Episodic)
+                .confidence(1.0)
+                .tags(tags)
+                .metadata("source", session_id)
+                .metadata("extracted_at", chrono::Utc::now().to_rfc3339())
+                .metadata("extractor", "general_extractor")
+                .metadata("extractor_confidence", classification.confidence as f64);
+
+            let id = self
+                .file_or_reinforce_drawer(drawer, &dedup_scope, session_id, &mut added)
+                .await?;
+            added.push(id);
+        }
+
+        self.wire_derived_from_edges(&added);
+        Ok(added)
+    }
+
+    /// Wire `DerivedFrom` typed edges between co-extracted memories.
+    fn wire_derived_from_edges(&self, added: &[DrawerId]) {
+        if added.len() > 1 {
+            if let Some(kg_lock) = self.kg.as_deref() {
+                if let Ok(mut kg) = kg_lock.lock() {
+                    let anchor = &added[0];
+                    for other in added.iter().skip(1) {
+                        if let Err(e) = kg.add_memory_edge(
+                            &anchor.0,
+                            &other.0,
+                            &crate::types::MemoryEdgeKind::DerivedFrom,
+                        ) {
+                            warn!(
+                                "extract_from_transcript: DerivedFrom edge {} -> {} failed: {}",
+                                anchor, other, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// File a drawer, dedup against existing drawers by embedding
+    /// similarity. Returns the existing id if a near-duplicate is
+    /// found (and reinforces it), or the new id from `add_drawer`.
+    async fn file_or_reinforce_drawer(
+        &self,
+        drawer: Drawer,
+        dedup_scope: &SearchScope,
+        session_id: &str,
+        added: &mut Vec<DrawerId>,
+    ) -> anyhow::Result<DrawerId> {
+        let mut kept_id: Option<DrawerId> = None;
+        match self.embedder.embed(&drawer.content).await {
+            Ok(vec) => match self.search_with_embedding(&vec, dedup_scope).await {
+                Ok(hits) => {
+                    if let Some(top) = hits.first() {
+                        if top.similarity >= 0.90 {
+                            let existing_id = Self::derive_drawer_id(&top.text);
+                            if let Err(e) =
+                                self.reinforce(&existing_id, session_id, added.len()).await
+                            {
+                                warn!(
+                                    "extract_from_transcript: reinforce failed for existing drawer {}: {}",
+                                    existing_id, e
+                                );
+                            }
+                            kept_id = Some(existing_id);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("extract_from_transcript: dedup search failed: {}", e);
+                }
+            },
+            Err(e) => {
+                warn!("extract_from_transcript: embed for dedup failed: {}", e);
+            }
+        }
+
+        match kept_id {
+            Some(id) => Ok(id),
+            None => Ok(self.add_drawer(drawer).await?),
+        }
+    }
+}
+
+/// Thin wrapper that adapts `Arc<dyn LlmProvider>` to a value type
+/// suitable for `Box<dyn LlmProvider>`. The `Sidecar` owns a
+/// `Box<dyn LlmProvider>` so it doesn't force callers to share an
+/// `Arc`; this wrapper bridges the gap by cloning the `Arc` pointer
+/// (cheap — no data duplication).
+///
+/// Only compiled when `llm-sidecar` is active.
+#[cfg(feature = "llm-sidecar")]
+struct CloneLLM(std::sync::Arc<dyn crate::llm::LlmProvider>);
+
+#[cfg(feature = "llm-sidecar")]
+#[async_trait::async_trait]
+impl crate::llm::LlmProvider for CloneLLM {
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+    fn model(&self) -> &str {
+        self.0.model()
+    }
+    async fn complete(
+        &self,
+        system: &str,
+        user: &str,
+    ) -> Result<crate::llm::LlmCompletion, crate::llm::LlmError> {
+        self.0.complete(system, user).await
+    }
+    async fn check_available(&self) -> Result<(), String> {
+        self.0.check_available().await
+    }
+}
+
+/// Issue #32: quick word-overlap similarity check for merge dedup.
+///
+/// Returns `true` when `text` shares enough words with any entry in
+/// `existing` to be considered a near-duplicate. Uses a simple
+/// Jaccard-like word-set overlap — fast and good enough for the
+/// 0.90 threshold the sidecar merge requires.
+///
+/// Only compiled when `llm-sidecar` is active.
+#[cfg(feature = "llm-sidecar")]
+fn text_is_similar_to_any(text: &str, existing: &[&str], threshold: f64) -> bool {
+    use std::collections::HashSet;
+    let words_a: HashSet<&str> = text.split_whitespace().collect();
+    if words_a.is_empty() {
+        return false;
+    }
+    for other in existing {
+        let words_b: HashSet<&str> = other.split_whitespace().collect();
+        if words_b.is_empty() {
+            continue;
+        }
+        let intersection = words_a.intersection(&words_b).count();
+        let union = words_a.union(&words_b).count();
+        if union > 0 {
+            let similarity = intersection as f64 / union as f64;
+            if similarity >= threshold {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[async_trait]
@@ -1859,152 +2194,28 @@ impl MemoryProvider for Palace {
         session_id: &str,
     ) -> anyhow::Result<Vec<DrawerId>> {
         // Issue #29: wire general_extractor → drawer pipeline.
-        //
-        // Steps:
-        //   1. Emit `ActivityEvent::Extracting` so jcode's TUI / the
-        //      activity sink can surface "extracting memories" state.
-        //   2. Run `general_extractor::extract_memories` with
-        //      `min_confidence = 0.3` (the canonical default — see
-        //      general_extractor::classify).
-        //   3. For each Classification:
-        //      a. Map `MemoryType` → `DrawerKind` (see
-        //         `MemoryType::to_drawer_kind`).
-        //      b. Build a Drawer with verbatim text, kind, confidence
-        //         1.0 (extractions are full-confidence; Ebbinghaus decay
-        //         will pull them down over time), tier Episodic
-        //         (came from a transcript), source = session_id, and
-        //         the extractor keywords as tags.
-        //      c. Dedup: embed the text, search with
-        //         `search_with_embedding`. If a hit at similarity ≥ 0.90
-        //         is found, call `reinforce` on the existing drawer and
-        //         reuse its id. Otherwise add via `add_drawer`.
-        //   4. After all extractions: if more than one drawer survived,
-        //      wire `DerivedFrom` typed edges between them so cascade
-        //      retrieval can follow the co-extraction provenance.
+        // Issue #32: when `llm-sidecar` is enabled AND the palace has
+        // an LLM provider, also run the LLM sidecar and merge results
+        // (LLM takes precedence on conflict; dedup at 0.90 similarity).
         //
         // Falls back gracefully: an empty transcript, a transcript with
         // no recognisable markers, or an LLM-free palace all return
         // `Ok(vec![])` rather than erroring.
         self.emit_activity(ActivityState::Extracting, Some(session_id.to_string()));
 
-        let classifications = crate::general_extractor::extract_memories(transcript, 0.3);
-        if classifications.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // Tighter scope for dedup: searching across the whole palace
-        // would generate false positives for unrelated text. We just
-        // use the default scope with a small limit.
-        let dedup_scope = SearchScope {
-            limit: 1,
-            ..SearchScope::default()
-        };
-
-        // Track the IDs of the drawers we add so we can wire
-        // DerivedFrom edges between co-extracted memories.
-        let mut added: Vec<DrawerId> = Vec::with_capacity(classifications.len());
-
-        for classification in classifications {
-            let kind = classification
-                .memory_type
-                .to_drawer_kind(&classification.text);
-
-            // Build the drawer. Tags come from the extractor's
-            // keywords (the matched marker strings), which is what
-            // jcode's adapter does too. We dedup & lowercase here so
-            // the tags are stable for search.
-            let mut tags: Vec<String> = classification
-                .keywords
-                .iter()
-                .map(|k| k.to_lowercase())
-                .filter(|k| !k.is_empty())
-                .collect();
-            tags.sort();
-            tags.dedup();
-            // Always tag with the memory type for filtering — this
-            // mirrors jcode's "decision" / "preference" / etc. tags.
-            tags.push(classification.memory_type.as_str().to_string());
-
-            let drawer = Drawer::new(classification.text.clone())
-                .kind(kind)
-                .tier(MemoryTier::Episodic)
-                .confidence(1.0)
-                .tags(tags)
-                .metadata("source", session_id)
-                .metadata("extracted_at", chrono::Utc::now().to_rfc3339())
-                .metadata("extractor", "general_extractor")
-                .metadata("extractor_confidence", classification.confidence as f64);
-
-            // Dedup: search for an existing drawer that already covers
-            // this. The SearchHit doesn't carry a DrawerId, so we
-            // derive it from the hit's verbatim text — that's the
-            // same hash `add_drawer` uses, so the id is stable.
-            let mut kept_id: Option<DrawerId> = None;
-            match self.embedder.embed(&classification.text).await {
-                Ok(vec) => match self.search_with_embedding(&vec, &dedup_scope).await {
-                    Ok(hits) => {
-                        if let Some(top) = hits.first() {
-                            if top.similarity >= 0.90 {
-                                let existing_id = Self::derive_drawer_id(&top.text);
-                                // Best-effort reinforce — don't fail the
-                                // whole extraction if the reinforce
-                                // path trips (e.g. the drawer was
-                                // concurrently deleted).
-                                if let Err(e) =
-                                    self.reinforce(&existing_id, session_id, added.len()).await
-                                {
-                                    warn!(
-                                        "extract_from_transcript: reinforce failed for existing drawer {}: {}",
-                                        existing_id, e
-                                    );
-                                }
-                                kept_id = Some(existing_id);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("extract_from_transcript: dedup search failed: {}", e);
-                    }
-                },
-                Err(e) => {
-                    warn!("extract_from_transcript: embed for dedup failed: {}", e);
-                }
-            }
-
-            let id = match kept_id {
-                Some(id) => id,
-                None => self.add_drawer(drawer).await?,
-            };
-            added.push(id);
-        }
-
-        // Co-extracted DerivedFrom edges: when the same transcript
-        // surfaces multiple memories, link them so cascade retrieval
-        // can travel between them. We use the canonical traversal
-        // weight (0.7) from MemoryEdgeKind::DerivedFrom. Edges go
-        // from the first extracted drawer to the others (a "they all
-        // came from the same source" fan-out).
-        if added.len() > 1 {
-            if let Some(kg_lock) = self.kg.as_deref() {
-                if let Ok(mut kg) = kg_lock.lock() {
-                    let anchor = &added[0];
-                    for other in added.iter().skip(1) {
-                        if let Err(e) = kg.add_memory_edge(
-                            &anchor.0,
-                            &other.0,
-                            &crate::types::MemoryEdgeKind::DerivedFrom,
-                        ) {
-                            warn!(
-                                "extract_from_transcript: DerivedFrom edge {} -> {} failed: {}",
-                                anchor, other, e
-                            );
-                        }
-                    }
-                }
+        // Issue #32: try LLM sidecar first when available.
+        #[cfg(feature = "llm-sidecar")]
+        {
+            if let Some(sc) = self.sidecar() {
+                return self
+                    .extract_from_transcript_with_sidecar(transcript, session_id, &sc)
+                    .await;
             }
         }
 
-        Ok(added)
+        // Heuristic-only path (default, also the fallback when no LLM).
+        self.extract_from_transcript_heuristic(transcript, session_id)
+            .await
     }
 
     async fn graph_stats(&self) -> anyhow::Result<super::knowledge_graph::KgStats> {
