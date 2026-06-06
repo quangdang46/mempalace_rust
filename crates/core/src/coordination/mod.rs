@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod checkpoints;
+pub mod event_log;
 pub mod frontier;
 pub mod leases;
 pub mod mesh;
