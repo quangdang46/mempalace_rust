@@ -2,6 +2,7 @@ pub mod actions;
 pub mod checkpoints;
 pub mod frontier;
 pub mod leases;
+pub mod live_delivery;
 pub mod mesh;
 pub mod routines;
 pub mod signals;
