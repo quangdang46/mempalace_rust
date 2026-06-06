@@ -4,6 +4,21 @@ use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+/// Result of a two-phase claim attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimResult {
+    /// Successfully claimed.
+    Claimed,
+    /// Action not found.
+    NotFound,
+    /// Action is not in a claimable state.
+    NotClaimable { current_status: ActionStatus },
+    /// Action is blocked by dependencies.
+    Blocked { by: String },
+    /// Race condition: status changed between check and update.
+    RaceCondition { current_status: ActionStatus },
+}
+
 pub struct ActionStore {
     conn: Connection,
 }
@@ -187,6 +202,53 @@ impl ActionStore {
         Ok(())
     }
 
+    /// Two-phase claim: check -> lock -> re-check -> update.
+    /// Prevents race conditions when multiple agents try to claim the same action.
+    pub fn claim_action(&self, action_id: &str, agent_id: &str) -> Result<ClaimResult> {
+        // Phase 1: Check if claimable
+        let action = match self.get_action(action_id)? {
+            Some(a) => a,
+            None => return Ok(ClaimResult::NotFound),
+        };
+
+        if action.status != ActionStatus::Pending && action.status != ActionStatus::Failed {
+            return Ok(ClaimResult::NotClaimable {
+                current_status: action.status,
+            });
+        }
+
+        // Check dependencies are met
+        let deps = self.get_dependencies(action_id)?;
+        for dep_id in &deps {
+            let dep = self.get_action(dep_id)?;
+            if let Some(dep) = dep {
+                if dep.status != ActionStatus::Completed && dep.status != ActionStatus::Cancelled {
+                    return Ok(ClaimResult::Blocked {
+                        by: dep_id.clone(),
+                    });
+                }
+            }
+        }
+
+        // Phase 2: Atomic update with status check
+        let now = Utc::now().to_rfc3339();
+        let updated = self.conn.execute(
+            "UPDATE actions SET status = 'in_progress', assigned_to = ?1, updated_at = ?2 WHERE id = ?3 AND (status = 'pending' OR status = 'failed')",
+            params![agent_id, now, action_id],
+        )?;
+
+        if updated == 0 {
+            // Status changed between check and update (race condition)
+            let current = self.get_action(action_id)?;
+            let current_status = current
+                .map(|a| a.status)
+                .unwrap_or(ActionStatus::Pending);
+            return Ok(ClaimResult::RaceCondition { current_status });
+        }
+
+        Ok(ClaimResult::Claimed)
+    }
+
     fn row_to_action(&self, row: &rusqlite::Row) -> rusqlite::Result<Action> {
         Ok(Action {
             id: row.get("id")?,
@@ -328,5 +390,85 @@ mod tests {
         let dependents = store.get_dependents("a-1").unwrap();
         assert_eq!(dependents.len(), 1);
         assert_eq!(dependents[0], "a-2");
+    }
+
+    #[test]
+    fn test_claim_action_success() {
+        let store = test_store();
+        store.create_action(&test_action("a-1")).unwrap();
+
+        let result = store.claim_action("a-1", "agent-1").unwrap();
+        assert_eq!(result, ClaimResult::Claimed);
+
+        let action = store.get_action("a-1").unwrap().unwrap();
+        assert_eq!(action.status, ActionStatus::InProgress);
+        assert_eq!(action.assigned_to, Some("agent-1".to_string()));
+    }
+
+    #[test]
+    fn test_claim_action_not_found() {
+        let store = test_store();
+
+        let result = store.claim_action("nonexistent", "agent-1").unwrap();
+        assert_eq!(result, ClaimResult::NotFound);
+    }
+
+    #[test]
+    fn test_claim_action_not_claimable() {
+        let store = test_store();
+        store.create_action(&test_action("a-1")).unwrap();
+        store
+            .update_action_status("a-1", ActionStatus::Completed)
+            .unwrap();
+
+        let result = store.claim_action("a-1", "agent-1").unwrap();
+        assert!(matches!(
+            result,
+            ClaimResult::NotClaimable {
+                current_status: ActionStatus::Completed
+            }
+        ));
+    }
+
+    #[test]
+    fn test_claim_action_blocked() {
+        let store = test_store();
+        store.create_action(&test_action("a-1")).unwrap();
+        let mut a2 = test_action("a-2");
+        a2.status = ActionStatus::Pending; // Explicitly set to pending
+        store.create_action(&a2).unwrap();
+        store
+            .add_edge("a-1", "a-2", ActionEdgeType::DependsOn)
+            .unwrap();
+
+        // a-2 is blocked because a-1 is not completed
+        // But the status was changed to 'blocked' by add_edge
+        // So claim_action returns NotClaimable, not Blocked
+        let result = store.claim_action("a-2", "agent-1").unwrap();
+        assert!(matches!(
+            result,
+            ClaimResult::NotClaimable {
+                current_status: ActionStatus::Blocked
+            }
+        ));
+    }
+
+    #[test]
+    fn test_claim_action_with_met_dependencies() {
+        let store = test_store();
+        store.create_action(&test_action("a-1")).unwrap();
+        store.create_action(&test_action("a-2")).unwrap();
+        store
+            .add_edge("a-1", "a-2", ActionEdgeType::DependsOn)
+            .unwrap();
+
+        // Complete dependency first
+        store
+            .update_action_status("a-1", ActionStatus::Completed)
+            .unwrap();
+
+        // Now claim should succeed
+        let result = store.claim_action("a-2", "agent-1").unwrap();
+        assert_eq!(result, ClaimResult::Claimed);
     }
 }
