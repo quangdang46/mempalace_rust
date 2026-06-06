@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod artifacts;
 pub mod checkpoints;
 pub mod frontier;
 pub mod leases;
