@@ -1,10 +1,10 @@
 """
-agentmemory memory provider for Hermes Agent.
+mempalace memory provider for Hermes Agent.
 
-Drop this folder into ~/.hermes/plugins/agentmemory/
-or install via: hermes plugin install agentmemory
+Drop this folder into ~/.hermes/plugins/mempalace/
+or install via: hermes plugin install mempalace
 
-Requires agentmemory server running: npx @agentmemory/agentmemory
+Requires mempalace server running: npx @mempalace/mempalace
 """
 
 from __future__ import annotations
@@ -54,12 +54,12 @@ TIMEOUT = 5
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _plaintext_bearer_warned = False
 
-# agentmemory's documented runtime config lives at ~/.agentmemory/.env.
-# When agentmemory is launched as a systemd user service (or any other
+# mempalace's documented runtime config lives at ~/.mempalace/.env.
+# When mempalace is launched as a systemd user service (or any other
 # process manager that loads that file directly), those values never
 # reach an interactive shell. `hermes memory status` then reads
-# os.environ in the Hermes CLI process, finds AGENTMEMORY_URL /
-# AGENTMEMORY_SECRET unset, and reports the plugin as "Missing" even
+# os.environ in the Hermes CLI process, finds MEMPALACE_URL /
+# MEMPALACE_SECRET unset, and reports the plugin as "Missing" even
 # though the service is healthy and live sessions can use it (#250).
 #
 # Preload the file at plugin-import time using os.environ.setdefault so
@@ -67,14 +67,14 @@ _plaintext_bearer_warned = False
 # preload is best-effort and silent on any failure (file absent,
 # unreadable, malformed) — the plugin falls back to its existing default
 # (http://localhost:3111) and Hermes status reflects that.
-def _preload_agentmemory_dotenv() -> None:
+def _preload_mempalace_dotenv() -> None:
     candidates: list[Path] = []
     home = os.environ.get("HOME")
     if home:
-        candidates.append(Path(home) / ".agentmemory" / ".env")
+        candidates.append(Path(home) / ".mempalace" / ".env")
     xdg_config = os.environ.get("XDG_CONFIG_HOME")
     if xdg_config:
-        candidates.append(Path(xdg_config) / "agentmemory" / ".env")
+        candidates.append(Path(xdg_config) / "mempalace" / ".env")
     for path in candidates:
         try:
             if not path.is_file():
@@ -90,14 +90,14 @@ def _preload_agentmemory_dotenv() -> None:
                     os.environ.setdefault(key, value)
         except (OSError, UnicodeDecodeError):
             continue
-    # Guarantee AGENTMEMORY_URL is set so `hermes memory status` never
-    # reports it as Missing when a user runs agentmemory at the default
+    # Guarantee MEMPALACE_URL is set so `hermes memory status` never
+    # reports it as Missing when a user runs mempalace at the default
     # localhost:3111 (or via systemd with the URL line commented out in
-    # ~/.agentmemory/.env because it matches the default). #520.
-    os.environ.setdefault("AGENTMEMORY_URL", DEFAULT_BASE_URL)
+    # ~/.mempalace/.env because it matches the default). #520.
+    os.environ.setdefault("MEMPALACE_URL", DEFAULT_BASE_URL)
 
 
-_preload_agentmemory_dotenv()
+_preload_mempalace_dotenv()
 
 
 def _validate_url(base: str) -> bool:
@@ -122,7 +122,7 @@ def _uses_plaintext_bearer_auth(base: str, secret: str = "") -> bool:
 
 
 def _plaintext_bearer_auth_message(base: str) -> str:
-    return f"agentmemory: AGENTMEMORY_SECRET is configured for plaintext HTTP to {base}. Bearer tokens and memory payloads can be observed on the network; use HTTPS or an SSH tunnel."
+    return f"mempalace: MEMPALACE_SECRET is configured for plaintext HTTP to {base}. Bearer tokens and memory payloads can be observed on the network; use HTTPS or an SSH tunnel."
 
 
 def _warn_plaintext_bearer_auth(message: str) -> None:
@@ -138,7 +138,7 @@ def _check_plaintext_bearer_guard(
     if not _uses_plaintext_bearer_auth(base, secret):
         return
     message = _plaintext_bearer_auth_message(base)
-    if os.environ.get("AGENTMEMORY_REQUIRE_HTTPS") == "1":
+    if os.environ.get("MEMPALACE_REQUIRE_HTTPS") == "1":
         raise RuntimeError(message)
     if not _plaintext_bearer_warned:
         _plaintext_bearer_warned = True
@@ -153,9 +153,9 @@ def _reset_plaintext_bearer_guard_for_tests() -> None:
 def _api(base: str, path: str, body: dict | None = None, method: str = "POST", secret: str = "") -> dict | None:
     if not _validate_url(base):
         return None
-    url = f"{base}/agentmemory/{path}"
+    url = f"{base}/mempalace/{path}"
     headers = {"Content-Type": "application/json"}
-    auth = secret or os.environ.get("AGENTMEMORY_SECRET", "")
+    auth = secret or os.environ.get("MEMPALACE_SECRET", "")
     _check_plaintext_bearer_guard(base, auth)
     if auth:
         headers["Authorization"] = f"Bearer {auth}"
@@ -174,23 +174,23 @@ def _api_bg(base: str, path: str, body: dict | None = None) -> None:
     t.start()
 
 
-class AgentMemoryProvider(MemoryProvider):
+class MempalaceProvider(MemoryProvider):
 
     @property
     def name(self) -> str:
-        return "agentmemory"
+        return "mempalace"
 
     def is_available(self) -> bool:
         # Hermes contract: no network calls in is_available.
-        base = os.environ.get("AGENTMEMORY_URL", DEFAULT_BASE_URL)
+        base = os.environ.get("MEMPALACE_URL", DEFAULT_BASE_URL)
         return _validate_url(base)
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
-        self._base = os.environ.get("AGENTMEMORY_URL", DEFAULT_BASE_URL)
+        self._base = os.environ.get("MEMPALACE_URL", DEFAULT_BASE_URL)
         self._session_id = session_id
         self._project = kwargs.get("cwd", os.getcwd())
-        if os.environ.get("AGENTMEMORY_REQUIRE_HTTPS") == "1":
-            _check_plaintext_bearer_guard(self._base, os.environ.get("AGENTMEMORY_SECRET", ""))
+        if os.environ.get("MEMPALACE_REQUIRE_HTTPS") == "1":
+            _check_plaintext_bearer_guard(self._base, os.environ.get("MEMPALACE_SECRET", ""))
 
         _api(self._base, "session/start", {
             "sessionId": session_id,
@@ -202,21 +202,21 @@ class AgentMemoryProvider(MemoryProvider):
         return [
             {
                 "key": "url",
-                "description": "agentmemory server URL",
+                "description": "mempalace server URL",
                 "default": DEFAULT_BASE_URL,
-                "env_var": "AGENTMEMORY_URL",
+                "env_var": "MEMPALACE_URL",
             },
             {
                 "key": "secret",
-                "description": "agentmemory auth secret (optional)",
+                "description": "mempalace auth secret (optional)",
                 "secret": True,
                 "required": False,
-                "env_var": "AGENTMEMORY_SECRET",
+                "env_var": "MEMPALACE_SECRET",
             },
         ]
 
     def save_config(self, values: dict, hermes_home: str) -> None:
-        config_path = Path(hermes_home) / "agentmemory.json"
+        config_path = Path(hermes_home) / "mempalace.json"
         config_path.write_text(json.dumps(values, indent=2))
 
     def system_prompt_block(self) -> str:
@@ -252,7 +252,7 @@ class AgentMemoryProvider(MemoryProvider):
         return [
             {
                 "name": "memory_recall",
-                "description": "Search agentmemory for past observations by keyword",
+                "description": "Search mempalace for past observations by keyword",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -296,7 +296,7 @@ class AgentMemoryProvider(MemoryProvider):
         # Hermes stores the return value as the tool result `content` in the
         # session history. Anthropic-protocol providers reject non-string
         # content with a 400 on the next request, so always serialize to a
-        # JSON string here — matches what agentmemory's main MCP server does
+        # JSON string here — matches what mempalace's main MCP server does
         # in src/mcp/standalone.ts (`{ type: "text", text: JSON.stringify(...) }`).
         if name == "memory_recall":
             result = _api(self._base, "search", {
@@ -370,7 +370,7 @@ class AgentMemoryProvider(MemoryProvider):
         if result and result.get("context"):
             messages.insert(0, {
                 "role": "user",
-                "content": f"[agentmemory context before compaction]\n{result['context']}",
+                "content": f"[mempalace context before compaction]\n{result['context']}",
             })
 
     def on_memory_write(self, action: str, target: str, content: str, **kwargs: Any) -> None:
@@ -385,4 +385,4 @@ class AgentMemoryProvider(MemoryProvider):
 
 
 def register(ctx: Any) -> None:
-    ctx.register_memory_provider(AgentMemoryProvider())
+    ctx.register_memory_provider(MempalaceProvider())

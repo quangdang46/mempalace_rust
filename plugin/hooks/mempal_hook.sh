@@ -6,7 +6,7 @@
 #           post-tool-failure | prompt-submit | notification |
 #           subagent-start | subagent-stop | task-completed
 #
-# Reads hook JSON from stdin and emits JSON to stdout, mirroring agentmemory's
+# Reads hook JSON from stdin and emits JSON to stdout, mirroring mempalace's
 # per-hook scripts. The named wrappers (mempal_save_hook.sh / mempal_precompact_hook.sh)
 # remain for back-compat; this generic form covers the remaining kinds.
 

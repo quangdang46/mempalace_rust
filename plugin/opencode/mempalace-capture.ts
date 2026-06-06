@@ -5,7 +5,7 @@ const FILE_TOOLS = new Set(["Read", "Write", "Edit", "Glob", "Grep"]);
 const FILE_KEYS = ["filePath", "file_path", "path", "file", "pattern"];
 const MAX_STASHED_FILES = 20;
 
-const DEBUG = process.env.OPENCODE_AGENTMEMORY_DEBUG === "1";
+const DEBUG = process.env.OPENCODE_MEMPALACE_DEBUG === "1";
 const SECRET = process.env.MEMPALACE_SECRET || "";
 
 function authHeaders(): Record<string, string> {
@@ -101,7 +101,7 @@ function safeSlice(v: unknown, max: number): string {
   try { return JSON.stringify(v).slice(0, max); } catch { return ""; }
 }
 
-const AGENTMEMORY_INSTRUCTIONS = `<mempalace-instructions>
+const MEMPALACE_INSTRUCTIONS = `<mempalace-instructions>
 You have access to mempalace for persistent cross-session memory. Use these tools proactively.
 
 CORE TOOLS:
@@ -167,7 +167,7 @@ function extractErrorMessage(err: unknown): string {
   return String(err ?? "");
 }
 
-export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
+export const MempalaceCapturePlugin: Plugin = async (ctx) => {
   projectPath = ctx.worktree || ctx.project?.id || process.cwd();
 
   return {
@@ -604,7 +604,7 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
 
       if (!contextInjectedSessions.has(sid)) {
         if (!Array.isArray(output.system)) return;
-        output.system.push(AGENTMEMORY_INSTRUCTIONS);
+        output.system.push(MEMPALACE_INSTRUCTIONS);
         // prefer the context already fetched at session.created;
         // fall back to a fresh /context call if the cache missed (e.g.
         // session resumed across plugin reloads).

@@ -4,7 +4,7 @@ import { basename } from "node:path";
 
 //#region src/hooks/_project.ts
 function resolveProject(cwd) {
-	const explicit = process.env["AGENTMEMORY_PROJECT_NAME"];
+	const explicit = process.env["MEMPALACE_PROJECT_NAME"];
 	if (explicit && explicit.trim()) return explicit.trim();
 	const dir = cwd && cwd.trim() ? cwd : process.cwd();
 	try {
@@ -25,7 +25,7 @@ function resolveProject(cwd) {
 //#endregion
 //#region src/hooks/subagent-stop.ts
 function isSdkChildContext(payload) {
-	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
+	if (process.env["MEMPALACE_SDK_CHILD"] === "1") return true;
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
 }

@@ -213,7 +213,7 @@ mempalace already persists everything in SQLite (`data/state_store.db`). Adding 
 
 ## Session instruction injection
 
-Agentmemory usage instructions are injected into the system prompt on the first turn of every session via `experimental.chat.system.transform` (alongside memory context from `/context`). This is functionally equivalent to Claude Code's skills mechanism — the agent learns which `mempalace_memory_*` tools to use and when, without needing separate skill invocations.
+Mempalace usage instructions are injected into the system prompt on the first turn of every session via `experimental.chat.system.transform` (alongside memory context from `/context`). This is functionally equivalent to Claude Code's skills mechanism — the agent learns which `mempalace_memory_*` tools to use and when, without needing separate skill invocations.
 
 ## What's not covered (vs Claude Code plugin)
 

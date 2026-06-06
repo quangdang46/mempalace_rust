@@ -230,7 +230,7 @@ ISSUES = [
      "trait,hooks"),
     ("mp-069", 4, "M", 4, "[jcode] Wire EventCapture from memory_agent.rs into mempalace",
      "Existing per-turn pipeline calls into `Palace::on_post_tool_use` etc. so "
-     "auto-capture parity with agentmemory is preserved. ADR-11; report 06 §3.1.",
+     "auto-capture parity with mempalace is preserved. ADR-11; report 06 §3.1.",
      "jcode-side,hooks"),
 
     # ---------- PHASE 5 ----------
@@ -284,8 +284,8 @@ ISSUES = [
      "Cap fused results to 3 per session so a single productive session can't drown "
      "out other context. ADR-14; report 06 §3.3.",
      "retrieval"),
-    ("mp-093", 5, "M", 5, "Reproduce agentmemory's 95.2% R@5 LongMemEval-S in crates/bench",
-     "Match the bar set by `rohitg00/agentmemory`. Phase-5 release gated on this. "
+    ("mp-093", 5, "M", 5, "Reproduce mempalace's 95.2% R@5 LongMemEval-S in crates/bench",
+     "Match the bar set by `rohitg00/mempalace`. Phase-5 release gated on this. "
      "Report 06 §1.",
      "bench"),
 
@@ -311,7 +311,7 @@ ISSUES = [
      "release"),
     ("mp-105", 6, "M", 6, "Standalone CLI ships full hook scripts for Claude Code/Codex/OpenCode",
      "SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, "
-     "PreCompact, Stop, SessionEnd. Matches agentmemory's auto-capture surface. "
+     "PreCompact, Stop, SessionEnd. Matches mempalace's auto-capture surface. "
      "ADR-11; report 06 §3.1.",
      "hooks,install"),
     ("mp-106", 6, "S", 6, "Privacy-filter UX: configurable allow-list + redaction stats",

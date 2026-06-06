@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 //#region src/hooks/post-commit.ts
 const exec = promisify(execFile);
 function isSdkChildContext(payload) {
-	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
+	if (process.env["MEMPALACE_SDK_CHILD"] === "1") return true;
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
 }
@@ -36,9 +36,9 @@ async function main() {
 		data = JSON.parse(input);
 	} catch {}
 	if (isSdkChildContext(data)) return;
-	const cwd = data.cwd || process.env["AGENTMEMORY_CWD"] || process.cwd();
-	const sessionId = data.session_id || process.env["AGENTMEMORY_SESSION_ID"] || void 0;
-	const sha = process.env["AGENTMEMORY_COMMIT_SHA"] || await git(["rev-parse", "HEAD"], cwd);
+	const cwd = data.cwd || process.env["MEMPALACE_CWD"] || process.cwd();
+	const sessionId = data.session_id || process.env["MEMPALACE_SESSION_ID"] || void 0;
+	const sha = process.env["MEMPALACE_COMMIT_SHA"] || await git(["rev-parse", "HEAD"], cwd);
 	if (!sha) return;
 	const branch = await git([
 		"rev-parse",
