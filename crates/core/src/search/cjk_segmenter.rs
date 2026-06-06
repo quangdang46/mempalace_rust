@@ -4,7 +4,7 @@
 //!
 //! When the `cjk-jieba` feature is enabled, [`segment_cjk_with_jieba`] additionally
 //! runs the Han script runs through `jieba-rs` to produce true Chinese word
-//! tokens (1:1 with agentmemory's jieba path). When the feature is disabled
+//! tokens (1:1 with mempalace's jieba path). When the feature is disabled
 //! (the default), Han runs are kept as whole-script runs via [`segment_cjk`].
 
 use unicode_script::UnicodeScript;
@@ -161,7 +161,7 @@ pub fn segment_cjk(text: &str) -> Vec<String> {
     tokens
 }
 
-/// True Chinese word segmentation via `jieba-rs`, 1:1 with agentmemory.
+/// True Chinese word segmentation via `jieba-rs`, 1:1 with mempalace.
 ///
 /// Falls back to [`segment_cjk`] (script-boundary splitting) for the
 /// non-Han runs (Hiragana, Katakana, Hangul, Latin, Other). Only the

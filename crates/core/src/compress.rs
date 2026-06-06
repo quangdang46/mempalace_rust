@@ -1,5 +1,5 @@
 /// LLM-powered observation compression engine.
-/// 1:1 port from agentmemory `src/functions/compress.ts`.
+/// 1:1 port from mempalace `src/functions/compress.ts`.
 use chrono::Utc;
 use serde_json::Value;
 
@@ -8,7 +8,7 @@ use crate::prompts::compression::{build_compression_prompt, COMPRESSION_SYSTEM, 
 use crate::prompts::vision::VISION_DESCRIPTION_PROMPT;
 use crate::types::{CompressedObservation, RawObservation};
 
-/// The set of valid observation types from agentmemory.
+/// The set of valid observation types from mempalace.
 const VALID_TYPES: &[&str] = &[
     "file_read",
     "file_write",
@@ -27,7 +27,7 @@ const VALID_TYPES: &[&str] = &[
 ];
 
 /// Compress a raw observation using the LLM provider.
-/// 1:1 port of the `mem::compress` function from agentmemory.
+/// 1:1 port of the `mem::compress` function from mempalace.
 ///
 /// Returns the compressed observation with quality score, or falls back
 /// to synthetic compression if the LLM call fails.
@@ -151,7 +151,7 @@ async fn try_llm_compress(
 }
 
 /// Compress with retry: try once, and if validation fails, retry with stricter prompt.
-/// 1:1 port of `compressWithRetry()` from agentmemory.
+/// 1:1 port of `compressWithRetry()` from mempalace.
 async fn compress_with_retry(
     provider: &dyn LlmProvider,
     user_prompt: &str,

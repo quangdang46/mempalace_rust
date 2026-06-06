@@ -1,5 +1,5 @@
 /// Graph extraction prompt templates.
-/// 1:1 port from agentmemory `src/prompts/graph-extraction.ts`.
+/// 1:1 port from mempalace `src/prompts/graph-extraction.ts`.
 use crate::types::CompressedObservation;
 
 /// System prompt for knowledge graph entity and relationship extraction.

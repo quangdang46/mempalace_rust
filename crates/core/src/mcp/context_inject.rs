@@ -1,6 +1,6 @@
-//! Context injection for AgentMemory/MemPalace standalone mode.
+//! Context injection for MemPalace standalone mode.
 //!
-//! When AGENTMEMORY_INJECT_CONTEXT or MEMPALACE_INJECT_CONTEXT is true,
+//! When MEMPALACE_INJECT_CONTEXT or MEMPALACE_INJECT_CONTEXT is true,
 //! after session_start inject recalled memories into context by calling
 //! hybrid_search and formatting results as markdown.
 
@@ -10,7 +10,7 @@ use crate::mcp_server::AppState;
 use crate::searcher;
 
 /// Environment flags for context injection.
-const ENV_INJECT_FLAGS: &[&str] = &["AGENTMEMORY_INJECT_CONTEXT", "MEMPALACE_INJECT_CONTEXT"];
+const ENV_INJECT_FLAGS: &[&str] = &["MEMPALACE_INJECT_CONTEXT", "MEMPALACE_INJECT_CONTEXT"];
 
 /// Returns true if context injection is enabled via env vars.
 pub fn is_context_injection_enabled() -> bool {

@@ -2,7 +2,7 @@
 // `ClipImageEmbedder` — CLIP image embeddings via `fastembed` 4.x
 // =====================================================================
 //
-// Closes the 12-gap parity port: agentmemory ships a CLIP-based image
+// Closes the 12-gap parity port: mempalace ships a CLIP-based image
 // embedder (Xenova/clip-vit-base-patch32, 512-d, L2-normalised).
 // `fastembed` 4.x ships an `ImageEmbedding` type backed by the same
 // `ort` version it already pulls in for the text path, so wiring it
@@ -11,7 +11,7 @@
 // `open_clip_inference` crate.
 //
 // References:
-//   - agentmemory `src/embedding/clip.ts` (Xenova/clip-vit-base-patch32)
+//   - mempalace `src/embedding/clip.ts` (Xenova/clip-vit-base-patch32)
 //   - fastembed 4.x `src/image_embedding/impl.rs` (CLIP-ViT-B/32 default)
 //
 // Notes:
@@ -42,7 +42,7 @@ use fastembed::{ImageEmbedding, ImageEmbeddingModel, ImageInitOptions};
 
 /// Default CLIP image model used by `ClipImageEmbedder`.
 ///
-/// Matches agentmemory's `Xenova/clip-vit-base-patch32` (512-d,
+/// Matches mempalace's `Xenova/clip-vit-base-patch32` (512-d,
 /// L2-normalised) and fastembed 4's `ImageEmbeddingModel::ClipVitB32`.
 pub const DEFAULT_CLIP_MODEL: ImageEmbeddingModel = ImageEmbeddingModel::ClipVitB32;
 
@@ -248,7 +248,7 @@ fn clip_image_model_dim(model: &ImageEmbeddingModel) -> usize {
     match model {
         // CLIP-ViT-B/32 — Xenova/clip-vit-base-patch32
         // 512-d, L2-normalised. The default in fastembed 4 and the
-        // shape agentmemory's parity port targets.
+        // shape mempalace's parity port targets.
         ImageEmbeddingModel::ClipVitB32 => 512,
         // ResNet-50 image encoder — also 2048-d in torchvision, but
         // fastembed's curated model is the smaller variant. We

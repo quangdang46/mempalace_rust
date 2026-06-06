@@ -1,6 +1,6 @@
 //! Circuit breaker state machine for LLM provider resilience.
 //!
-//! 1:1 from agentmemory's circuit-breaker.ts:
+//! 1:1 from mempalace's circuit-breaker.ts:
 //! - States: Closed, Open, HalfOpen
 //! - Constants: failure_threshold=3, failure_window_ms=60_000, recovery_timeout_ms=30_000
 //! - Closed: allow all. On >=3 failures in 60s window -> Open

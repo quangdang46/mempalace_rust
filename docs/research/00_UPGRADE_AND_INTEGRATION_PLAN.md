@@ -9,7 +9,7 @@
 > - [`03_jcode_memory_internals.md`](./03_jcode_memory_internals.md) (67 KB)
 > - [`04_mempalace_internals_and_gaps.md`](./04_mempalace_internals_and_gaps.md) (47 KB)
 > - [`05_embedding_and_storage_native.md`](./05_embedding_and_storage_native.md) (33 KB)
-> - [`06_agentmemory_repo_analysis.md`](./06_agentmemory_repo_analysis.md) (15 KB) — added 2026-05-25 in response to user request
+> - [`06_mempalace_repo_analysis.md`](./06_mempalace_repo_analysis.md) (15 KB) — added 2026-05-25 in response to user request
 >
 > Snapshot date: **2026-05-25**.
 > All section references like "(02 §15)" point back to the source reports.
@@ -290,7 +290,7 @@ three or more such adapters appear.
 
 ### ADR-11 — Auto-capture lifecycle hooks
 
-**Context.** `rohitg00/agentmemory`'s defining UX is hook-driven auto-capture across the
+**Context.** `rohitg00/mempalace`'s defining UX is hook-driven auto-capture across the
 full agent lifecycle: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PreCompact`, `SubagentStart/Stop`, `Stop`, `SessionEnd` — 12 hooks
 on Claude Code, 6 on Codex CLI, 22 on OpenCode (06 §3.1). mempalace today only ships
@@ -302,7 +302,7 @@ on Claude Code, 6 on Codex CLI, 22 on OpenCode (06 §3.1). mempalace today only 
 - B. Mempalace exposes an `EventCapture` trait; the host calls it on every relevant event;
   the standalone CLI ships hook scripts that invoke `mpr observe ...`.
 - C. **B** plus shipped hook scripts for Claude Code / Codex / OpenCode in the standalone
-  install (matching agentmemory's surface).
+  install (matching mempalace's surface).
 
 **Decision.** **C.** New `pub trait EventCapture` in `mempalace-core`. jcode's adapter
 implements it via `memory_agent.rs`. Standalone install ships full hook coverage.
@@ -314,7 +314,7 @@ is now a P0 deliverable in Phase 4 (06 §6). Three new beads issues added.
 
 **Context.** mempalace stores raw verbatim ("never lose anything"). jcode's tool-result
 blocks routinely contain `OPENAI_API_KEY=sk-...`, OAuth tokens, JWTs after the model
-inspects shell output. Storing those is a **P0 security blocker for jcode**. agentmemory
+inspects shell output. Storing those is a **P0 security blocker for jcode**. mempalace
 strips secrets at ingest before storage (06 §3.4).
 
 **Options.**
@@ -334,7 +334,7 @@ Two new beads issues.
 
 ### ADR-13 — Memory tier (Working / Episodic / Semantic / Procedural)
 
-**Context.** agentmemory's 4-tier consolidation model (06 §3.2) is more granular than
+**Context.** mempalace's 4-tier consolidation model (06 §3.2) is more granular than
 mempalace's halls and aligns with the prior research surveyed in report 02 (MemoryBank §5,
 Generative Agents §6). Halls and tiers are complementary axes:
 - Halls = the *taxonomy* (facts vs events vs advice).
@@ -354,7 +354,7 @@ populated by sleep-time consolidation.
 
 ### ADR-14 — Session diversification in retrieval
 
-**Context.** agentmemory caps results at 3 per session post-RRF so a single productive
+**Context.** mempalace caps results at 3 per session post-RRF so a single productive
 session doesn't drown out other context (06 §3.3). mempalace today has wing/room as
 filters but no per-session cap.
 
@@ -861,7 +861,7 @@ A separate task ("File beads issues for implementation work") will turn these in
   (ADR-13, 06 §3.2).
 - **mp-092 [P1/S]** `SearchScope.max_per_session` post-RRF filter, default 3 (ADR-14,
   06 §3.3).
-- **mp-093 [P1/M]** Reproduce **agentmemory's 95.2 % R@5 LongMemEval-S** on identical
+- **mp-093 [P1/M]** Reproduce **mempalace's 95.2 % R@5 LongMemEval-S** on identical
   fixture in `crates/bench`; gate Phase 5 release on matching it (06 §1).
 
 ### Phase 6 — Polish & Productisation
@@ -877,7 +877,7 @@ A separate task ("File beads issues for implementation work") will turn these in
 - **mp-105 [P1/M]** Standalone CLI ships full hook-script set
   (`SessionStart`/`UserPromptSubmit`/`PreToolUse`/`PostToolUse`/`PostToolUseFailure`/
   `PreCompact`/`Stop`/`SessionEnd`) for Claude Code, Codex, OpenCode — matches
-  agentmemory's auto-capture surface (ADR-11, 06 §3.1).
+  mempalace's auto-capture surface (ADR-11, 06 §3.1).
 - **mp-106 [P2/S]** Privacy-filter UX — configurable allow-list and per-pattern severity
   in `mpr config`; `mpr doctor` reports redaction hits per palace (ADR-12, 06 §3.4).
 

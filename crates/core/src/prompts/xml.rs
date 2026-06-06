@@ -1,5 +1,5 @@
 /// XML parsing utilities for extracting structured data from LLM responses.
-/// 1:1 port from agentmemory `src/prompts/xml.ts`.
+/// 1:1 port from mempalace `src/prompts/xml.ts`.
 use regex::Regex;
 
 /// Valid XML tag pattern: starts with letter or underscore, followed by alphanumeric, underscore, or hyphen.

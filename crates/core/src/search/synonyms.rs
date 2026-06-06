@@ -1,7 +1,7 @@
 //! Synonym expansion for search queries.
 //!
 //! 72 hardcoded synonym groups used to expand queries at index/search time.
-//! BM25 weight for synonym-matched terms: 0.7 (per agentmemory/src/state/search-index.ts:98).
+//! BM25 weight for synonym-matched terms: 0.7 (per mempalace/src/state/search-index.ts:98).
 
 use std::collections::HashSet;
 
@@ -152,7 +152,7 @@ mod tests {
     fn test_synonym_count() {
         assert!(
             SYNONYM_GROUPS.len() >= 46,
-            "SYNONYM_GROUPS must have at least 46 groups (agentmemory source had 46, we have {})",
+            "SYNONYM_GROUPS must have at least 46 groups (mempalace source had 46, we have {})",
             SYNONYM_GROUPS.len()
         );
     }

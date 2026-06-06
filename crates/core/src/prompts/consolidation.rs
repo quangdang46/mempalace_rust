@@ -1,5 +1,5 @@
 /// Consolidation prompt templates.
-/// 1:1 port from agentmemory `src/prompts/consolidation.ts`.
+/// 1:1 port from mempalace `src/prompts/consolidation.ts`.
 use crate::types::CompressedObservation;
 
 /// System prompt for semantic memory merging.

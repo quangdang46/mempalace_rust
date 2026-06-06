@@ -1,6 +1,6 @@
 /// Memory eviction policies for managing storage capacity.
 ///
-/// Ported from agentmemory's eviction system:
+/// Ported from mempalace's eviction system:
 /// - EvictionStrategy: LRU, LFU, or retention-based eviction
 /// - select_eviction_candidates: choose memories to evict based on strategy
 /// - evict_to_target: evict memories until storage is below target count

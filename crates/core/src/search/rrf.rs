@@ -1,6 +1,6 @@
 /// Reciprocal Rank Fusion (RRF) for combining multiple search result streams.
 ///
-/// Ported from agentmemory's hybrid-search.ts RRF implementation:
+/// Ported from mempalace's hybrid-search.ts RRF implementation:
 /// - RRF_K = 60
 /// - combined = W_bm25 * (1/(RRF_K + bm25_rank)) + W_vector * (1/(RRF_K + vector_rank)) + W_graph * (1/(RRF_K + graph_rank))
 /// - Default weights: bm25=0.4, vector=0.6, graph=0.3
@@ -69,7 +69,7 @@ impl RrfConfig {
     /// Construct an `RrfConfig` that biases BM25 toward synonym
     /// expansion hits. Uses [`SYNONYM_BM25_WEIGHT`] (0.7) for the BM25
     /// stream so that synonym-matched documents rank competitively
-    /// with literal text matches, matching agentmemory's
+    /// with literal text matches, matching mempalace's
     /// `hybrid-search.ts` BM25+synonym weighting.
     ///
     /// Vector and graph weights are unchanged from [`Self::default`]

@@ -1,6 +1,6 @@
 /// Retention scoring and Ebbinghaus decay calculations.
 ///
-/// Ported from agentmemory's retention system:
+/// Ported from mempalace's retention system:
 /// - calculate_retention: Ebbinghaus forgetting curve
 /// - should_forget: retention below threshold or past forget_after
 /// - promote_tier: upgrade memory to higher consolidation tier
@@ -12,7 +12,7 @@ use chrono::{DateTime, Duration, Utc};
 ///
 /// Formula: retention = initial * e^(-decay_rate * elapsed_days)
 ///
-/// Matches agentmemory's Ebbinghaus-based decay calculation.
+/// Matches mempalace's Ebbinghaus-based decay calculation.
 pub fn calculate_retention(
     retention_score: &RetentionScore,
     config: &DecayConfig,
@@ -112,7 +112,7 @@ pub fn apply_decay(
 /// Calculate a reinforcement multiplier based on access frequency.
 ///
 /// More frequently accessed memories decay slower.
-/// Matches agentmemory's frequency-based reinforcement.
+/// Matches mempalace's frequency-based reinforcement.
 pub fn frequency_multiplier(access_count: usize) -> f64 {
     if access_count == 0 {
         1.0

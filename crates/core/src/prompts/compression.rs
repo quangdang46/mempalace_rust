@@ -1,5 +1,5 @@
 /// Compression prompt templates.
-/// 1:1 port from agentmemory `src/prompts/compression.ts`.
+/// 1:1 port from mempalace `src/prompts/compression.ts`.
 use crate::types::RawObservation;
 
 /// System prompt for memory compression.
@@ -47,7 +47,7 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// Build a compression prompt from a raw observation.
-/// 1:1 port of `buildCompressionPrompt()` from agentmemory.
+/// 1:1 port of `buildCompressionPrompt()` from mempalace.
 pub fn build_compression_prompt(obs: &RawObservation) -> String {
     let mut parts = Vec::new();
 

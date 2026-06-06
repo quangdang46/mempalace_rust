@@ -54,7 +54,7 @@ These areas are blocked by upstream dependencies or epic-level scope:
 | Area | Blocker | Notes |
 |------|---------|-------|
 | AAAK compression semantics | mr-nrt.18 | `remember` scoring depends on this |
-| Frontend/agentmemory MCP tools | mr-mcp-* beads | Extended MCP tools (team sharing, audit, snapshots, etc.) |
+| Frontend/mempalace MCP tools | mr-mcp-* beads | Extended MCP tools (team sharing, audit, snapshots, etc.) |
 | jcode integration | mr-jcode-* beads | jcode-repo owned |
 | LanceDB store tier | mr-lancedb-store-* | Tier-3 promotion |
 

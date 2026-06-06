@@ -1,6 +1,6 @@
 /// Cross-encoder reranker for search results.
 ///
-/// Ported from agentmemory's reranker.ts:
+/// Ported from mempalace's reranker.ts:
 /// - Uses ms-marco-MiniLM-L-6-v2 ONNX model via tract-onnx
 /// - Input format: "{query} [SEP] {title} {narrative}".truncate(512)
 /// - Returns top_k results sorted by rerank score (descending)

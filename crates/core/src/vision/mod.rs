@@ -1,5 +1,5 @@
 //! Vision module - image embedding, search, and management.
-//! Ported from agentmemory's vision-search.ts, image-refs.ts, image-store.ts, image-quota-cleanup.ts
+//! Ported from mempalace's vision-search.ts, image-refs.ts, image-store.ts, image-quota-cleanup.ts
 
 pub mod embedding_provider;
 pub mod image_quota;

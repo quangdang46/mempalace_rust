@@ -1144,7 +1144,7 @@ impl MempalaceServer {
         let resources = vec![
             Annotated::new(
                 rmcp::model::RawResource {
-                    uri: "agentmemory://status".into(),
+                    uri: "mempalace://status".into(),
                     name: "Palace Status".into(),
                     title: Some("MemPalace Status".into()),
                     description: Some("Session count, memory count, and health metrics".into()),
@@ -1157,7 +1157,7 @@ impl MempalaceServer {
             ),
             Annotated::new(
                 rmcp::model::RawResource {
-                    uri: "agentmemory://project/{name}/profile".into(),
+                    uri: "mempalace://project/{name}/profile".into(),
                     name: "Project Profile".into(),
                     title: Some("Project Memory Profile".into()),
                     description: Some("Top concepts, files, and conventions for a project".into()),
@@ -1170,7 +1170,7 @@ impl MempalaceServer {
             ),
             Annotated::new(
                 rmcp::model::RawResource {
-                    uri: "agentmemory://project/{name}/recent".into(),
+                    uri: "mempalace://project/{name}/recent".into(),
                     name: "Recent Sessions".into(),
                     title: Some("Recent Session Summaries".into()),
                     description: Some("Last 5 session summaries for a project".into()),
@@ -1183,7 +1183,7 @@ impl MempalaceServer {
             ),
             Annotated::new(
                 rmcp::model::RawResource {
-                    uri: "agentmemory://memories/latest".into(),
+                    uri: "mempalace://memories/latest".into(),
                     name: "Latest Memories".into(),
                     title: Some("Top 10 Latest Memories".into()),
                     description: Some("Top 10 most recent memories".into()),
@@ -1196,7 +1196,7 @@ impl MempalaceServer {
             ),
             Annotated::new(
                 rmcp::model::RawResource {
-                    uri: "agentmemory://graph/stats".into(),
+                    uri: "mempalace://graph/stats".into(),
                     name: "Graph Statistics".into(),
                     title: Some("Knowledge Graph Statistics".into()),
                     description: Some("KG node and edge counts by type".into()),
@@ -1209,7 +1209,7 @@ impl MempalaceServer {
             ),
             Annotated::new(
                 rmcp::model::RawResource {
-                    uri: "agentmemory://team/feed".into(),
+                    uri: "mempalace://team/feed".into(),
                     name: "Team Feed".into(),
                     title: Some("Team Shared Memories".into()),
                     description: Some("Recent shared memories from team members".into()),
@@ -1226,11 +1226,11 @@ impl MempalaceServer {
 
     fn read_mcp_resource(&self, uri: &str) -> Result<ReadResourceResult, ErrorData> {
         match uri {
-            "agentmemory://status" => self.read_resource_status(),
-            uri if uri.starts_with("agentmemory://project/") => self.read_resource_project(uri),
-            "agentmemory://memories/latest" => self.read_resource_latest_memories(),
-            "agentmemory://graph/stats" => self.read_resource_graph_stats(),
-            "agentmemory://team/feed" => self.read_resource_team_feed(),
+            "mempalace://status" => self.read_resource_status(),
+            uri if uri.starts_with("mempalace://project/") => self.read_resource_project(uri),
+            "mempalace://memories/latest" => self.read_resource_latest_memories(),
+            "mempalace://graph/stats" => self.read_resource_graph_stats(),
+            "mempalace://team/feed" => self.read_resource_team_feed(),
             _ => Err(rmcp::ErrorData::invalid_params(
                 format!("Unknown resource URI: {}", uri),
                 None,
@@ -1251,7 +1251,7 @@ impl MempalaceServer {
         );
         Ok(ReadResourceResult::new(vec![ResourceContents::text(
             content,
-            "agentmemory://status",
+            "mempalace://status",
         )]))
     }
 
@@ -1309,7 +1309,7 @@ impl MempalaceServer {
         };
         Ok(ReadResourceResult::new(vec![ResourceContents::text(
             content,
-            "agentmemory://memories/latest",
+            "mempalace://memories/latest",
         )]))
     }
 
@@ -1318,7 +1318,7 @@ impl MempalaceServer {
             "Knowledge Graph Statistics\n==========================\n(KG not yet implemented)";
         Ok(ReadResourceResult::new(vec![ResourceContents::text(
             content,
-            "agentmemory://graph/stats",
+            "mempalace://graph/stats",
         )]))
     }
 
@@ -1326,7 +1326,7 @@ impl MempalaceServer {
         let content = "Team Feed\n=======\n(No team data available)".to_string();
         Ok(ReadResourceResult::new(vec![ResourceContents::text(
             content,
-            "agentmemory://team/feed",
+            "mempalace://team/feed",
         )]))
     }
 
@@ -7108,7 +7108,7 @@ mod tests {
     fn test_catalog_matches_python_surface() {
         let tools = make_tools();
         let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
-        // Smart features tools included (from agentmemory parity)
+        // Smart features tools included (from mempalace parity)
         let expected = vec![
             "mempalace_status",
             "mempalace_list_wings",

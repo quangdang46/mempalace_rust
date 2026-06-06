@@ -23,7 +23,7 @@ impl Default for AnthropicConfig {
             api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
             model: std::env::var("ANTHROPIC_MODEL")
                 .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string()),
-            timeout_ms: std::env::var("AGENTMEMORY_LLM_TIMEOUT_MS")
+            timeout_ms: std::env::var("MEMPALACE_LLM_TIMEOUT_MS")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(60_000),

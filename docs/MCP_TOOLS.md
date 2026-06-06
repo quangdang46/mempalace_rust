@@ -1,10 +1,10 @@
-# MCP Tool Expansion — agentmemory Feature Parity
+# MCP Tool Expansion — mempalace Feature Parity
 
-Target: **43+ MCP tools** (currently 19) to match agentmemory (51 tools).
+Target: **43+ MCP tools** (currently 19) to match mempalace (51 tools).
 
 ## Why
 
-agentmemory provides 51 MCP tools covering team collaboration, audit trails,
+mempalace provides 51 MCP tools covering team collaboration, audit trails,
 governance, snapshots, signals, action sketches, and self-healing. mempalace
 currently has 19 tools. This gap means agents using mempalace miss critical
 governance, collaboration, and introspection capabilities.
@@ -15,64 +15,64 @@ governance, collaboration, and introspection capabilities.
 - `memory_team_share` — Share a memory or drawer with team members
 - `memory_team_feed` — Retrieve team-shared memories feed
 
-**Reference:** agentmemory `share_memory`, `get_shared_memories`
+**Reference:** mempalace `share_memory`, `get_shared_memories`
 
 ### 2. Audit Trail (1 tool)
 - `memory_audit` — Query audit log: who accessed/modified what, when, why
 
-**Reference:** agentmemory `get_audit_log`
+**Reference:** mempalace `get_audit_log`
 
 ### 3. Governance Delete (1 tool)
 - `memory_governance_delete` — Delete with mandatory reason + audit trail entry
 
-**Reference:** agentmemory `governance_delete_memory`
+**Reference:** mempalace `governance_delete_memory`
 
 ### 4. Snapshots (3 tools)
 - `memory_snapshot_create` — Create git-versioned snapshot of palace state
 - `memory_snapshot_list` — List available snapshots
 - `memory_snapshot_restore` — Restore palace to a specific snapshot
 
-**Reference:** agentmemory `create_snapshot`, `list_snapshots`, `restore_snapshot`
+**Reference:** mempalace `create_snapshot`, `list_snapshots`, `restore_snapshot`
 
 ### 5. Inter-Agent Signals (3 tools)
 - `memory_signal_send` — Send a signal to another agent
 - `memory_signal_read` — Read pending signals for this agent
 - `memory_signal_clear` — Clear a consumed signal
 
-**Reference:** agentmemory `send_signal`, `read_signals`, `clear_signal`
+**Reference:** mempalace `send_signal`, `read_signals`, `clear_signal`
 
 ### 6. Action Sketches (3 tools)
 - `memory_sketch_create` — Create a draft/rough action sketch
 - `memory_sketch_promote` — Promote a sketch to a confirmed memory
 - `memory_crystallize` — Convert sketch to formal memory
 
-**Reference:** agentmemory `create_action_sketch`, `promote_sketch`, `crystallize_sketch`
+**Reference:** mempalace `create_action_sketch`, `promote_sketch`, `crystallize_sketch`
 
 ### 7. Self-Healing (2 tools)
 - `memory_diagnose` — Diagnose palace health issues (duplicates, broken refs, entropy)
 - `memory_heal` — Auto-fix diagnosed issues
 
-**Reference:** agentmemory `diagnose_memories`, `heal_memories`
+**Reference:** mempalace `diagnose_memories`, `heal_memories`
 
 ### 8. Facets/Layers (3 tools)
 - `memory_facet_tag` — Tag a memory with custom facets
 - `memory_facet_query` — Query memories by facet
 - `memory_facet_list` — List all available facets
 
-**Reference:** agentmemory `tag_facet`, `query_by_facet`, `list_facets`
+**Reference:** mempalace `tag_facet`, `query_by_facet`, `list_facets`
 
 ### 9. Session Tracking (2 tools)
 - `memory_sessions` — List all sessions
 - `memory_timeline` — Get chronological event timeline
 
-**Reference:** agentmemory `get_sessions`, `get_timeline`
+**Reference:** mempalace `get_sessions`, `get_timeline`
 
 ### 10. Misc Tools (2 tools)
 - `memory_profile` — Get memory statistics + health scores
 - `memory_export` — Export memories in various formats
 - `memory_relations` — Query knowledge graph for entity relations
 
-**Reference:** agentmemory `get_memory_profile`, `export_memories`, `get_memory_relations`
+**Reference:** mempalace `get_memory_profile`, `export_memories`, `get_memory_relations`
 
 ## Implementation Priority
 
@@ -139,7 +139,7 @@ Access still blocked at call time via `read_only_guard()`.
 
 ## Tracking Beads
 
-- `mr-mcp-43-tools-agentmemory-06or` — Epic: expand to 43+ tools
+- `mr-mcp-43-tools-mempalace-06or` — Epic: expand to 43+ tools
 - `mr-qo08` — memory_team_share + memory_team_feed
 - `mr-ecvv` — memory_audit
 - `mr-qh3a` — memory_governance_delete

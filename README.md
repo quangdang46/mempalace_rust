@@ -491,9 +491,9 @@ Future retrievals blend semantic similarity with historical helpfulness — memo
 
 RRF fuses them: a hit in any 2 of 3 ranks higher than 3 hits in 1.
 `SYNONYM_BM25_WEIGHT = 0.7` (from `search/synonyms.rs`) lifts synonym
-matches above exact matches — matches the agentmemory reference.
+matches above exact matches — matches the mempalace reference.
 
-**Plugin deployment** (`plugin/` folder at repo root, copy of agentmemory's layout):
+**Plugin deployment** (`plugin/` folder at repo root, copy of mempalace's layout):
 
 ```
 ┌──────────────┐   npm/npx   ┌────────────────┐
@@ -513,7 +513,7 @@ matches above exact matches — matches the agentmemory reference.
 The agent runtime loads the plugin/ folder; Node.js scripts in
 `plugin/scripts/` call the REST API. No Rust-side hook or plugin
 manager — that pattern was removed in commit `d98a0a3` as a
-self-added divergence from agentmemory 1:1.
+self-added divergence from mempalace 1:1.
 
 ---
 

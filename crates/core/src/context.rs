@@ -152,7 +152,7 @@ impl ContextBuilder {
 
     pub fn build_xml(&self) -> Result<String> {
         let blocks = self.build()?;
-        let mut xml = String::from("<agentmemory_context>\n");
+        let mut xml = String::from("<mempalace_context>\n");
 
         for block in &blocks {
             xml.push_str(&format!(
@@ -161,7 +161,7 @@ impl ContextBuilder {
             ));
         }
 
-        xml.push_str("</agentmemory_context>");
+        xml.push_str("</mempalace_context>");
         Ok(xml)
     }
 }
@@ -287,8 +287,8 @@ mod tests {
         let builder =
             ContextBuilder::new(1000).with_pinned_slots(vec![test_slot("s-1", "test", "content")]);
         let xml = builder.build_xml().unwrap();
-        assert!(xml.starts_with("<agentmemory_context>"));
-        assert!(xml.ends_with("</agentmemory_context>"));
+        assert!(xml.starts_with("<mempalace_context>"));
+        assert!(xml.ends_with("</mempalace_context>"));
         assert!(xml.contains("content"));
     }
 

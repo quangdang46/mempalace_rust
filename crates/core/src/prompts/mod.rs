@@ -1,7 +1,7 @@
 /// Prompt templates for LLM interactions.
 ///
 /// This module contains system prompts and prompt builders for various
-/// memory operations, ported 1:1 from agentmemory's TypeScript implementation.
+/// memory operations, ported 1:1 from mempalace's TypeScript implementation.
 ///
 /// # Modules
 ///

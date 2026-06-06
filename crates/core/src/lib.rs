@@ -196,7 +196,7 @@ pub use health::{
 };
 
 // =====================================================================
-// Phase 8 — AgentMemory MCP expansion (internal, evolving)
+// Phase 8 — MemPalace MCP expansion (internal, evolving)
 // =====================================================================
 
 #[doc(hidden)]

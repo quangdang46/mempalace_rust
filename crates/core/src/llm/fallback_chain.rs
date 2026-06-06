@@ -1,6 +1,6 @@
 //! Fallback chain for LLM providers with circuit breaker wrapping.
 //!
-//! 1:1 from agentmemory's fallback-chain.ts:
+//! 1:1 from mempalace's fallback-chain.ts:
 //! - Try providers in configured order
 //! - On error, try next provider
 //! - Each wrapped in its own CircuitBreaker

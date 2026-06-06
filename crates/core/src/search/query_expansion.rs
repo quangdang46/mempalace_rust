@@ -1,6 +1,6 @@
 /// LLM-based query expansion for search recall improvement.
 ///
-/// Ported from agentmemory's query-expansion.ts:
+/// Ported from mempalace's query-expansion.ts:
 /// - Generates 3-5 reformulations for diverse recall
 /// - Extracts entities (quoted strings, capitalized words excluding stop words)
 /// - Generates temporal concretizations for time-related queries

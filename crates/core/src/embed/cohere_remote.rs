@@ -1,4 +1,4 @@
-//! Cohere remote embedding provider (G2 / agentmemory parity).
+//! Cohere remote embedding provider (G2 / mempalace parity).
 //!
 //! Talks to the Cohere `/v1/embed` endpoint. Selected via
 //! `MEMPALACE_EMBED_MODEL=cohere-english-v3` (and friends) behind the

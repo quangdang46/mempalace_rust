@@ -1,6 +1,6 @@
 /// Session-based diversification of search results.
 ///
-/// Ported from agentmemory's diversifyBySession:
+/// Ported from mempalace's diversifyBySession:
 /// - Groups results by session_id
 /// - Limits results per session (default: 3)
 /// - Fallback fill: if selected < limit, add remaining items regardless of session

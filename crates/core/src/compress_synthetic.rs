@@ -1,6 +1,6 @@
 /// Zero-LLM fallback compression: infers observation type and extracts files
 /// from raw observation data without calling an LLM.
-/// 1:1 port from agentmemory `src/functions/compress-synthetic.ts`.
+/// 1:1 port from mempalace `src/functions/compress-synthetic.ts`.
 /// Enhanced with heuristic fact extraction, entity extraction, and importance scoring.
 use chrono::Utc;
 use serde_json::Value;
@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use crate::types::{CompressedObservation, HookType, ObservationType};
 
 /// Infer the observation type from the hook type and tool name.
-/// 1:1 port of `inferType()` from agentmemory.
+/// 1:1 port of `inferType()` from mempalace.
 pub fn infer_type(tool_name: Option<&str>, hook_type: &HookType) -> ObservationType {
     // Tool-name-based classification takes precedence when the hook
     // also has a generic override (e.g. `PostToolUseFailure` should
@@ -81,7 +81,7 @@ pub fn infer_type(tool_name: Option<&str>, hook_type: &HookType) -> ObservationT
 }
 
 /// Extract file paths from a JSON value by scanning for common file path keys.
-/// 1:1 port of `extractFiles()` from agentmemory.
+/// 1:1 port of `extractFiles()` from mempalace.
 pub fn extract_files(input: &Value) -> Vec<String> {
     let file_keys = [
         "file_path",
@@ -467,7 +467,7 @@ pub fn generate_summary(
 }
 
 /// Create a synthetic compressed observation from raw data without using an LLM.
-/// 1:1 port of `buildSyntheticCompression()` from agentmemory.
+/// 1:1 port of `buildSyntheticCompression()` from mempalace.
 pub fn build_synthetic_compression(
     tool_name: Option<&str>,
     hook_type: &HookType,
@@ -536,7 +536,7 @@ pub fn build_synthetic_compression(
 
 /// Calculate quality score for a compressed observation.
 /// Returns a score from 0-100.
-/// 1:1 port of `scoreCompression()` from agentmemory.
+/// 1:1 port of `scoreCompression()` from mempalace.
 pub fn score_compression(obs: &CompressedObservation) -> u8 {
     let mut score: u8 = 0;
     if !obs.facts.is_empty() {

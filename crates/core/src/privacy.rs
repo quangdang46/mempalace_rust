@@ -45,7 +45,7 @@
 //! since they are user-supplied and palace-scoped.
 //!
 //! See ADR-12 in `docs/research/00_UPGRADE_AND_INTEGRATION_PLAN.md` and the
-//! agentmemory analysis in `docs/research/06_agentmemory_repo_analysis.md`
+//! mempalace analysis in `docs/research/06_mempalace_repo_analysis.md`
 //! §3.4.
 
 use std::collections::HashSet;

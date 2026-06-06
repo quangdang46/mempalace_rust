@@ -1,6 +1,6 @@
-//! AgentMemory-equivalent types for mempalace_rust.
+//! MemPalace-equivalent types for mempalace_rust.
 //!
-//! Maps ALL TypeScript types from agentmemory's `src/types.ts` to Rust
+//! Maps ALL TypeScript types from mempalace's `src/types.ts` to Rust
 //! structs/enums with Serde derive macros. This is the foundational type
 //! system that every other module depends on.
 
@@ -1163,7 +1163,7 @@ pub struct TeamSharedItem {
     pub visibility: ItemVisibility,
 }
 
-/// Audit operation types (~60 types from agentmemory).
+/// Audit operation types (~60 types from mempalace).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditOperation {

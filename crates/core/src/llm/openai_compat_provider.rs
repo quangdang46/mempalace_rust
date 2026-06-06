@@ -24,7 +24,7 @@ impl Default for OpenAICompatConfig {
             model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
             base_url: std::env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| "https://api.openai.com".to_string()),
-            timeout_ms: std::env::var("AGENTMEMORY_LLM_TIMEOUT_MS")
+            timeout_ms: std::env::var("MEMPALACE_LLM_TIMEOUT_MS")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(60_000),

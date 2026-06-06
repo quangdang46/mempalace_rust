@@ -669,7 +669,7 @@ impl HealthCheck for UptimeCheck {
 /// heartbeat task; a lag larger than the crit threshold indicates
 /// the event loop is effectively stalled.
 ///
-/// Matches agentmemory's `state/health.ts` event-loop-lag check:
+/// Matches mempalace's `state/health.ts` event-loop-lag check:
 /// 100 ms warn, 500 ms crit, 1000 ms idle interval.
 pub struct EventLoopLagCheck {
     handle: EventLoopHandle,

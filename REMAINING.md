@@ -1,14 +1,14 @@
-# REMAINING.md — agentmemory vs mempalace_rust Feature Parity Report
+# REMAINING.md — mempalace vs mempalace_rust Feature Parity Report
 
 **Generated:** 2026-06-01 (rewritten from direct source verification)
-**Source agentmemory:** rohitg00/agentmemory v0.9.24
+**Source mempalace:** rohitg00/mempalace v0.9.24
 **Last G1–G6 verification:** `cargo check` clean; `cargo fmt --check` clean;
 `cargo test --lib` = **1081 passed, 8 failed** (all 8 failures pre-existing,
 unrelated to G1–G6: tool-catalog drift, sanitization underscore-vs-hyphen,
 env-dependent compress tests, and a /nonexistent repair test).
 **Status:** all six G1–G6 items previously listed as gaps are now **resolved**
 in the working tree. The Open G1 follow-up is to *re-run* the bench harness
-and record a Rust R@5 number next to the Python 96.6% / agentmemory 95.2%.
+and record a Rust R@5 number next to the Python 96.6% / mempalace 95.2%.
 **Verification:** Every row below was checked against `crates/core/src/` rather than
 inferred. The previous revision of this file was ~90% stale — it listed dozens of
 already-implemented items as missing. This revision lists only **genuine** gaps.
@@ -17,7 +17,7 @@ already-implemented items as missing. This revision lists only **genuine** gaps.
 
 ## Summary Scorecard
 
-| Dimension | agentmemory | mempalace_rust | Parity | Evidence |
+| Dimension | mempalace | mempalace_rust | Parity | Evidence |
 |---|---|---|---|---|
 | MCP tools | 53 | ~73 `mempalace_*` + 53 `memory_*` aliases (`make_tools()`) | ✅ ≥100% | `mcp_server.rs:559+` |
 | MCP Resources | 6 | 5 (`status`, `project/{name}/profile`, `memories/latest`, `graph/stats`, `team/feed`) | ✅ ~83% | `mcp_server.rs:1144+` |
@@ -59,7 +59,7 @@ direct source inspection. The original analysis and follow-up actions
 are retained below for audit trail; the **status** field is the truth.
 
 ### G1 — Benchmark mainline parity — ✅ RESOLVED (reproduction pending)
-- agentmemory: **95.2% R@5** on LongMemEval-S with a public reproducer.
+- mempalace: **95.2% R@5** on LongMemEval-S with a public reproducer.
 - mempalace mainline (`PalaceDb::query` → `mpr search` / `mpr_search`) uses **naive Jaccard
   word-overlap**, scoring **~43.6% R@5** (`docs/research/06_phase0_longmemeval_baseline.md`).
 - The 96.6%/embedding path lives in a **separate `EmbeddingDb` code path in `crates/bench`
@@ -128,7 +128,7 @@ are retained below for audit trail; the **status** field is the truth.
   `test_lesson_decay_with_empty_palace` and `test_lesson_decay_persists`.
 
 ### G5 — Web viewer — ✅ RESOLVED (minimal page shipped)
-- agentmemory ships an HTML viewer on `:3113`. mempalace has `/sse` + `/mcp` infra but no
+- mempalace ships an HTML viewer on `:3113`. mempalace has `/sse` + `/mcp` infra but no
   viewer page.
 - **Fix:** add a minimal `/viewer` route serving a status/stats HTML page over the existing
   REST state. (Full SPA + live graph is a larger follow-up.)
@@ -158,7 +158,7 @@ are retained below for audit trail; the **status** field is the truth.
 
 ## Intentional, Approved Deviations (NOT gaps)
 
-| Deviation | agentmemory | mempalace_rust | Reason |
+| Deviation | mempalace | mempalace_rust | Reason |
 |---|---|---|---|
 | Storage | ChromaDB + HNSW | embedvec + usearch (SQLite) | Rust-native, no C++/server |
 | Runtime substrate | iii-engine (Node) | direct rusqlite + axum + rmcp | single binary, no external engine |

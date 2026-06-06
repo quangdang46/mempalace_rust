@@ -1,6 +1,6 @@
 //! LLM provider trait — async abstraction for text completion and image description.
 //!
-//! 1:1 mapping to agentmemory's LLM provider interface, adapted for Rust async.
+//! 1:1 mapping to mempalace's LLM provider interface, adapted for Rust async.
 
 use async_trait::async_trait;
 

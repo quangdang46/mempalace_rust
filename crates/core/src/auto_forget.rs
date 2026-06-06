@@ -1,6 +1,6 @@
 /// Automatic forgetting of memories that have decayed below threshold.
 ///
-/// Ported from agentmemory's auto-forget system:
+/// Ported from mempalace's auto-forget system:
 /// - AutoForgetConfig: configurable thresholds and scheduling
 /// - evaluate_forgetting: scan memories and return list of forgettable memory IDs
 /// - batch_forget: mark multiple memories as not latest and set forget_after

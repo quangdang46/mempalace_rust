@@ -1,6 +1,6 @@
 /// Consolidation engine — groups observations by concept and synthesizes
 /// them into long-term memories via LLM.
-/// 1:1 port from agentmemory `src/functions/consolidate.ts`.
+/// 1:1 port from mempalace `src/functions/consolidate.ts`.
 use std::collections::HashMap;
 
 use crate::llm::LlmProvider;

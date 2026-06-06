@@ -1,5 +1,5 @@
 /// Three-stage consolidation pipeline: semantic → procedural → decay.
-/// 1:1 port from agentmemory `src/functions/consolidation-pipeline.ts`.
+/// 1:1 port from mempalace `src/functions/consolidation-pipeline.ts`.
 use chrono::Utc;
 
 use crate::llm::LlmProvider;

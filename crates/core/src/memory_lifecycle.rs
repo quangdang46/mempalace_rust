@@ -1,5 +1,5 @@
 /// Memory lifecycle management — versioning, evolution, and retention tracking.
-/// 1:1 port from agentmemory memory lifecycle patterns.
+/// 1:1 port from mempalace memory lifecycle patterns.
 use chrono::Utc;
 
 #[cfg(test)]

@@ -33,7 +33,7 @@
 //!
 //! ## Defaults
 //!
-//! - `DEFAULT_WINDOW = 300 s` — five minutes, matching the agentmemory
+//! - `DEFAULT_WINDOW = 300 s` — five minutes, matching the mempalace
 //!   reference impl (report 06 §3.5).
 //! - `DEFAULT_CAPACITY = 4096` — bounds memory at ~256 KiB worst case
 //!   (32 B hash + a few bytes for `Instant`).

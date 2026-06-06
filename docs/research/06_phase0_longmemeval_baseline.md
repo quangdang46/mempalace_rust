@@ -138,7 +138,7 @@ scoring code **must** bump it and refresh this document.
 | System | LongMemEval-S R@5 | Source |
 |---|---|---|
 | MemPalace (Python upstream, vendor) | 0.966 | mempalace README |
-| agentmemory (rohitg00) | 0.952 | report 06 §1 |
+| mempalace (rohitg00) | 0.952 | report 06 §1 |
 | Mem0 (Nov 2025 algorithm, vendor) | 0.944 | report 02 §1306 |
 | Vectorize Hindsight | ≥ 0.90 | report 02 §1306 |
 | **MemPalace (Rust port, naive_similarity)** | **0.436** | **this doc** |

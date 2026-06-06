@@ -1903,7 +1903,7 @@ impl PalaceDb {
         // expanded query is used for lexical streams (BM25 + graph);
         // the vector stream stays semantic and still uses the raw
         // query_text so the embedder doesn't see noisy expansions.
-        // Per `agentmemory/src/state/search-index.ts:98` the BM25
+        // Per `mempalace/src/state/search-index.ts:98` the BM25
         // weight for synonym-matched docs is 0.7 (vs 1.0 for direct
         // matches), wired through `RrfConfig::with_synonyms()` below.
         let query_tokens: Vec<&str> = query_text.split_whitespace().collect();

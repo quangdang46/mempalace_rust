@@ -1,6 +1,6 @@
 /// Smart search with expand and compact modes.
 ///
-/// Ported from agentmemory's smart-search.ts:
+/// Ported from mempalace's smart-search.ts:
 /// - Expand mode (expand_ids): fetch up to 20 observations by ID
 /// - Compact mode (query): over-fetch 3x (cap 300), hybrid search + lesson recall parallel
 /// Returns CompactSearchResult { obs_id, session_id, title, type, score, timestamp }

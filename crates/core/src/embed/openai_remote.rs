@@ -1,4 +1,4 @@
-//! OpenAI-compatible remote embedding provider (G2 / agentmemory parity).
+//! OpenAI-compatible remote embedding provider (G2 / mempalace parity).
 //!
 //! Talks to any `/embeddings` endpoint that follows the OpenAI schema —
 //! OpenAI, Azure OpenAI, OpenRouter, LM Studio, vLLM, Ollama. Selected via
