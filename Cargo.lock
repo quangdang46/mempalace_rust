@@ -2323,7 +2323,6 @@ dependencies = [
  "criterion",
  "directories",
  "dirs",
- "edgebert",
  "embedvec",
  "fastembed",
  "filetime",

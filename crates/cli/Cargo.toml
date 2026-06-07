@@ -11,8 +11,12 @@ description.workspace = true
 name = "mpr"
 path = "src/main.rs"
 
+[features]
+default = ["embed-fastembed"]
+embed-fastembed = ["mempalace-core/embed-fastembed"]
+
 [dependencies]
-mempalace-core = { path = "../core" }
+mempalace-core = { path = "../core", default-features = false }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
