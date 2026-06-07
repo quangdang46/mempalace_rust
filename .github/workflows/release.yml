@@ -50,7 +50,7 @@ jobs:
       - name: Build
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} -p mempalace
+            cross build --release --target ${{ matrix.target }} -p mempalace --no-default-features
           else
             cargo build --release --target ${{ matrix.target }} -p mempalace
           fi

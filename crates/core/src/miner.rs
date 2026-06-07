@@ -1091,12 +1091,20 @@ pub async fn mine_with_options(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_chunk_text_basic() {
+    /// Create a `Miner` backed by a temporary directory so tests work
+    /// on all platforms (Windows does not have `/tmp`).
+    fn make_miner(rooms: Vec<RoomMapping>) -> (Miner, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
         let miner = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(Miner::new(std::path::Path::new("/tmp"), "test", vec![]))
+            .block_on(Miner::new(tmp.path(), "test", rooms))
             .expect("failed to create miner");
+        (miner, tmp)
+    }
+
+
+    fn test_chunk_text_basic() {
+        let (miner, _tmp) = make_miner(vec![]);
 
         let text = "This is a test paragraph.\n\nThis is another paragraph.\n\nAnd another one here with enough content to be a chunk.";
         let chunks = miner.chunk_text(text, "test.txt");
@@ -1106,10 +1114,7 @@ mod tests {
 
     #[test]
     fn test_chunk_text_respects_min_size() {
-        let miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(std::path::Path::new("/tmp"), "test", vec![]))
-            .expect("failed to create miner");
+        let (miner, _tmp) = make_miner(vec![]);
 
         let text = "Short text";
         let chunks = miner.chunk_text(text, "test.txt");
@@ -1124,10 +1129,7 @@ mod tests {
             description: "Backend code".to_string(),
             keywords: vec!["backend".to_string()],
         }];
-        let miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms))
-            .expect("failed to create miner");
+        let (miner, _tmp) = make_miner(rooms);
 
         let room = miner.detect_room(std::path::Path::new("/tmp/unknown_file.txt"), "content");
         assert_eq!(room, "general");
@@ -1218,10 +1220,7 @@ mod tests {
             description: "Backend code".to_string(),
             keywords: vec!["authentication".to_string(), "jwt".to_string()],
         }];
-        let miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms))
-            .expect("failed to create miner");
+        let (miner, _tmp) = make_miner(rooms);
 
         let room = miner.detect_room(
             std::path::Path::new("/tmp/project/backend/auth.py"),
@@ -1255,10 +1254,7 @@ mod tests {
             description: "View templates".to_string(),
             keywords: vec![],
         }];
-        let miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms))
-            .expect("failed to create miner");
+        let (miner, _tmp) = make_miner(rooms);
 
         let room = miner.detect_room(
             std::path::Path::new("/tmp/project/interviews/q1.py"),
@@ -1274,10 +1270,7 @@ mod tests {
             description: "Frontend code".to_string(),
             keywords: vec![],
         }];
-        let miner = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(Miner::new(std::path::Path::new("/tmp"), "test", rooms))
-            .expect("failed to create miner");
+        let (miner, _tmp) = make_miner(rooms);
 
         let room = miner.detect_room(
             std::path::Path::new("/tmp/project/frontend-app/index.tsx"),
