@@ -340,6 +340,19 @@ pub async fn search(
     Ok(print_search_response(&response))
 }
 
+pub fn print_search_response_json(response: &SearchResponse) -> i32 {
+    match serde_json::to_string_pretty(response) {
+        Ok(json) => {
+            println!("{json}");
+            0
+        }
+        Err(e) => {
+            eprintln!("error: failed to serialize search results as JSON: {e}");
+            1
+        }
+    }
+}
+
 pub fn print_search_response(response: &SearchResponse) -> i32 {
     if response.results.is_empty() {
         println!("\n  No results found for: \"{}\"", response.query);

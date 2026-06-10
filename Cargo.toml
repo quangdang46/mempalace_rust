@@ -45,6 +45,10 @@ filetime = "0.2"
 bm25 = "2.3"
 rand = "0.8"
 
+# HTTP REST API server dependencies (optional, behind http-server feature)
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+
 # Additional workspace dependencies for embed-tract feature
 tokenizers = "0.21"
 ndarray = "0.16"

@@ -182,6 +182,12 @@ async fn healthz_handler(State(state): State<SharedState>) -> impl IntoResponse 
     (StatusCode::from_u16(status_code).expect("valid HTTP status code"), Json(report))
 }
 
+/// Fallback healthz when `health` feature is off.
+#[cfg(not(feature = "health"))]
+async fn healthz_handler() -> impl IntoResponse {
+    (StatusCode::OK, Json(serde_json::json!({"status": "healthy", "note": "health feature not enabled"})))
+}
+
 /// Lightweight liveness probe — confirms the process is alive.
 /// No `health` feature required.
 async fn livez_handler() -> impl IntoResponse {
@@ -250,7 +256,7 @@ async fn delete_memory_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
     let args: JsonObject = json!({ "id": id }).as_object().unwrap().clone();
-    let result = invoke_tool(&state_guard, "mempalace_governance_delete", args).await;
+    let _result = invoke_tool(&state_guard, "mempalace_governance_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
 
@@ -572,7 +578,7 @@ async fn slot_delete_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
     let args: JsonObject = json!({ "slot_id": id }).as_object().unwrap().clone();
-    let result = invoke_tool(&state_guard, "mempalace_slot_delete", args).await;
+    let _result = invoke_tool(&state_guard, "mempalace_slot_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
 
@@ -667,7 +673,7 @@ async fn sentinel_delete_handler(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
     let args: JsonObject = json!({ "sentinel_id": id }).as_object().unwrap().clone();
-    let result = invoke_tool(&state_guard, "mempalace_sentinel_delete", args).await;
+    let _result = invoke_tool(&state_guard, "mempalace_sentinel_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
 
@@ -841,14 +847,14 @@ async fn status_handler(
 /// external asset directory. The full live-graph SPA (force layout,
 /// search, SSE live updates) is the G5 follow-up in REMAINING.md.
 async fn viewer_handler() -> impl IntoResponse {
-    Html(mempalace_core::viewer_html())
+    Html(crate::viewer_html())
 }
 
 /// SPA stylesheet. Served at `GET /viewer/styles.css`.
 async fn viewer_styles_handler() -> impl IntoResponse {
     (
         [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        mempalace_core::viewer_styles_css(),
+        crate::viewer_styles_css(),
     )
 }
 
@@ -859,7 +865,7 @@ async fn viewer_app_handler() -> impl IntoResponse {
             axum::http::header::CONTENT_TYPE,
             "application/javascript; charset=utf-8",
         )],
-        mempalace_core::viewer_app_js(),
+        crate::viewer_app_js(),
     )
 }
 

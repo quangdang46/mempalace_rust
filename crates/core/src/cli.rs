@@ -190,6 +190,10 @@ enum Commands {
         /// Fusion mode: vector (default), ppr, or hybrid
         #[arg(long, value_name = "MODE")]
         fusion_mode: Option<String>,
+
+        /// Output results as JSON (for external consumers / piping)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show L0 + L1 wake-up context (~600-900 tokens).
@@ -261,11 +265,16 @@ enum Commands {
     /// Show MCP setup command for connecting MemPalace to your AI client.
     Mcp,
 
-    /// Run MemPalace MCP server (stdio transport).
+    /// Run MemPalace MCP server (stdio transport) or HTTP REST API.
     Serve {
         /// Read-only mode (blocks mutations).
         #[arg(long)]
         read_only: bool,
+
+        /// Start HTTP REST API server instead of stdio MCP.
+        /// Port configurable via MEMPALACE_HTTP_PORT env var (default: 3111).
+        #[arg(long)]
+        http: bool,
     },
 
     /// Re-ingest a file or directory of mined drawers into the palace (idempotent).
@@ -1167,6 +1176,7 @@ fn cmd_search(
     bm25: bool,
     palace_arg: Option<&str>,
     fusion_mode: Option<&str>,
+    json_output: bool,
 ) -> Result<()> {
     let fusion = match fusion_mode {
         Some("ppr") => Some(crate::palace::FusionMode::Ppr),
@@ -1193,7 +1203,11 @@ fn cmd_search(
         None,
         fusion,
     ))?;
-    searcher::print_search_response(&response);
+    if json_output {
+        searcher::print_search_response_json(&response);
+    } else {
+        searcher::print_search_response(&response);
+    }
     Ok(())
 }
 
@@ -1269,6 +1283,51 @@ fn cmd_mcp(palace_arg: Option<&str>) {
         println!("  claude mcp add mpr -- mpr --palace /path/to/palace serve");
         println!("  mpr --palace /path/to/palace serve");
     }
+}
+
+/// Start the HTTP REST API server.
+///
+/// Reads `MEMPALACE_HTTP_PORT` (default 3111) and binds on `0.0.0.0`.
+/// The axum-based server lives in `rest_api.rs` and exposes endpoints
+/// that wrap MCP tool calls for external consumers (Hermes plugin, etc.).
+#[cfg(feature = "http-server")]
+fn cmd_serve_http(palace_override: Option<&str>, read_only: bool) -> Result<()> {
+    let mut config = crate::Config::load()?;
+    if let Some(p) = palace_override {
+        config.palace_path = PathBuf::from(p);
+    }
+
+    let app_state = std::sync::Arc::new(
+        crate::mcp_server::AppState::new(config, read_only)?,
+    );
+    let port = crate::rest_api::get_http_port();
+
+    #[cfg(feature = "health")]
+    {
+        let embedder = crate::embed::embedder_from_env()?;
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            crate::rest_api::run_http_server(app_state, read_only, port, embedder)
+                .await
+        })?;
+    }
+
+    #[cfg(not(feature = "health"))]
+    {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            crate::rest_api::run_http_server(app_state, read_only, port).await
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "http-server"))]
+fn cmd_serve_http(_palace_override: Option<&str>, _read_only: bool) -> Result<()> {
+    Err(anyhow::anyhow!(
+        "HTTP server not available. Rebuild with --features http-server or use the default stdio MCP server (mpr serve without --http)."
+    ))
 }
 
 fn apply_mine_limit(mut result: MiningResult, limit: usize) -> MiningResult {
@@ -2171,6 +2230,7 @@ pub fn run() -> Result<()> {
             results,
             bm25,
             fusion_mode,
+            json,
         } => cmd_search(
             query,
             wing.as_deref(),
@@ -2179,6 +2239,7 @@ pub fn run() -> Result<()> {
             *bm25,
             palace_arg,
             fusion_mode.as_deref(),
+            *json,
         )?,
         Commands::WakeUp { wing } => cmd_wakeup(wing.as_deref(), palace_arg)?,
         Commands::Compress {
@@ -2199,8 +2260,12 @@ pub fn run() -> Result<()> {
             cmd_mine_device(wing.as_deref(), *dry_run, palace_arg)?
         }
         Commands::Mcp => cmd_mcp(palace_arg),
-        Commands::Serve { read_only } => {
-            crate::mcp_server::run_server(palace_arg, *read_only)?;
+        Commands::Serve { read_only, http } => {
+            if *http {
+                cmd_serve_http(palace_arg, *read_only)?;
+            } else {
+                crate::mcp_server::run_server(palace_arg, *read_only)?;
+            }
         }
         Commands::Sweep { target, palace } => cmd_sweep(target, palace.as_deref())?,
         Commands::Export { output_dir, format } => {
@@ -2662,6 +2727,7 @@ mod tests {
             results,
             bm25: _,
             fusion_mode: _,
+            json: _,
         } = args.command
         {
             (query, wing, room, results)

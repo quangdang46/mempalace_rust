@@ -335,7 +335,7 @@ fn validate_known_params(tool_name: &str, args: &JsonObject) -> Result<(), Error
     ))
 }
 
-fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResult {
+pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject) -> DynResult {
     move |name, args| {
         let state = state.clone();
         Box::pin(async move {

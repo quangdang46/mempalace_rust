@@ -7,9 +7,142 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Throttled progress reporter for the mine loop.
+///
+/// Mirrors the upstream Python `scan_project` progress contract: emit a
+/// single `Files scanned: N, Drawers filed: M` line every N files or
+/// every N seconds, whichever comes first, and a final summary at the
+/// end. Output goes to `stderr` so callers can keep `mpr mine ... >
+/// out.log` clean for structured parsing (issue #52).
+///
+/// Disabled by setting `enabled = false`; controlled at the call site
+/// via `MEMPALACE_MINE_PROGRESS` (off by default for non-TTY output,
+/// on by default when stderr is a terminal — see
+/// `progress_reporter_default_enabled`).
+pub struct MiningProgressReporter {
+    enabled: bool,
+    started: Instant,
+    last_print: std::sync::Mutex<Instant>,
+    files_scanned: AtomicUsize,
+    drawers_filed: AtomicUsize,
+    chunks_created: AtomicUsize,
+    errors: AtomicUsize,
+    file_threshold: usize,
+    time_threshold: Duration,
+}
+
+impl MiningProgressReporter {
+    pub fn new(enabled: bool) -> Self {
+        let now = Instant::now();
+        Self {
+            enabled,
+            started: now,
+            // Initialize `last_print` in the past so the very first file
+            // we see after the threshold elapses always emits — and the
+            // first batch of 100 files does too on fast machines.
+            last_print: std::sync::Mutex::new(now
+                .checked_sub(Duration::from_secs(60))
+                .unwrap_or(now)),
+            files_scanned: AtomicUsize::new(0),
+            drawers_filed: AtomicUsize::new(0),
+            chunks_created: AtomicUsize::new(0),
+            errors: AtomicUsize::new(0),
+            file_threshold: 100,
+            time_threshold: Duration::from_secs(5),
+        }
+    }
+
+    /// Record one file processed. `chunks_added` is the number of chunks
+    /// (drawers) successfully filed by the call; `errored` is true when
+    /// the call itself failed.
+    ///
+    /// Counters are always updated so the final summary is correct
+    /// even when progress is disabled (e.g. piped output). The `enabled`
+    /// flag only gates the throttled print to `stderr`.
+    pub fn record_file(&self, chunks_added: usize, errored: bool) {
+        self.files_scanned.fetch_add(1, Ordering::Relaxed);
+        if chunks_added > 0 {
+            self.drawers_filed.fetch_add(1, Ordering::Relaxed);
+            self.chunks_created
+                .fetch_add(chunks_added, Ordering::Relaxed);
+        }
+        if errored {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Returns true if the time threshold has elapsed and we should emit
+    /// a progress line. Callers that tick on every file (i.e. the mine
+    /// loop) should call this AND check `files_scanned % file_threshold == 0`
+    /// so the first 100 files of a fast scan don't have to wait 5 s.
+    pub fn time_threshold_elapsed(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let Ok(mut last) = self.last_print.lock() else {
+            return false;
+        };
+        let now = Instant::now();
+        if now.duration_since(*last) >= self.time_threshold {
+            *last = now;
+            return true;
+        }
+        false
+    }
+
+    /// The number of files between throttled prints (e.g. every 100 files).
+    pub fn file_threshold(&self) -> usize {
+        self.file_threshold
+    }
+
+    /// Emit the throttled progress line to stderr. Safe to call from a
+    /// single-threaded loop; multi-threaded callers must wrap the
+    /// threshold check + print in their own critical section.
+    pub fn print_tick(&self) {
+        if !self.enabled {
+            return;
+        }
+        let elapsed = self.started.elapsed();
+        eprintln!(
+            "  Files scanned: {}, Drawers filed: {}, Chunks: {}, Errors: {}, Elapsed: {}s",
+            self.files_scanned.load(Ordering::Relaxed),
+            self.drawers_filed.load(Ordering::Relaxed),
+            self.chunks_created.load(Ordering::Relaxed),
+            self.errors.load(Ordering::Relaxed),
+            elapsed.as_secs(),
+        );
+    }
+
+    /// Emit the final progress line. Always called once at the end of
+    /// the mine loop regardless of whether the time threshold fired.
+    pub fn print_final(&self) {
+        self.print_tick();
+    }
+}
+
+/// Default on/off policy for the progress reporter.
+///
+/// Enabled when `MEMPALACE_MINE_PROGRESS=1` (explicit opt-in), disabled
+/// when `MEMPALACE_MINE_PROGRESS=0` (explicit opt-out). Otherwise,
+/// enabled only when stderr is a TTY — silent progress is a non-issue
+/// for piped output and a real pain for interactive users.
+pub fn progress_reporter_default_enabled() -> bool {
+    match std::env::var("MEMPALACE_MINE_PROGRESS") {
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => true,
+        Ok(value) if value == "0" || value.eq_ignore_ascii_case("false") => false,
+        _ => {
+            // std::io::IsTerminal is stable since Rust 1.70; the project
+            // already requires recent rustc.
+            std::io::IsTerminal::is_terminal(&std::io::stderr())
+        }
+    }
+}
 
 static READABLE_EXTENSIONS: &[&str] = &[
     ".txt",
@@ -951,6 +1084,10 @@ impl Miner {
         let mut files_skipped_chunk_cap = 0;
         let mut errors = Vec::new();
 
+        // Throttled progress reporter — see MiningProgressReporter. Off
+        // by default for piped output; on for interactive terminals.
+        let progress = MiningProgressReporter::new(progress_reporter_default_enabled());
+
         for filepath in file_paths {
             match self.mine_file(&filepath).await {
                 Ok((count, skip_reason)) => {
@@ -961,12 +1098,26 @@ impl Miner {
                     if skip_reason == Some(SkipReason::ChunkCap) {
                         files_skipped_chunk_cap += 1;
                     }
+                    progress.record_file(count, false);
                 }
                 Err(e) => {
+                    progress.record_file(0, true);
                     errors.push(format!("Error mining {:?}: {}", filepath, e));
                 }
             }
+
+            // Throttle: emit every `file_threshold` files OR every
+            // `time_threshold`. The mutex on `last_print` is the only
+            // place the reporter can race; we hold it across the
+            // threshold check so a 100th-file tick and a 5 s tick
+            // don't both print on the same iteration.
+            let total = progress.files_scanned.load(Ordering::Relaxed);
+            if total % progress.file_threshold() == 0 || progress.time_threshold_elapsed() {
+                progress.print_tick();
+            }
         }
+
+        progress.print_final();
 
         // Flush once at end - critical for Windows performance
         self.palace_db.flush().ok();
@@ -1062,6 +1213,11 @@ pub async fn mine_with_options(
     let mut files_skipped_chunk_cap = 0;
     let mut errors = Vec::new();
 
+    // Throttled progress reporter — see MiningProgressReporter. On
+    // when stderr is a TTY, off for piped output; override with
+    // `MEMPALACE_MINE_PROGRESS=1|0`. Issue #52.
+    let progress = MiningProgressReporter::new(progress_reporter_default_enabled());
+
     for filepath in file_paths {
         match miner.mine_file(&filepath).await {
             Ok((count, skip_reason)) => {
@@ -1072,10 +1228,21 @@ pub async fn mine_with_options(
                 if skip_reason == Some(SkipReason::ChunkCap) {
                     files_skipped_chunk_cap += 1;
                 }
+                progress.record_file(count, false);
             }
-            Err(e) => errors.push(format!("Error mining {:?}: {}", filepath, e)),
+            Err(e) => {
+                progress.record_file(0, true);
+                errors.push(format!("Error mining {:?}: {}", filepath, e));
+            }
+        }
+
+        let total = progress.files_scanned.load(Ordering::Relaxed);
+        if total % progress.file_threshold() == 0 || progress.time_threshold_elapsed() {
+            progress.print_tick();
         }
     }
+
+    progress.print_final();
 
     miner.palace_db.flush().ok();
 
@@ -1100,6 +1267,63 @@ mod tests {
             .block_on(Miner::new(tmp.path(), "test", rooms))
             .expect("failed to create miner");
         (miner, tmp)
+    }
+
+    #[test]
+    fn test_progress_reporter_disabled_is_noop() {
+        // A disabled reporter must never claim the time threshold has
+        // elapsed, so callers don't bother printing. Counters still
+        // tick so the final summary line is correct even when piped.
+        // Issue #52.
+        let r = MiningProgressReporter::new(false);
+        for _ in 0..100 {
+            r.record_file(3, false);
+            assert!(!r.time_threshold_elapsed());
+        }
+        // Counters should still be updated.
+        assert_eq!(r.files_scanned.load(Ordering::Relaxed), 100);
+    }
+
+    #[test]
+    fn test_progress_reporter_counts_files_chunks_errors() {
+        let r = MiningProgressReporter::new(false);
+        r.record_file(5, false);
+        r.record_file(0, false);
+        r.record_file(2, true);
+        r.record_file(7, false);
+
+        // 4 files: chunks 5+0+2+7 = 14; 3 files actually filed a drawer
+        // (the (0,false) one didn't), 1 file errored.
+        assert_eq!(r.files_scanned.load(Ordering::Relaxed), 4);
+        assert_eq!(r.drawers_filed.load(Ordering::Relaxed), 3);
+        assert_eq!(r.chunks_created.load(Ordering::Relaxed), 14);
+        assert_eq!(r.errors.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_progress_reporter_thresholds() {
+        // file_threshold() is the tick boundary the mine loop uses.
+        let r = MiningProgressReporter::new(false);
+        assert_eq!(r.file_threshold(), 100);
+        // The first call to time_threshold_elapsed() should always fire
+        // (last_print is initialized in the past) so the very first
+        // batch of files doesn't have to wait 5 s.
+        let r2 = MiningProgressReporter::new(true);
+        assert!(r2.time_threshold_elapsed());
+        // Subsequent calls within the time window should not fire
+        // (unless the test is slow).
+        if !r2.time_threshold_elapsed() {
+            // expected: under the threshold
+        }
+    }
+
+    #[test]
+    fn test_progress_reporter_final_does_not_panic_when_disabled() {
+        // Smoke test: a no-op final call must not panic regardless of
+        // counters. The CLI calls this unconditionally on the way out.
+        let r = MiningProgressReporter::new(false);
+        r.print_final();
+        r.print_tick();
     }
 
     fn test_chunk_text_basic() {

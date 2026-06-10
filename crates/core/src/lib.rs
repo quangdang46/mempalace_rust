@@ -309,6 +309,12 @@ pub use embed::Model2VecEmbedder;
 pub mod viewer;
 pub use viewer::{viewer_app_js, viewer_html, viewer_styles_css};
 
+// =====================================================================
+// HTTP REST API server (axum-based, gated by feature http-server)
+// =====================================================================
+#[cfg(feature = "http-server")]
+pub mod rest_api;
+
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
     use std::sync::{Mutex, OnceLock};
