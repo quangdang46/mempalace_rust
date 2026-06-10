@@ -214,7 +214,7 @@ async fn list_tools_handler(
     // Return available tools
     Ok(Json(json!({
         "tools": [
-            "mempalace_recall", "mempalace_save", "mempalace_recall",
+            "mempalace_recall", "mempalace_save",
             "mempalace_status", "mempalace_observe", "mempalace_enrich",
             "mempalace_consolidate", "mempalace_kg_query", "mempalace_kg_add",
             "mempalace_diary_read", "mempalace_diary_write",

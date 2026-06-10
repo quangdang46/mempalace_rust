@@ -450,6 +450,11 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 "mempalace_smart_search" => tool_smart_search(&state, args),
                 "mempalace_hybrid_search" => tool_hybrid_search(&state, args),
                 // Aliases aligned with @modelcontextprotocol/server-memory (one minor release)
+                // Core save/recall (REST API uses these names — see
+                // list_tools_handler in rest_api.rs). Must be wired or
+                // every HTTP tool call returns "Unknown tool: <name>".
+                "mempalace_recall" => tool_recall(&state, args),
+                "mempalace_save" => tool_save(&state, args),
                 "memory_search" | "memory_list" => tool_search(&state, args),
                 "memory_list_wings" => tool_list_wings(&state, args),
                 "memory_list_rooms" => tool_list_rooms(&state, args),
