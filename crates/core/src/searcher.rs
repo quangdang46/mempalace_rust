@@ -195,11 +195,11 @@ pub async fn search_memories_with_rerank(
     let palace_db = open_for_search(palace_path, embedding_model)
         .map_err(|_| SearchError::NoPalace(palace_path.display().to_string()))?;
 
-    // Fetch more results for reranking (3x requested)
+    // Fetch results using hybrid_search (BM25 + vector + graph RRF fusion)
+    // when an embedder is available, falling back to naive similarity.
     let fetch_count = if use_bm25 { n_results * 3 } else { n_results };
     let results = palace_db
-        .query(&sanitized.clean_query, wing, room, fetch_count)
-        .await
+        .hybrid_search(&sanitized.clean_query, fetch_count, wing, room)
         .map_err(|e| SearchError::Query(e.to_string()))?;
 
     let mut search_results: Vec<SearchResult> =

@@ -302,13 +302,18 @@ pub async fn run<W: std::io::Write>(
         let _ = drawers_written;
 
         let search_started = Instant::now();
+        // Use the default vector embedder so production search uses hybrid
+        // RRF (vector + BM25), not naive Jaccard word-overlap.
+        let embed_model = std::env::var("MEMPALACE_EMBED_MODEL")
+            .ok()
+            .unwrap_or_else(|| "bge-small-en-v15".to_string());
         let response = match search_memories(
             &entry.question,
             &palace_path,
             None,
             None,
             SEARCH_LIMIT,
-            None,
+            Some(&embed_model),
         )
         .await
         {

@@ -1073,7 +1073,7 @@ impl PalaceDb {
         let collection_name = collection_name.to_string();
         let docs_path = palace_path.join(format!("{}.json", collection_name));
 
-        let documents = if docs_path.exists() {
+        let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
             let content = std::fs::read_to_string(&docs_path)?;
             serde_json::from_str(&content).unwrap_or_default()
         } else {
@@ -1084,12 +1084,18 @@ impl PalaceDb {
             Arc::new(crate::embed::NullEmbedder::new(384));
         let embedding_db = EmbeddingDb::with_embedder(embedder.clone())?;
 
+        // Rebuild BM25 index from loaded documents so hybrid_search has data.
+        let mut bm25 = bm25::SearchEngineBuilder::with_avgdl(100.0).build();
+        for (id, entry) in &documents {
+            bm25.upsert(bm25::Document::new(id.clone(), entry.content.clone()));
+        }
+
         Ok(Self {
             documents,
             palace_path: palace_path.to_path_buf(),
             collection_name,
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
-            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0).build(),
+            bm25,
             embedder,
             embedding_db,
         })
@@ -1756,7 +1762,7 @@ impl PalaceDb {
         let collection_name = collection_name.to_string();
         let docs_path = palace_path.join(format!("{}.json", collection_name));
 
-        let documents = if docs_path.exists() {
+        let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
             let content = std::fs::read_to_string(&docs_path)?;
             serde_json::from_str(&content).unwrap_or_default()
         } else {
