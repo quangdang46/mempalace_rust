@@ -1785,6 +1785,14 @@ impl PalaceDb {
         // Sync existing documents to embedding index
         let _ = db.sync_embeddings();
 
+        // Rebuild BM25 index from loaded documents so hybrid_search
+        // has a populated BM25 stream alongside vector + graph.
+        for (id, entry) in &db.documents {
+            db.bm25
+                .upsert(bm25::Document::new(id.clone(), entry.content.clone()));
+        }
+
+
         Ok(db)
     }
 
@@ -1968,50 +1976,38 @@ impl PalaceDb {
             .collect();
 
         let query_lower = query_text.to_lowercase();
-
         // Vector search using real embeddings (async embedder in sync context)
         let vector_results: Vec<StreamResult> = {
-            let query_embedding = {
-                let embedder = self.embedder.clone();
-                let q = query_text.to_string();
-                match run_off_runtime(move || async move { embedder.embed(&q).await }) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::debug!("embedding failed: {}", e);
-                        return Ok(vec![]);
+            let (embedder, q) = (self.embedder.clone(), query_text.to_string());
+            match run_off_runtime(move || async move { embedder.embed(&q).await }) {
+                Ok(query_embedding) => {
+                    let normalized_query = normalize_embedding(&query_embedding);
+                    match self.embedding_db.query_by_vector(&normalized_query, over_fetch) {
+                        Ok(results) => results
+                            .into_iter()
+                            .filter_map(|(dist, idx)| {
+                                let doc_id = self.embedding_db.id_at(idx)?;
+                                let entry = self.documents.get(&doc_id)?;
+                                if !passes_filter(entry) {
+                                    return None;
+                                }
+                                Some(StreamResult {
+                                    id: doc_id,
+                                    rank: idx,
+                                    stream: SearchStream::Vector,
+                                })
+                            })
+                            .collect(),
+                        Err(_) => vec![],
                     }
                 }
-            };
-            let normalized_query = normalize_embedding(&query_embedding);
-
-            // Query embedding db with pre-computed vector
-            let embedding_results = self
-                .embedding_db
-                .query_by_vector(&normalized_query, over_fetch);
-
-            match embedding_results {
-                Ok(results) => results
-                    .into_iter()
-                    .filter_map(|(dist, idx)| {
-                        // Map index back to document id - need to rebuild index mapping
-                        // Since embedding_db stores documents in a Vec, we use index
-                        let doc_id = self.embedding_db.id_at(idx)?;
-                        let entry = self.documents.get(&doc_id)?;
-                        if !passes_filter(entry) {
-                            return None;
-                        }
-                        // Cosine similarity: 1 - cosine distance
-                        let similarity = 1.0 - dist as f64;
-                        Some(StreamResult {
-                            id: doc_id,
-                            rank: idx,
-                            stream: SearchStream::Vector,
-                        })
-                    })
-                    .collect(),
-                Err(_) => vec![],
+                Err(e) => {
+                    tracing::debug!("embedding failed: {}", e);
+                    vec![]
+                }
             }
         };
+
 
         let mut graph_results: Vec<StreamResult> = vec![];
         if let Ok(kg) = crate::knowledge_graph::KnowledgeGraph::open(

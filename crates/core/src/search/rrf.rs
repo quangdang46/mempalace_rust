@@ -11,7 +11,7 @@ use super::synonyms::SYNONYM_BM25_WEIGHT;
 
 /// RRF constant — controls how much rank position affects score.
 /// Higher K = flatter curve (less rank sensitivity).
-pub const RRF_K: f64 = 60.0;
+pub const RRF_K: f64 = 25.0;
 
 /// Default weights for each search stream.
 pub const DEFAULT_BM25_WEIGHT: f64 = 0.4;
