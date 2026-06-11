@@ -1085,7 +1085,7 @@ impl PalaceDb {
         let embedding_db = EmbeddingDb::with_embedder(embedder.clone())?;
 
         // Rebuild BM25 index from loaded documents so hybrid_search has data.
-        let mut bm25 = bm25::SearchEngineBuilder::with_avgdl(100.0).build();
+        let mut bm25 = bm25::SearchEngineBuilder::with_avgdl(100.0).b(0.3).k1(1.5).build();
         for (id, entry) in &documents {
             bm25.upsert(bm25::Document::new(id.clone(), entry.content.clone()));
         }
@@ -1777,7 +1777,7 @@ impl PalaceDb {
             palace_path: palace_path.to_path_buf(),
             collection_name,
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
-            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0).build(),
+            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0).b(0.3).k1(1.5).build(),
             embedder,
             embedding_db,
         };

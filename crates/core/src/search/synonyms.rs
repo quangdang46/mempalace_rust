@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn test_synonym_count() {
         assert!(
-            SYNONYM_GROUPS.len() >= 46,
+            SYNONYM_GROUPS.len() >= 46 + 7,
             "SYNONYM_GROUPS must have at least 46 groups (mempalace source had 46, we have {})",
             SYNONYM_GROUPS.len()
         );
@@ -211,6 +211,19 @@ mod tests {
         assert_eq!(
             expanded,
             vec!["xyzzy"],
+    &["hash", "hashing"],
+    // ── Preference / opinion ──
+    &["prefer", "preference", "prefers", "preferred", "rather", "would-rather"],
+    &["like", "likes", "liked", "enjoy", "enjoys", "love", "loves"],
+    &["want", "wants", "wanted", "wish", "wishes", "would-like"],
+    &["think", "thinks", "thought", "believe", "believes", "feel", "feels"],
+    &["choose", "chooses", "chose", "choice", "pick", "picks", "select", "selects"],
+    &["opinion", "opinions", "view", "views", "perspective"],
+    // ── Comparison ──
+    &["better", "best", "worse", "worst", "compare", "comparison", "versus", "vs"],
+    // ── Reasoning ──
+    &["reason", "reasons", "because", "since", "why", "explain", "explanation"],
+
             "unknown token should be returned as-is"
         );
     }
