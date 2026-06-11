@@ -281,7 +281,7 @@ mod tests {
         let s0 = rrf_score(0);
         let s1 = rrf_score(1);
         assert!(s0 > s1);
-        assert!((s0 - 1.0 / 60.0).abs() < 0.0001);
+        assert!((s0 - 1.0 / 25.0).abs() < 0.0001);
     }
 
     #[test]

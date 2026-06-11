@@ -347,7 +347,15 @@ async fn smart_search_handler(
             .unwrap_or_default();
 
         let mut tracker = state_guard.followup_tracker.lock().await;
-        if let Some(ev) = tracker.record_search(agent_id, project, &json_response.get("query").and_then(|q| q.as_str()).unwrap_or(""), &result_ids) {
+        if let Some(ev) = tracker.record_search(
+            agent_id,
+            project,
+            &json_response
+                .get("query")
+                .and_then(|q| q.as_str())
+                .unwrap_or(""),
+            &result_ids,
+        ) {
             info!(
                 "followup detected: agent={}, project={}, query_a={}, query_b={}",
                 agent_id, project, ev.query_a, ev.query_b
@@ -364,9 +372,11 @@ async fn diagnostics_followup_handler(
     let state_guard = state.lock().await;
     let tracker = state_guard.followup_tracker.lock().await;
     let metrics = tracker.metrics();
-    Ok(Json(serde_json::to_value(metrics).map_err(|e| ApiError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        message: e.to_string(),
+    Ok(Json(serde_json::to_value(metrics).map_err(|e| {
+        ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: e.to_string(),
+        }
     })?))
 }
 
@@ -546,7 +556,10 @@ async fn graph_snapshot_rebuild_handler(
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
     let args: JsonObject = serde_json::to_value(body)
-        .map_err(|e| ApiError { status: StatusCode::BAD_REQUEST, message: e.to_string() })?
+        .map_err(|e| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: e.to_string(),
+        })?
         .as_object()
         .unwrap()
         .clone();
@@ -2380,7 +2393,10 @@ fn build_router(state: SharedState) -> Router {
         .route("/graph/stats", get(graph_stats_handler))
         .route("/graph/search", post(graph_search_handler))
         .route("/graph/expand", post(graph_expand_handler))
-        .route("/graph/snapshot-rebuild", post(graph_snapshot_rebuild_handler))
+        .route(
+            "/graph/snapshot-rebuild",
+            post(graph_snapshot_rebuild_handler),
+        )
         .route("/graph/reset", post(graph_reset_handler))
         // Diary
         .route("/diary/read", get(diary_read_handler))

@@ -474,7 +474,9 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 }
                 "memory_kg_timeline" | "memory_graph_timeline" => tool_kg_timeline(&state, args),
                 "memory_kg_stats" | "memory_graph_stats" => tool_kg_stats(&state, args),
-                "memory_kg_snapshot_rebuild" | "memory_graph_snapshot_rebuild" => tool_kg_snapshot_rebuild(&state, args),
+                "memory_kg_snapshot_rebuild" | "memory_graph_snapshot_rebuild" => {
+                    tool_kg_snapshot_rebuild(&state, args)
+                }
                 "memory_kg_reset" | "memory_graph_reset" => tool_kg_reset(&state, args),
                 "memory_traverse" => tool_traverse(&state, args),
                 "memory_find_tunnels" => tool_find_tunnels(&state, args),
@@ -2012,11 +2014,7 @@ fn tool_kg_query(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
     let limit = input.limit.unwrap_or(500);
     let count = all_facts.len();
     let truncated = count > limit + offset;
-    let facts: Vec<_> = all_facts
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect();
+    let facts: Vec<_> = all_facts.into_iter().skip(offset).take(limit).collect();
 
     // Check whether the KG has a snapshot and attach metadata.
     let (total_nodes, total_edges, from_snapshot) = {
@@ -2026,21 +2024,19 @@ fn tool_kg_query(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
         }
     };
 
-    ok_json(
-        serde_json::json!({
-            "entity": input.entity,
-            "as_of": as_of,
-            "nodes": facts,
-            "edges": facts,
-            "totalNodes": total_nodes.unwrap_or(0),
-            "totalEdges": total_edges.unwrap_or(0),
-            "total": count,
-            "truncated": truncated,
-            "offset": offset,
-            "limit": limit,
-            "fromSnapshot": from_snapshot,
-        }),
-    )
+    ok_json(serde_json::json!({
+        "entity": input.entity,
+        "as_of": as_of,
+        "nodes": facts,
+        "edges": facts,
+        "totalNodes": total_nodes.unwrap_or(0),
+        "totalEdges": total_edges.unwrap_or(0),
+        "total": count,
+        "truncated": truncated,
+        "offset": offset,
+        "limit": limit,
+        "fromSnapshot": from_snapshot,
+    }))
 }
 
 fn tool_kg_add(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -2154,7 +2150,10 @@ fn tool_kg_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, 
     }))
 }
 
-fn tool_kg_snapshot_rebuild(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+fn tool_kg_snapshot_rebuild(
+    state: &AppState,
+    args: JsonObject,
+) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
     struct Input {
         #[serde(default)]
@@ -2179,9 +2178,7 @@ fn tool_kg_snapshot_rebuild(state: &AppState, args: JsonObject) -> Result<CallTo
         }));
     }
 
-    let snapshot = kg
-        .create_snapshot()
-        .map_err(|e| internal_error_safe(&e))?;
+    let snapshot = kg.create_snapshot().map_err(|e| internal_error_safe(&e))?;
 
     ok_json(serde_json::json!({
         "success": true,
@@ -2195,9 +2192,7 @@ fn tool_kg_reset(state: &AppState, _args: JsonObject) -> Result<CallToolResult, 
     let kg = crate::knowledge_graph::KnowledgeGraph::open(&kg_path(state))
         .map_err(|e| internal_error_safe(&e))?;
 
-    let snapshot = kg
-        .reset_snapshot()
-        .map_err(|e| internal_error_safe(&e))?;
+    let snapshot = kg.reset_snapshot().map_err(|e| internal_error_safe(&e))?;
 
     ok_json(serde_json::json!({
         "success": true,

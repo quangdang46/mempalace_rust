@@ -1051,7 +1051,7 @@ impl EmbeddingDb {
 
         // Write binary: magic(8) + dim(8) + count(8) + raw_data
         let mut bin = std::fs::File::create(cache_path.with_extension("bin"))?;
-        bin.write_all(b"EMBEDVEC")?;  // magic
+        bin.write_all(b"EMBEDVEC")?; // magic
         bin.write_all(&(dim as u64).to_le_bytes())?;
         bin.write_all(&(count as u64).to_le_bytes())?;
         // Write raw f32 vectors as 4-byte little-endian
@@ -1061,7 +1061,9 @@ impl EmbeddingDb {
         bin.flush()?;
 
         // Write documents JSON
-        let docs: Vec<Vec<String>> = self.documents.iter()
+        let docs: Vec<Vec<String>> = self
+            .documents
+            .iter()
             .map(|(id, text)| vec![id.clone(), text.clone()])
             .collect();
         let json = serde_json::to_string(&docs)?;
@@ -1090,7 +1092,10 @@ impl EmbeddingDb {
         let stored_dim = u64::from_le_bytes(buf) as usize;
         bin.read_exact(&mut buf)?;
         let count = u64::from_le_bytes(buf) as usize;
-        anyhow::ensure!(stored_dim == dim, "dim mismatch: cached={stored_dim} embedder={dim}");
+        anyhow::ensure!(
+            stored_dim == dim,
+            "dim mismatch: cached={stored_dim} embedder={dim}"
+        );
 
         let mut vectors = Vec::with_capacity(count * dim);
         let mut buf = [0u8; 4];
@@ -1112,11 +1117,17 @@ impl EmbeddingDb {
         // Load documents
         let json = std::fs::read_to_string(cache_path.with_extension("json"))?;
         let docs: Vec<Vec<String>> = serde_json::from_str(&json)?;
-        let documents: Vec<(String, String)> = docs.into_iter()
+        let documents: Vec<(String, String)> = docs
+            .into_iter()
             .map(|d| (d[0].clone(), d[1].clone()))
             .collect();
 
-        Ok(Self { embedder, hnsw, documents, storage })
+        Ok(Self {
+            embedder,
+            hnsw,
+            documents,
+            storage,
+        })
     }
 }
 
@@ -1152,7 +1163,6 @@ where
 }
 
 impl PalaceDb {
-
     pub fn open(palace_path: &std::path::Path) -> anyhow::Result<Self> {
         Self::open_collection(palace_path, DEFAULT_COLLECTION_NAME)
     }
@@ -1176,7 +1186,10 @@ impl PalaceDb {
         let embedding_db = EmbeddingDb::with_embedder(embedder.clone())?;
 
         // Rebuild BM25 index from loaded documents so hybrid_search has data.
-        let mut bm25 = bm25::SearchEngineBuilder::with_avgdl(100.0).b(0.3).k1(1.5).build();
+        let mut bm25 = bm25::SearchEngineBuilder::with_avgdl(100.0)
+            .b(0.3)
+            .k1(1.5)
+            .build();
         for (id, entry) in &documents {
             bm25.upsert(bm25::Document::new(id.clone(), entry.content.clone()));
         }
@@ -1868,7 +1881,10 @@ impl PalaceDb {
             palace_path: palace_path.to_path_buf(),
             collection_name,
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
-            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0).b(0.3).k1(1.5).build(),
+            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0)
+                .b(0.3)
+                .k1(1.5)
+                .build(),
             embedder,
             embedding_db,
         };
@@ -1894,7 +1910,6 @@ impl PalaceDb {
             db.bm25
                 .upsert(bm25::Document::new(id.clone(), entry.content.clone()));
         }
-
 
         Ok(db)
     }
@@ -2085,7 +2100,10 @@ impl PalaceDb {
             match run_off_runtime(move || async move { embedder.embed(&q).await }) {
                 Ok(query_embedding) => {
                     let normalized_query = normalize_embedding(&query_embedding);
-                    match self.embedding_db.query_by_vector(&normalized_query, over_fetch) {
+                    match self
+                        .embedding_db
+                        .query_by_vector(&normalized_query, over_fetch)
+                    {
                         Ok(results) => results
                             .into_iter()
                             .filter_map(|(dist, idx)| {
@@ -2110,7 +2128,6 @@ impl PalaceDb {
                 }
             }
         };
-
 
         let mut graph_results: Vec<StreamResult> = vec![];
         if let Ok(kg) = crate::knowledge_graph::KnowledgeGraph::open(

@@ -69,9 +69,7 @@ fn strip_xml_wrappers(raw: &str) -> &str {
     if let Some(start) = s.find("```") {
         // Find where the actual XML starts (after the fence line)
         let after_fence = &s[start + 3..];
-        let content_start = after_fence.find('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let content_start = after_fence.find('\n').map(|i| i + 1).unwrap_or(0);
         let body = &after_fence[content_start..];
         // Find the closing ``` if any
         if let Some(end) = body.rfind("```") {

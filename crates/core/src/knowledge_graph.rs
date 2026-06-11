@@ -1345,7 +1345,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let mut stmt = self.conn.prepare(
             "SELECT e.name, COUNT(*) as degree FROM entities e \
              JOIN triples t ON t.subject = e.id OR t.object = e.id \
-             GROUP BY e.id ORDER BY degree DESC LIMIT 500"
+             GROUP BY e.id ORDER BY degree DESC LIMIT 500",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
@@ -1363,7 +1363,14 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
              VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
             rusqlite::params![snapshot_id, total_nodes, total_edges, top_json, now],
         )?;
-        Ok(GraphSnapshot { snapshot_id, total_nodes, total_edges, top_degrees, created_at: now, reset_at: None })
+        Ok(GraphSnapshot {
+            snapshot_id,
+            total_nodes,
+            total_edges,
+            top_degrees,
+            created_at: now,
+            reset_at: None,
+        })
     }
 
     /// Read the current graph snapshot, if any.
@@ -1403,7 +1410,14 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
              VALUES (?1, 0, 0, '{}', ?2, ?3)",
             rusqlite::params![snapshot_id, now, now],
         )?;
-        Ok(GraphSnapshot { snapshot_id, total_nodes: 0, total_edges: 0, top_degrees: std::collections::HashMap::new(), created_at: now.clone(), reset_at: Some(now) })
+        Ok(GraphSnapshot {
+            snapshot_id,
+            total_nodes: 0,
+            total_edges: 0,
+            top_degrees: std::collections::HashMap::new(),
+            created_at: now.clone(),
+            reset_at: Some(now),
+        })
     }
 
     /// Pre-flight check: returns node count and whether a prior snapshot exists.
@@ -1412,7 +1426,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             self.conn
                 .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
         let existing = self.get_snapshot()?;
-        Ok(SnapshotPreflight { total_nodes, has_snapshot: existing.is_some() })
+        Ok(SnapshotPreflight {
+            total_nodes,
+            has_snapshot: existing.is_some(),
+        })
     }
 }
 

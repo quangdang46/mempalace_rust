@@ -2280,8 +2280,9 @@ pub fn run() -> Result<()> {
                 }
 
                 // Compute the REST port: env MEMPALACE_HTTP_PORT > --port > --instance > default 3111.
-                let rest_port: u16 = if let Some(env_port) =
-                    std::env::var("MEMPALACE_HTTP_PORT").ok().and_then(|p| p.parse().ok())
+                let rest_port: u16 = if let Some(env_port) = std::env::var("MEMPALACE_HTTP_PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
                 {
                     env_port
                 } else if let Some(p) = port {
