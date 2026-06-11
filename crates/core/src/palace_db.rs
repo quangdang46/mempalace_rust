@@ -1028,6 +1028,96 @@ impl EmbeddingDb {
     pub(crate) fn len(&self) -> usize {
         self.documents.len()
     }
+
+    /// Save the embedding index to disk at `cache_path`.
+    /// Format: one binary file with header (magic, dim, count) + raw f32 vectors,
+    /// plus a JSON sidecar for document metadata.
+    pub fn save_cache(&self, cache_path: &std::path::Path) -> anyhow::Result<()> {
+        use std::io::Write;
+        let dim = self.embedder.dim();
+        let count = self.documents.len();
+        if count == 0 {
+            return Ok(());
+        }
+
+        // Collect all vectors from storage
+        let mut raw = Vec::with_capacity(count * dim);
+        for i in 0..count {
+            match self.storage.get(i, None) {
+                Ok(v) => raw.extend(v),
+                Err(_) => anyhow::bail!("failed to read vector at index {}", i),
+            }
+        }
+
+        // Write binary: magic(8) + dim(8) + count(8) + raw_data
+        let mut bin = std::fs::File::create(cache_path.with_extension("bin"))?;
+        bin.write_all(b"EMBEDVEC")?;  // magic
+        bin.write_all(&(dim as u64).to_le_bytes())?;
+        bin.write_all(&(count as u64).to_le_bytes())?;
+        // Write raw f32 vectors as 4-byte little-endian
+        for &val in &raw {
+            bin.write_all(&val.to_le_bytes())?;
+        }
+        bin.flush()?;
+
+        // Write documents JSON
+        let docs: Vec<Vec<String>> = self.documents.iter()
+            .map(|(id, text)| vec![id.clone(), text.clone()])
+            .collect();
+        let json = serde_json::to_string(&docs)?;
+        std::fs::write(cache_path.with_extension("json"), &json)?;
+
+        Ok(())
+    }
+
+    /// Load a previously saved embedding cache from `cache_path`.
+    /// Builds HNSW index + storage from the cached vectors (no re-embedding).
+    pub fn load_cache(
+        cache_path: &std::path::Path,
+        embedder: Arc<dyn crate::embed::Embedder>,
+    ) -> anyhow::Result<Self> {
+        use std::io::Read;
+        let dim = embedder.dim();
+
+        // Read binary
+        let mut bin = std::fs::File::open(cache_path.with_extension("bin"))?;
+        let mut magic = [0u8; 8];
+        bin.read_exact(&mut magic)?;
+        anyhow::ensure!(&magic == b"EMBEDVEC", "bad embedding cache magic");
+
+        let mut buf = [0u8; 8];
+        bin.read_exact(&mut buf)?;
+        let stored_dim = u64::from_le_bytes(buf) as usize;
+        bin.read_exact(&mut buf)?;
+        let count = u64::from_le_bytes(buf) as usize;
+        anyhow::ensure!(stored_dim == dim, "dim mismatch: cached={stored_dim} embedder={dim}");
+
+        let mut vectors = Vec::with_capacity(count * dim);
+        let mut buf = [0u8; 4];
+        for _ in 0..count * dim {
+            bin.read_exact(&mut buf)?;
+            vectors.push(f32::from_le_bytes(buf));
+        }
+
+        // Build storage + HNSW from cached vectors
+        let mut storage = embedvec::VectorStorage::new(dim, embedvec::Quantization::None);
+        let mut hnsw = embedvec::HnswIndex::new(16, 200, embedvec::Distance::Cosine);
+        for i in 0..count {
+            let start = i * dim;
+            let vec = &vectors[start..start + dim];
+            storage.add(vec, None)?;
+            hnsw.insert(i, vec, &storage, None)?;
+        }
+
+        // Load documents
+        let json = std::fs::read_to_string(cache_path.with_extension("json"))?;
+        let docs: Vec<Vec<String>> = serde_json::from_str(&json)?;
+        let documents: Vec<(String, String)> = docs.into_iter()
+            .map(|d| (d[0].clone(), d[1].clone()))
+            .collect();
+
+        Ok(Self { embedder, hnsw, documents, storage })
+    }
 }
 
 /// Run an async embedding future to completion from a synchronous context,
@@ -1062,6 +1152,7 @@ where
 }
 
 impl PalaceDb {
+
     pub fn open(palace_path: &std::path::Path) -> anyhow::Result<Self> {
         Self::open_collection(palace_path, DEFAULT_COLLECTION_NAME)
     }
@@ -1782,8 +1873,20 @@ impl PalaceDb {
             embedding_db,
         };
 
-        // Sync existing documents to embedding index
-        let _ = db.sync_embeddings();
+        // Try loading cached embeddings first (fast), fall back to sync_embeddings (slow)
+        let cache_path = palace_path.join("embedding_cache");
+        match EmbeddingDb::load_cache(&cache_path, db.embedder.clone()) {
+            Ok(cached) => {
+                tracing::debug!("loaded cached embeddings ({} vectors)", cached.len());
+                db.embedding_db = cached;
+            }
+            Err(_) => {
+                tracing::debug!("no cached embeddings, computing from scratch");
+                let _ = db.sync_embeddings();
+                // Save cache for next reopen
+                let _ = db.embedding_db.save_cache(&cache_path);
+            }
+        }
 
         // Rebuild BM25 index from loaded documents so hybrid_search
         // has a populated BM25 stream alongside vector + graph.
