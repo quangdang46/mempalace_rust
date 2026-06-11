@@ -127,3 +127,24 @@ Pre-upgrade baseline. Frozen point before the integration-plan work landed. Anch
 ## v0.1.0 (2026-04-15)
 
 Initial release of mempalace_rust — Rust port of the MemPalace AI memory system.
+
+## v0.3.0 (2026-06-11)
+
+### Search overhaul (LongMemEval R@5: 43.4% → 96.0%)
+
+- **BM25 rebuild in embedder path** — hybrid_search now has a populated BM25 stream alongside vector + graph (was empty → only vector contributed, hurting recall)
+- **BM25 parameters tuned** — b=0.3 (less length normalization for long docs), k1=1.5 (higher term saturation)
+- **RRF_K: 60 → 25** — sharper ranking differentiation within each search stream
+- **7 preference/opinion synonym groups** — prefer/like/want/think/choose/opinion/better/reason expanded for BM25 query
+- **Hybrid search resilience** — embedding failures no longer abort the entire search; vector stream gracefully degrades
+- **BM25 re-ranker disabled** — tokenization mismatch between internal SearchEngine and Bm25Scorer caused catastrophic re-ranking
+
+### Infrastructure
+
+- **Persistent embedding cache** — save_cache/load_cache skips ~35s ONNX inference on reopen
+- **Vector model** — bge-small-en-v15 cache fixed (stale lock files removed, blob restored)
+
+### CI/CD
+
+- 1256 tests pass, 2 pre-existing sandbox failures (port binding)
+- rustfmt compliance across codebase
