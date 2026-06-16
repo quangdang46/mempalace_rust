@@ -468,6 +468,8 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 "mempalace_file_history" => tool_file_history(&state, args),
                 // Smart features - sessions
                 "mempalace_sessions" => tool_sessions(&state, args),
+                // Smart features - observe
+                "mempalace_observe" => tool_observe(&state, args),
                 // Smart features - commits
                 "mempalace_commits" => tool_commits(&state, args),
                 "mempalace_commit_lookup" => tool_commit_lookup(&state, args),
@@ -558,6 +560,7 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 "memory_slot_replace" => tool_slot_replace(&state, args),
                 "memory_slot_delete" => tool_slot_delete(&state, args),
                 "memory_sessions" => tool_sessions(&state, args),
+                "memory_observe" => tool_observe(&state, args),
                 "memory_commits" => tool_commits(&state, args),
                 "memory_commit_lookup" => tool_commit_lookup(&state, args),
                 "memory_consolidate" => tool_consolidate(&state, args),
@@ -1043,6 +1046,18 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Sessions",
             "List recent agent sessions with status and observation counts.",
             serde_json::json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max sessions to return (default 10)" }, "project": { "type": "string", "description": "Filter by project name (optional)" } } }),
+        ),
+        tool(
+            "mempalace_observe",
+            "Observe",
+            "Capture a lifecycle hook observation. Accepts hook_type, session_id, project, cwd, and optional data payload. Saves via SessionStore; for session-ending hook types (session_end, stop) also ends the session.",
+            serde_json::json!({ "type": "object", "properties": {
+                "hook_type": { "type": "string", "description": "Hook type: session_start, user_prompt_submit, pre_tool_use, post_tool_use, post_tool_use_failure, pre_compact, subagent_start, subagent_stop, stop, session_end, notification, task_completed" },
+                "session_id": { "type": "string", "description": "Session ID this observation belongs to" },
+                "project": { "type": "string", "description": "Project name (optional)" },
+                "cwd": { "type": "string", "description": "Current working directory (optional)" },
+                "data": { "type": "object", "description": "Additional data payload (optional)" }
+            }, "required": ["hook_type", "session_id"] }),
         ),
         tool(
             "mempalace_commits",
@@ -5576,6 +5591,83 @@ fn tool_sessions(state: &AppState, args: JsonObject) -> Result<CallToolResult, E
     }))
 }
 
+fn tool_observe(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        hook_type: String,
+        session_id: String,
+        #[serde(default)]
+        project: String,
+        #[serde(default)]
+        cwd: String,
+        #[serde(default)]
+        data: Option<serde_json::Value>,
+    }
+    let input: Input = parse_args(args)?;
+
+    let hook_type: crate::types::HookType = match input.hook_type.parse() {
+        Ok(ht) => ht,
+        Err(e) => {
+            return Err(ErrorData::invalid_params(
+                format!("Invalid hook_type '{}': {}", input.hook_type, e),
+                None,
+            ))
+        }
+    };
+
+    let data: std::collections::HashMap<String, serde_json::Value> = match input.data {
+        Some(serde_json::Value::Object(map)) => map.into_iter().collect(),
+        Some(other) => {
+            let mut m = std::collections::HashMap::new();
+            m.insert("payload".to_string(), other);
+            m
+        }
+        None => std::collections::HashMap::new(),
+    };
+
+    let payload = crate::types::HookPayload {
+        hook_type,
+        session_id: input.session_id.clone(),
+        project: input.project,
+        cwd: input.cwd,
+        timestamp: chrono::Utc::now(),
+        data,
+    };
+
+    let obs = match crate::observe::process_observation(&payload) {
+        Ok(o) => o,
+        Err(e) => return Err(internal_error_safe(&e)),
+    };
+
+    let session_store_path = state.palace_path.join("sessions");
+    match crate::session::SessionStore::open(&session_store_path) {
+        Ok(store) => {
+            if let Err(e) = store.add_observation(&obs) {
+                warn!("Failed to save observation: {}", e);
+            }
+            // Auto-end the session when a terminal hook arrives
+            if matches!(
+                hook_type,
+                crate::types::HookType::SessionEnd | crate::types::HookType::Stop
+            ) {
+                let _ = store.end_session(&input.session_id, None);
+            }
+        }
+        Err(e) => {
+            warn!("Failed to open session store: {}", e);
+        }
+    }
+
+    ok_json(serde_json::json!({
+        "success": true,
+        "observation_id": obs.id,
+        "hook_type": hook_type.to_string(),
+        "session_id": input.session_id,
+    }))
+}
+
 fn tool_commits(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     read_only_guard(state)?;
     #[derive(Deserialize)]
@@ -7705,6 +7797,7 @@ mod tests {
             "mempalace_snapshot_create",
             "mempalace_file_history",
             "mempalace_sessions",
+            "mempalace_observe",
             "mempalace_commits",
             "mempalace_commit_lookup",
             // mr-dghp: mempalace_mine comes right after commit_lookup

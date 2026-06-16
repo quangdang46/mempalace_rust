@@ -285,6 +285,10 @@ enum Commands {
         /// Mutually exclusive with --instance.
         #[arg(long, conflicts_with = "instance")]
         port: Option<u16>,
+
+        /// Disable background maintenance tasks (auto-forget, consolidation, etc.).
+        #[arg(long)]
+        no_background: bool,
     },
 
     /// Re-ingest a file or directory of mined drawers into the palace (idempotent).
@@ -501,6 +505,29 @@ enum Commands {
         /// Send SIGKILL instead of SIGTERM.
         #[arg(long)]
         kill: bool,
+    },
+
+    /// Capture a lifecycle hook observation (internal/CLI usage).
+    Hook {
+        /// Hook type (e.g. session_end, post_tool_use, stop, notification).
+        #[arg(long, default_value = "notification")]
+        hook: String,
+
+        /// Session ID this observation belongs to.
+        #[arg(long, default_value = "cli-session")]
+        session_id: String,
+
+        /// Project name.
+        #[arg(long, default_value = "default")]
+        project: String,
+
+        /// CWD path.
+        #[arg(long, default_value = ".")]
+        cwd: String,
+
+        /// JSON data payload for the observation.
+        #[arg(long)]
+        data: Option<String>,
     },
 }
 
@@ -2293,6 +2320,7 @@ pub fn run() -> Result<()> {
             http,
             instance,
             port,
+            no_background,
         } => {
             if *http {
                 cmd_serve_http(palace_arg, *read_only)?;
@@ -2323,6 +2351,12 @@ pub fn run() -> Result<()> {
                     "  Starting MCP server (stdio). REST: {}, Stream: {}, Engine: {}",
                     rest_port, stream_port, engine_port
                 );
+
+                if !no_background {
+                    let palace_path = resolve_palace_path(palace_arg)?;
+                    let _runner = crate::background::start_background_tasks(palace_path);
+                    eprintln!("  Background maintenance tasks started");
+                }
 
                 crate::mcp_server::run_server(palace_arg, *read_only)?;
             }
@@ -2442,8 +2476,68 @@ pub fn run() -> Result<()> {
         Commands::Stop { pid_file, kill } => {
             cmd_stop(pid_file.as_deref().and_then(|p| p.to_str()), *kill)?;
         }
+        Commands::Hook {
+            hook,
+            session_id,
+            project,
+            cwd,
+            data,
+        } => {
+            cmd_hook(hook, session_id, project, cwd, data.as_deref())?;
+        }
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Hook Command
+// ---------------------------------------------------------------------------
+
+/// Process a lifecycle hook observation from the CLI.
+fn cmd_hook(
+    hook_type_str: &str,
+    session_id: &str,
+    project: &str,
+    cwd: &str,
+    data_json: Option<&str>,
+) -> Result<()> {
+    use crate::observe::process_observation;
+    use crate::session::SessionStore;
+    use crate::types::HookPayload;
+    use std::collections::HashMap;
+
+    let hook_type: crate::types::HookType = hook_type_str
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("invalid hook type '{}': {}", hook_type_str, e))?;
+
+    let data: HashMap<String, serde_json::Value> = match data_json {
+        Some(raw) => serde_json::from_str(raw)
+            .map_err(|e| anyhow::anyhow!("invalid JSON data payload: {}", e))?,
+        None => HashMap::new(),
+    };
+
+    let payload = HookPayload {
+        hook_type,
+        session_id: session_id.to_string(),
+        project: project.to_string(),
+        cwd: cwd.to_string(),
+        timestamp: chrono::Utc::now(),
+        data,
+    };
+
+    let obs = process_observation(&payload)?;
+    let store = SessionStore::open(
+        resolve_palace_path(None)?.join("sessions"),
+    )?;
+    store.add_observation(&obs)?;
+
+    // Auto-end session when hook_type is SessionEnd or Stop
+    if matches!(hook_type, crate::types::HookType::SessionEnd | crate::types::HookType::Stop) {
+        let _ = store.end_session(session_id, None);
+    }
+
+    println!("  Observation captured: {} ({:?})", obs.id, hook_type);
     Ok(())
 }
 

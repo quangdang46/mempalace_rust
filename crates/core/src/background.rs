@@ -20,6 +20,7 @@ const CONSOLIDATION_INTERVAL_MINUTES: u64 = 120;
 const LESSON_DECAY_INTERVAL_MINUTES: u64 = 1440; // 24 hours
 const INSIGHT_DECAY_INTERVAL_MINUTES: u64 = 1440; // 24 hours
 const INDEX_PERSIST_INTERVAL_MINUTES: u64 = 30;
+const RETENTION_SWEEP_INTERVAL_MINUTES: u64 = 120; // 2 hours
 
 /// Background task runner that manages periodic maintenance jobs.
 ///
@@ -221,6 +222,71 @@ impl BackgroundRunner {
 
         Ok(IndexPersistResult { persisted: true })
     }
+
+    /// Run retention sweep: evaluate memories using Ebbinghaus decay
+    /// and evict those below the retention threshold.
+    ///
+    /// Uses the `retention` module's `calculate_retention` for proper
+    /// Ebbinghaus-based scoring. Memories with retention below the
+    /// `minimum_retention` threshold (default 0.3) are evicted.
+    fn run_retention_sweep(&self) -> Result<RetentionSweepResult, anyhow::Error> {
+        let mut db = crate::palace_db::PalaceDb::open(&self.palace_path)?;
+        let memories_results = db.get_all(None, None, usize::MAX);
+
+        let mut evaluated = 0usize;
+        let mut evicted = 0usize;
+        let decay_config = crate::retention::default_decay_config();
+
+        for qr in &memories_results {
+            for (doc, meta) in qr.documents.iter().zip(qr.metadatas.iter()) {
+                evaluated += 1;
+                let access_count = meta
+                    .get("access_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                let last_accessed = meta
+                    .get("last_accessed")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(chrono::Utc::now);
+
+                let retention_score = crate::types::RetentionScore {
+                    memory_id: String::new(),
+                    retention_strength: 0.0,
+                    access_count,
+                    last_accessed,
+                    decay_rate: decay_config.decay_rate,
+                };
+
+                let retention =
+                    crate::retention::calculate_retention(&retention_score, &decay_config, None);
+
+                // Evict if retention is below the minimum threshold (default 0.3).
+                if retention < decay_config.minimum_retention {
+                    // Find the ID for this document in the result vector.
+                    let idx = qr
+                        .documents
+                        .iter()
+                        .position(|d| d == doc)
+                        .unwrap_or(usize::MAX);
+                    if idx < qr.ids.len() {
+                        let id = &qr.ids[idx];
+                        if let Err(e) = db.delete_id(id) {
+                            warn!("Retention sweep: failed to delete {}: {}", id, e);
+                        } else {
+                            evicted += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(RetentionSweepResult {
+            evaluated,
+            evicted,
+        })
+    }
 }
 
 /// Synthesize [`CompressedObservation`]s from stored drawers so the LLM-driven
@@ -316,6 +382,15 @@ pub struct InsightDecayResult {
 pub struct IndexPersistResult {
     /// Whether persistence succeeded.
     pub persisted: bool,
+}
+
+/// Result of a retention sweep task run.
+#[derive(Debug, Clone)]
+pub struct RetentionSweepResult {
+    /// Total memories evaluated.
+    pub evaluated: usize,
+    /// Number of memories evicted below retention threshold.
+    pub evicted: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -481,13 +556,44 @@ pub fn start_background_tasks(palace_path: std::path::PathBuf) -> BackgroundRunn
         info!("Index persistence task stopped");
     });
 
+    // Retention sweep task: every 2 hours
+    let retention_path = palace_path.clone();
+    let retention_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        let mut ticker = interval(StdDuration::from_secs(RETENTION_SWEEP_INTERVAL_MINUTES * 60));
+        // Run once at startup after a delay
+        tokio::time::sleep(StdDuration::from_secs(180)).await;
+
+        while !retention_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            ticker.tick().await;
+            if retention_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+
+            let runner = BackgroundRunner::new(retention_path.clone());
+            match runner.run_retention_sweep() {
+                Ok(result) => {
+                    info!(
+                        "Retention sweep completed: evaluated={} evicted={}",
+                        result.evaluated, result.evicted
+                    );
+                }
+                Err(e) => {
+                    warn!("Retention sweep task failed: {}", e);
+                }
+            }
+        }
+        info!("Retention sweep task stopped");
+    });
+
     info!(
-        "Background tasks started: auto-forget={}m consolidation={}h lesson_decay={}h insight_decay={}h index_persist={}m",
+        "Background tasks started: auto-forget={}m consolidation={}h lesson_decay={}h insight_decay={}h index_persist={}m retention_sweep={}m",
         AUTO_FORGET_INTERVAL_MINUTES,
         CONSOLIDATION_INTERVAL_MINUTES / 60,
         LESSON_DECAY_INTERVAL_MINUTES / 60,
         INSIGHT_DECAY_INTERVAL_MINUTES / 60,
-        INDEX_PERSIST_INTERVAL_MINUTES
+        INDEX_PERSIST_INTERVAL_MINUTES,
+        RETENTION_SWEEP_INTERVAL_MINUTES,
     );
 
     runner
