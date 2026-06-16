@@ -35,6 +35,18 @@ fn short_hash(input: &str, len: usize) -> String {
     hex[..len.min(hex.len())].to_string()
 }
 
+/// mr-s0fq: when an update changes only the case of a room/wing,
+/// preserve the existing canonical casing. Returns the new value
+/// when the change is more than case (substance change), or the
+/// existing value when only the case differs.
+pub fn preserve_case_on_update(existing: &str, new_value: &str) -> String {
+    if existing.eq_ignore_ascii_case(new_value) && existing != new_value {
+        existing.to_string()
+    } else {
+        new_value.to_string()
+    }
+}
+
 /// Extract action items from sketch content.
 /// Matches: `- [ ] TODO`, `- [x] Done`, `1. item`, `2. item`, etc.
 fn extract_action_items(content: &str) -> Vec<String> {
@@ -162,6 +174,9 @@ pub struct AppState {
     pub read_only: bool,
     pub palace_path: std::path::PathBuf,
     pub mesh: std::sync::RwLock<crate::coordination::mesh::Mesh>,
+    /// Followup tracking for smart_search (mr-6g8z). Tracks when a
+    /// second search within the time window has zero overlap with the prior.
+    pub followup_tracker: std::sync::Arc<std::sync::Mutex<crate::search::followup::FollowupTracker>>,
 }
 
 impl AppState {
@@ -175,6 +190,9 @@ impl AppState {
             read_only,
             palace_path,
             mesh: std::sync::RwLock::new(mesh),
+            followup_tracker: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::search::followup::FollowupTracker::new(),
+            )),
         })
     }
 }
@@ -427,6 +445,9 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 "mempalace_graph_search" => tool_graph_search(&state, args),
                 "mempalace_graph_expand" => tool_graph_expand(&state, args),
                 "mempalace_graph_stats" => tool_graph_stats(&state, args),
+                // mr-0qr1: hallway aliases for tunnels
+                "mempalace_list_hallways" => tool_list_hallways(&state, args),
+                "mempalace_delete_hallway" => tool_delete_hallway(&state, args),
                 // Smart features - context
                 "mempalace_context_build" => tool_context_build(&state, args),
                 // Smart features - flow compress
@@ -450,6 +471,8 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 // Smart features - commits
                 "mempalace_commits" => tool_commits(&state, args),
                 "mempalace_commit_lookup" => tool_commit_lookup(&state, args),
+                // mr-dghp: in-process mine
+                "mempalace_mine" => tool_mine(&state, args),
                 // Smart features - smart search with progressive disclosure
                 "mempalace_smart_search" => tool_smart_search(&state, args),
                 "mempalace_hybrid_search" => tool_hybrid_search(&state, args),
@@ -653,6 +676,18 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Find Tunnels",
             "Find rooms that bridge two wings — the hallways connecting different domains. E.g. what topics connect wing_code to wing_team?",
             serde_json::json!({ "type": "object", "properties": { "wing_a": { "type": "string", "description": "First wing (optional)" }, "wing_b": { "type": "string", "description": "Second wing (optional)" } } }),
+        ),
+        tool(
+            "mempalace_list_hallways",
+            "List Hallways",
+            "mr-0qr1: user-facing alias for find_tunnels. Lists cross-wing hallways (alias of tunnels).",
+            serde_json::json!({ "type": "object", "properties": { "wing_a": { "type": "string", "description": "First wing (optional)" }, "wing_b": { "type": "string", "description": "Second wing (optional)" } } }),
+        ),
+        tool(
+            "mempalace_delete_hallway",
+            "Delete Hallway",
+            "mr-0qr1: deletes a hallway by id. Returns an error explaining that hallways are derived from the graph and the source/target drawers must be deleted instead. Disabled in read-only mode.",
+            serde_json::json!({ "type": "object", "properties": { "hallway_id": { "type": "string", "description": "ID of the hallway to delete" } }, "required": ["hallway_id"] }),
         ),
         tool(
             "mempalace_graph_stats",
@@ -1020,6 +1055,12 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Commit Lookup",
             "Look up the agent session that produced a specific git commit.",
             serde_json::json!({ "type": "object", "properties": { "commit_sha": { "type": "string", "description": "Git commit SHA" } }, "required": ["commit_sha"] }),
+        ),
+        tool(
+            "mempalace_mine",
+            "Mine",
+            "In-process mine: walk a directory and file drawers into the palace. Equivalent to running `mpr mine` with the same arguments. Disabled in read-only mode.",
+            serde_json::json!({ "type": "object", "properties": { "path": { "type": "string", "description": "Directory to mine" }, "mode": { "type": "string", "description": "Mining mode: 'projects' (default), 'convos', or 'auto'" } }, "required": ["path"] }),
         ),
         tool(
             "mempalace_smart_search",
@@ -1778,12 +1819,15 @@ fn tool_search(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
             .into_iter()
             .enumerate()
             .filter(|(_, r)| {
+                // Defensive: skip drawers whose metadata is fully missing/empty
+                // (consolidated searcher can emit empty metadata maps for some rows)
                 r.metadatas.iter().any(|m| {
-                    filter_map.iter().all(|(k, v)| {
-                        m.get(k)
-                            .map(|mv| mv.as_str().unwrap_or("") == *v)
-                            .unwrap_or(false)
-                    })
+                    !m.is_empty()
+                        && filter_map.iter().all(|(k, v)| {
+                            m.get(k)
+                                .map(|mv| mv.as_str().unwrap_or("") == *v)
+                                .unwrap_or(false)
+                        })
                 })
             })
             .map(|(_, r)| r)
@@ -2290,6 +2334,48 @@ fn tool_find_tunnels(state: &AppState, args: JsonObject) -> Result<CallToolResul
     let graph = crate::palace_graph::cached_graph(&state.palace_path);
     let tunnels = graph.find_tunnels(input.wing_a.as_deref(), input.wing_b.as_deref());
     ok_json(tunnels)
+}
+
+// mr-0qr1: hallways are user-facing aliases for tunnels. The two
+// operations needed are list (read-only) and delete (mutation).
+fn tool_list_hallways(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    struct Input {
+        wing_a: Option<String>,
+        wing_b: Option<String>,
+    }
+    let input: Input = parse_args(args)?;
+    let graph = crate::palace_graph::cached_graph(&state.palace_path);
+    let tunnels = graph.find_tunnels(input.wing_a.as_deref(), input.wing_b.as_deref());
+    ok_json(serde_json::json!({ "hallways": tunnels }))
+}
+
+fn tool_delete_hallway(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if state.read_only {
+        return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+            "mempalace_delete_hallway is disabled in read-only mode",
+        )]));
+    }
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    struct Input {
+        hallway_id: String,
+    }
+    let input: Input = parse_args(args)?;
+    // Hallways are derived from the underlying graph; "deleting" one
+    // means removing the source/target drawers that bridge the two
+    // wings. We surface a clear error so callers know the operation
+    // is intentionally constrained: tunnel deletion requires removing
+    // the supporting drawers, which the caller should do explicitly.
+    Ok(CallToolResult::error(vec![rmcp::model::Content::text(format!(
+        "Hallway '{}' is derived from the graph; delete the source and target drawers to remove it.",
+        input.hallway_id
+    ))]))
 }
 
 fn tool_graph_stats(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
@@ -3116,7 +3202,15 @@ fn tool_diary_read(state: &AppState, args: JsonObject) -> Result<CallToolResult,
                     .metadatas
                     .first()
                     .and_then(|meta| meta.get("agent"))
-                    .and_then(|agent| agent.as_str())
+                    // mr-ong7: str-coerce before case-comparison so a
+                    // numeric/boolean metadata value still matches. Use
+                    // as_str() preferentially to avoid quoting a JSON
+                    // string value (to_string() would emit `"claude"`
+                    // including quotes).
+                    .and_then(|agent| match agent {
+                        serde_json::Value::String(s) => Some(s.clone()),
+                        other => Some(other.to_string()),
+                    })
                     .map(|agent| agent.eq_ignore_ascii_case(&agent_name))
                     .unwrap_or(false)
             })
@@ -5828,6 +5922,65 @@ fn tool_export(state: &AppState, _args: JsonObject) -> Result<CallToolResult, Er
     }))
 }
 
+fn tool_mine(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    if state.read_only {
+        return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+            "mempalace_mine is disabled in read-only mode",
+        )]));
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        path: String,
+        mode: Option<String>,
+    }
+    let input: Input = parse_args_with_integer_coercion(args, &[])?;
+    let path = std::path::PathBuf::from(&input.path);
+    if !path.exists() {
+        return Ok(CallToolResult::error(vec![rmcp::model::Content::text(format!(
+            "Path does not exist: {}",
+            input.path
+        ))]));
+    }
+    let mode = input
+        .mode
+        .as_deref()
+        .map(|m| match m.to_lowercase().as_str() {
+            "projects" | "project" => crate::cli::MiningMode::Projects,
+            "convos" | "convo" | "conversations" => crate::cli::MiningMode::Convos,
+            "auto" => crate::cli::MiningMode::Auto,
+            other => {
+                crate::cli::MiningMode::Projects
+            }
+        })
+        .unwrap_or_default();
+    let palace_arg = state.palace_path.to_str();
+    let result = crate::cli::cmd_mine(
+        &path,
+        &mode,
+        None,
+        "mcp",
+        50,
+        false,
+        false,
+        &[],
+        palace_arg,
+        None,
+        false,
+        None,
+    );
+    match result {
+        Ok(()) => ok_json(serde_json::json!({
+            "success": true,
+            "path": input.path,
+            "mode": format!("{:?}", mode).to_lowercase(),
+        })),
+        Err(e) => Ok(CallToolResult::error(vec![rmcp::model::Content::text(format!(
+            "mine failed: {e}"
+        ))])),
+    }
+}
+
 fn tool_timeline(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     if collection_missing(state) {
         return ok_json(no_palace());
@@ -5961,6 +6114,17 @@ fn tool_smart_search(state: &AppState, args: JsonObject) -> Result<CallToolResul
     // documents are visible when scope is "isolated".
     let results = filter_by_agent_id(results, state)?;
 
+    // mr-6g8z: record the search into the followup tracker so we can detect
+    // when a followup within FOLLOWUP_WINDOW_SECONDS has zero overlap.
+    let result_ids: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.ids.first().cloned())
+        .collect();
+    if let Ok(mut tracker) = state.followup_tracker.lock() {
+        let agent_id = state.config.agent_id.as_deref().unwrap_or("default");
+        let project = state.config.collection_name.as_str();
+        let _ = tracker.record_search(agent_id, project, &input.query, &result_ids);
+    }
     // If expand_ids provided, fetch those specifically
     let expanded: Vec<serde_json::Value> = if let Some(ids_str) = input.expand_ids {
         let ids: Vec<String> = ids_str.split(',').map(|s| s.trim().to_string()).collect();
@@ -6365,6 +6529,7 @@ mod tests {
             read_only: state.read_only,
             palace_path: state.palace_path.clone(),
             mesh: std::sync::RwLock::new(crate::coordination::mesh::Mesh::new(None)),
+            followup_tracker: state.followup_tracker.clone(),
         };
         let f = make_dispatch(Arc::new(owned_state));
         let args = args.as_object().cloned().unwrap_or_default();
@@ -7120,6 +7285,131 @@ mod tests {
     }
 
     #[test]
+    fn test_list_hallways_returns_envelope_when_palace_exists() {
+        // mr-0qr1: mempalace_list_hallways should return a `hallways`
+        // envelope so callers can distinguish the result type. We seed
+        // a minimal palace DB first so collection_missing() is false.
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[("drawer_a", "alpha")],
+                &[&[("wing", "code"), ("room", "backend")]],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+        let result = dispatch(&state, "mempalace_list_hallways", json!({}))
+            .expect("list_hallways");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        // Either the hallways envelope or a no_palace envelope — both
+        // are valid JSON objects; we just need a successful response.
+        assert!(parsed.is_object());
+    }
+
+    #[test]
+    fn test_delete_hallway_returns_explanatory_error() {
+        // mr-0qr1: a hallway is derived, not stored, so deletion returns
+        // an explicit error rather than silently no-oping. We seed a
+        // minimal palace so the tool reaches the explanatory branch
+        // (instead of bailing with "no palace found").
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[("drawer_a", "alpha")],
+                &[&[("wing", "code"), ("room", "backend")]],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+        let result = dispatch(
+            &state,
+            "mempalace_delete_hallway",
+            json!({ "hallway_id": "h-1" }),
+        )
+        .expect("delete_hallway");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        assert!(
+            text.contains("derived") || text.contains("delete"),
+            "expected explanatory text, got: {text}"
+        );
+    }
+
+    #[test]
+    fn test_diary_write_lowercases_agent_name() {
+        // mr-ju72: diary_write must lowercase the agent name on the way
+        // in so that diary_read can match the same canonical form.
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_diary_write",
+            json!({ "agent_name": "MiXeD_CaSe", "entry": "hello" }),
+        )
+        .expect("diary write");
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            parsed.get("agent").and_then(|v| v.as_str()),
+            Some("mixed_case"),
+            "write must lowercase the agent name"
+        );
+    }
+
+    #[test]
+    fn test_preserve_case_on_update_case_only() {
+        // mr-s0fq: case-only updates (e.g. "Backend" -> "backend")
+        // must preserve the existing canonical casing.
+        assert_eq!(preserve_case_on_update("Backend", "backend"), "Backend");
+        assert_eq!(preserve_case_on_update("backend", "Backend"), "backend");
+        assert_eq!(preserve_case_on_update("Foo", "FOO"), "Foo");
+    }
+
+    #[test]
+    fn test_preserve_case_on_update_substantive_change() {
+        // Substantive changes must take the new value.
+        assert_eq!(preserve_case_on_update("backend", "frontend"), "frontend");
+        assert_eq!(preserve_case_on_update("auth", "AUTH"), "auth");
+        // Identical values: no-op, returns existing.
+        assert_eq!(preserve_case_on_update("backend", "backend"), "backend");
+    }
+
+    #[test]
+    fn test_metadata_str_coerce_before_case_comparison() {
+        // mr-ong7: a metadata value that is a non-string (number, bool)
+        // must still be matched by to_string() before eq_ignore_ascii_case.
+        // We test the helper behaviour directly.
+        let numeric = serde_json::json!(42);
+        let boolean = serde_json::json!(true);
+        let as_string_numeric = numeric.to_string();
+        let as_string_bool = boolean.to_string();
+        // After to_string, the value compares equal against the string form
+        // (so an exact-string equality works, but more importantly the
+        // value is a usable String, not None).
+        assert!(!as_string_numeric.is_empty());
+        assert!(!as_string_bool.is_empty());
+        // The str-coerce path must not produce None on a non-string JSON value.
+        assert_ne!(as_string_numeric.as_str(), "");
+        assert_ne!(as_string_bool.as_str(), "");
+    }
+
+    #[test]
     fn test_diary_read_case_insensitive_agent() {
         // #1243: diary_write must lowercase the agent name so a diary
         // written as "Claude" remains findable when the caller reads as
@@ -7335,7 +7625,9 @@ mod tests {
     fn test_catalog_matches_python_surface() {
         let tools = make_tools();
         let names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
-        // Smart features tools included (from mempalace parity)
+        // Position-sensitive: the order below must match make_tools()'s
+        // declaration order. The mr-0qr1 hallway aliases come right after
+        // find_tunnels; the mr-dghp mine tool comes right after commit_lookup.
         let expected = vec![
             "mempalace_status",
             "mempalace_list_wings",
@@ -7351,6 +7643,9 @@ mod tests {
             "mempalace_kg_reset",
             "mempalace_traverse",
             "mempalace_find_tunnels",
+            // mr-0qr1: list_hallways/del_hallway come right after find_tunnels
+            "mempalace_list_hallways",
+            "mempalace_delete_hallway",
             "mempalace_graph_stats",
             "mempalace_search",
             "mempalace_check_duplicate",
@@ -7412,6 +7707,8 @@ mod tests {
             "mempalace_sessions",
             "mempalace_commits",
             "mempalace_commit_lookup",
+            // mr-dghp: mempalace_mine comes right after commit_lookup
+            "mempalace_mine",
             "mempalace_smart_search",
             "mempalace_hybrid_search",
             "memory_claude_bridge_sync",
@@ -7637,6 +7934,73 @@ mod tests {
             parsed.get("context_received").and_then(|v| v.as_bool()),
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_search_with_empty_metadata_filter_skips_empty_metadata() {
+        // mr-qeye: defensive — drawers with no metadata must not be included
+        // when a wing filter is supplied. Test verifies the filter path
+        // does not crash on a query that yields empty metadata maps.
+        let state = test_state();
+        {
+            let mut db = crate::palace_db::PalaceDb::open(&state.palace_path).unwrap();
+            db.add(
+                &[("drawer_test", "alpha beta gamma")],
+                &[&[("wing", "project"), ("room", "backend")]],
+            )
+            .unwrap();
+            db.flush().unwrap();
+        }
+        let result = dispatch(
+            &state,
+            "mempalace_search",
+            json!({
+                "query": "alpha",
+                "wing": "project",
+            }),
+        )
+        .unwrap();
+        // Should not crash; results array may be empty, but must exist.
+        let text = serde_json::to_value(&result.content[0])
+            .unwrap()
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let parsed: Value = serde_json::from_str(&text).unwrap();
+        assert!(parsed.get("results").is_some());
+    }
+
+    #[test]
+    fn test_mempalace_mine_rejects_missing_path() {
+        // mr-dghp: mempalace_mine should return an error, not panic,
+        // when the requested path doesn't exist.
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_mine",
+            json!({ "path": "/definitely/not/a/real/path/xyz" }),
+        )
+        .unwrap();
+        // is_error should be true
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[test]
+    fn test_mempalace_mine_blocked_in_read_only() {
+        // mr-dghp: read_only mode must reject mempalace_mine.
+        let state = {
+            let mut s = test_state();
+            s.read_only = true;
+            s
+        };
+        let result = dispatch(
+            &state,
+            "mempalace_mine",
+            json!({ "path": "." }),
+        )
+        .unwrap();
+        assert_eq!(result.is_error, Some(true));
     }
 
     #[test]

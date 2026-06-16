@@ -141,7 +141,33 @@ pub type Availability = (bool, String);
 /// LLM provider interface. All providers must implement classify() and check_available().
 pub trait LlmProvider: Send + Sync {
     /// Classify a prompt using the LLM. Returns structured text response.
-    fn classify(&self, system: &str, user: &str, json_mode: bool) -> Result<LlmResponse, LlmError>;
+    ///
+    /// `think` (mr-o5nq) enables extended chain-of-thought. Providers
+    /// that don't support it should ignore the flag. Default for
+    /// existing call sites is `false`.
+    fn classify(
+        &self,
+        system: &str,
+        user: &str,
+        json_mode: bool,
+    ) -> Result<LlmResponse, LlmError> {
+        self.classify_with_think(system, user, json_mode, false)
+    }
+
+    /// Classify a prompt with explicit control over the think flag.
+    /// The default implementation folds to `classify` ignoring
+    /// `think`; providers that support extended thinking override
+    /// this to forward the flag (e.g. Ollama's `think` field,
+    /// Anthropic's `thinking` block).
+    fn classify_with_think(
+        &self,
+        system: &str,
+        user: &str,
+        json_mode: bool,
+        _think: bool,
+    ) -> Result<LlmResponse, LlmError> {
+        self.classify(system, user, json_mode)
+    }
 
     /// Fast availability probe. Returns (ok, message).
     fn check_available(&self) -> Availability;
@@ -225,6 +251,16 @@ impl OllamaProvider {
 
 impl LlmProvider for OllamaProvider {
     fn classify(&self, system: &str, user: &str, json_mode: bool) -> Result<LlmResponse, LlmError> {
+        self.classify_with_think(system, user, json_mode, false)
+    }
+
+    fn classify_with_think(
+        &self,
+        system: &str,
+        user: &str,
+        json_mode: bool,
+        think: bool,
+    ) -> Result<LlmResponse, LlmError> {
         let mut body = serde_json::json!({
             "model": self.model,
             "messages": [
@@ -233,6 +269,10 @@ impl LlmProvider for OllamaProvider {
             ],
             "stream": false,
             "options": {"temperature": 0.1},
+            // mr-o5nq: forward the think flag. Ollama exposes this
+            // as a top-level "think" field; non-supporting models
+            // ignore it. Local-only endpoint so no privacy cost.
+            "think": think,
         });
         if json_mode {
             body["format"] = serde_json::json!("json");

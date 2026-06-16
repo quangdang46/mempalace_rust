@@ -416,11 +416,19 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         source_drawer_id: Option<&str>,
         adapter_name: Option<&str>,
     ) -> anyhow::Result<String> {
+        // Canonicalize temporal values at the KG boundary (#1214 / mr-gvpc).
+        // `sanitize_iso_temporal` rejects naive datetimes, non-UTC offsets, and
+        // partial dates — and normalizes `+00:00` → `Z`. Callers that bypass
+        // the MCP layer (e.g. internal bulk imports) still get the same shape
+        // guarantees so KG TEXT comparisons stay correct.
+        let valid_from: Option<String> = crate::config::sanitize_iso_temporal(valid_from, "valid_from")?;
+        let valid_to: Option<String> = crate::config::sanitize_iso_temporal(valid_to, "valid_to")?;
+
         // Reject inverted intervals (#1214): a triple with valid_to < valid_from
         // would never satisfy `valid_from <= as_of AND valid_to >= as_of`, so it
         // would be invisible to every query — silently corrupt. Open intervals
         // and point-in-time facts (valid_from == valid_to) remain accepted.
-        if let (Some(vf), Some(vt)) = (valid_from, valid_to) {
+        if let (Some(vf), Some(vt)) = (valid_from.as_deref(), valid_to.as_deref()) {
             if vt < vf {
                 anyhow::bail!(
                     "valid_to={vt:?} is before valid_from={vf:?}; an inverted interval would be invisible to every KG query"
@@ -462,7 +470,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             // Invalidate the conflicting triple at the start of the new fact when known,
             // otherwise fall back to the current timestamp.
             let conflict_end = valid_from
-                .map(|s| s.to_string())
+                .clone()
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
             self.conn.execute(
                 "UPDATE triples SET valid_to=?1 WHERE id=?2",
@@ -1543,8 +1551,8 @@ mod tests {
             "Alice",
             "worried_about",
             "Max injury",
-            Some("2026-01"),
-            Some("2026-02"),
+            Some("2026-01-01"),
+            Some("2026-02-28"),
             None,
             None,
             None,
@@ -1802,6 +1810,94 @@ mod tests {
             None,
         )
         .expect("open-ended intervals must be accepted");
+    }
+
+    #[test]
+    fn test_add_triple_canonicalizes_plus_zero_zero_to_z() {
+        // mr-gvpc: add_triple must canonicalize `+00:00` → `Z` so KG TEXT
+        // comparisons stay consistent regardless of which zero-offset form
+        // the caller used.
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        kg.add_triple(
+            "Alice",
+            "works_at",
+            "Acme",
+            Some("2026-05-11T00:00:00+00:00"),
+            Some("2027-01-01T00:00:00+00:00"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("+00:00 offsets must be accepted and normalized");
+
+        let triples = kg
+            .query_entity("Alice", None, None, "both")
+            .expect("query_entity");
+        assert_eq!(triples.len(), 1);
+        let stored = triples[0].valid_from.as_deref().unwrap();
+        let stored_to = triples[0].valid_to.as_deref().unwrap();
+        assert!(
+            stored.ends_with('Z') && !stored.contains('+'),
+            "valid_from must be canonical Z form, got {stored:?}"
+        );
+        assert!(
+            stored_to.ends_with('Z') && !stored_to.contains('+'),
+            "valid_to must be canonical Z form, got {stored_to:?}"
+        );
+    }
+
+    #[test]
+    fn test_add_triple_rejects_naive_datetime() {
+        // mr-gvpc: naive datetimes (no offset) are ambiguous — they cannot be
+        // compared meaningfully as UTC. add_triple must reject them at write
+        // time so the KG TEXT column is never polluted with non-UTC values.
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let err = kg
+            .add_triple(
+                "Alice",
+                "works_at",
+                "Acme",
+                Some("2026-05-11T00:00:00"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect_err("naive datetime must be rejected");
+        assert!(
+            err.to_string().contains("valid_from"),
+            "error should reference the field, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_add_triple_rejects_non_utc_offset() {
+        // mr-gvpc: a non-UTC offset (e.g. +05:30) would shift the timestamp
+        // and break TEXT-based as_of comparisons. add_triple must reject any
+        // non-UTC offset, even when the value is well-formed.
+        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let err = kg
+            .add_triple(
+                "Bob",
+                "lives_in",
+                "Tokyo",
+                Some("2026-05-11T00:00:00+09:00"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect_err("non-UTC offset must be rejected");
+        assert!(
+            err.to_string().contains("valid_from"),
+            "error should reference the field, got: {err}"
+        );
     }
 
     #[test]

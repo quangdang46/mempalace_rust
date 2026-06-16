@@ -32,6 +32,7 @@ pub mod retention;
 pub mod search;
 pub mod searcher;
 pub mod session;
+pub mod sync;
 pub mod types;
 
 // =====================================================================

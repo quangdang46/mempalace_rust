@@ -1,0 +1,29 @@
+{
+  "name": "Deutsch",
+  "code": "de",
+  "status_drawers": "{count} Schubladen abgelegt",
+  "status_wings": "{count} Flügel",
+  "status_rooms": "{count} Räume",
+  "error_not_found": "Nicht gefunden: {item}",
+  "error_no_palace": "Kein Palast unter {path} gefunden",
+  "error_invalid_input": "Ungültige Eingabe: {reason}",
+  "entity": {
+    "person_verbs": ["sagte", "fragte", "erzählte", "antwortete", "sprach", "erwähnte", "bemerkte", "schlug vor", "empfahl", "entschied", "stimmte zu", "dachte", "glaubte", "erinnerte sich", "vergaß", "erkannte", "entdeckte", "fand", "sah", "hörte", "lernte", "wusste", "verstand", "hoffte", "fürchtete", "zweifelte", "vermutete", "bestätigte", "leugnete", "lehnte ab", "genehmigte", "erlaubte", "verbot", "begann", "beendete", "schrieb", "erschuf", "baute"],
+    "project_verbs": ["baute", "erschuf", "entwickelte", "entwarf", "implementierte", "programmierte", "wartete", "verwaltete", "stellte bereit", "veröffentlichte", "startete", "gründete", "leitet", "unterstützt", "finanzierte", "trägt bei"],
+    "pronouns": ["er", "ihm", "sein", "seine", "seiner", "sie", "ihr", "ihre", "ihrer", "wir", "ihnen", "uns", "du", "ich", "mich", "mir", "mein", "meine"],
+    "stopwords": ["der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem", "einer", "und", "oder", "aber", "wenn", "weil", "als", "was", "wann", "wo", "wer", "welche", "wie", "warum", "dieser", "diese", "dieses", "ist", "sind", "war", "waren", "sein", "gewesen", "hat", "haben", "hatte", "wird", "kann", "muss", "soll"],
+    "candidate_pattern": "[A-ZÄÖÜẞ][a-zäöüß]{2,}",
+    "boundary_chars": "",
+    "versioned_pattern": "[A-ZÄÖÜẞ][a-zäöüß]{2,}-v?\\d+(?:\\.\\d+)*"
+  },
+  "cli": {
+    "init_complete": "Initialisierung abgeschlossen",
+    "mine_complete": "Mining abgeschlossen",
+    "search_no_results": "Keine Ergebnisse gefunden",
+    "palace_not_found": "Palast nicht gefunden. Führen Sie zuerst 'mempalace init <dir>' aus.",
+    "corpus_empty": "Kein Inhalt im angegebenen Verzeichnis gefunden."
+  },
+  "dialect": {
+    "compression_instructions": "Komprimieren Sie Ihre Erinnerungen in das AAAK-Format für effiziente Speicherung und Abfrage. AAAK ist ein verlustbehafteter Kurzdialekt für KI-Agenten."
+  }
+}

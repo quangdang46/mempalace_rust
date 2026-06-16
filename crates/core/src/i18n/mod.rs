@@ -134,7 +134,20 @@ impl LocaleManager {
     /// Load built-in locale files from the i18n directory.
     fn load_builtin_locales(locales: &mut HashMap<String, Locale>) -> Result<(), LocaleError> {
         // Try to load from embedded assets or filesystem
-        let locale_files = vec!["en.json", "pt-br.json", "ru.json"];
+        let locale_files = vec![
+            "en.json",
+            "pt-br.json",
+            "ru.json",
+            "fr.json",
+            "es.json",
+            "de.json",
+            "zh-cn.json",
+            "zh-tw.json",
+            "hi.json",
+            "ja.json",
+            "ko.json",
+            "be.json",
+        ];
 
         for file_name in locale_files {
             // For now, we'll use the embedded JSON we created
@@ -160,6 +173,18 @@ impl LocaleManager {
             "en.json" => Ok(Self::embedded_en()),
             "pt-br.json" => Ok(Self::embedded_pt_br()),
             "ru.json" => Ok(Self::embedded_ru()),
+            // mr-uo0o: New language packs loaded directly from the JSON
+            // files via `include_str!` so the source of truth is on disk
+            // (and diffable) rather than a duplicated string literal.
+            "fr.json" => Ok(include_str!("fr.json").to_string()),
+            "es.json" => Ok(include_str!("es.json").to_string()),
+            "de.json" => Ok(include_str!("de.json").to_string()),
+            "zh-cn.json" => Ok(include_str!("zh-cn.json").to_string()),
+            "zh-tw.json" => Ok(include_str!("zh-tw.json").to_string()),
+            "hi.json" => Ok(include_str!("hi.json").to_string()),
+            "ja.json" => Ok(include_str!("ja.json").to_string()),
+            "ko.json" => Ok(include_str!("ko.json").to_string()),
+            "be.json" => Ok(include_str!("be.json").to_string()),
             _ => Err(LocaleError::NotFound(file_name.to_string())),
         }
     }
@@ -358,8 +383,9 @@ mod tests {
         assert!(manager.get_locale("pt-br").is_some());
         assert!(manager.get_locale("RU").is_some());
 
-        // Test non-existent
-        assert!(manager.get_locale("de").is_none());
+        // Test non-existent (mr-uo0o: 'de' is now a real locale — use 'xx' as
+        // the negative case so the suite exercises both directions).
+        assert!(manager.get_locale("xx").is_none());
     }
 
     #[test]
@@ -378,9 +404,33 @@ mod tests {
         let locale = manager.resolve_locale("pt");
         assert!(locale.code.starts_with("pt"));
 
-        // Fallback to default
-        let locale = manager.resolve_locale("de");
+        // Fallback to default (mr-uo0o: 'de' is now a real locale; use a
+        // bogus code to assert the default fallback path).
+        let locale = manager.resolve_locale("xx");
         assert_eq!(locale.code, "en");
+    }
+
+    #[test]
+    fn test_resolve_locale_case_insensitive_zh_cn() {
+        // mr-uo0o: case-insensitive locale resolution must accept any
+        // capitalisation of the BCP-47 code, including the multi-segment
+        // CJK form `zh-CN`. The previous behaviour was that an upper-case
+        // lookup like `ZH-cn` or `zh-cn` would fall through to the default
+        // because the lowercase variant had to be registered too.
+        let manager = LocaleManager::new().unwrap();
+
+        for variant in ["zh-CN", "zh-cn", "ZH-CN", "Zh-Cn"] {
+            let resolved = manager.resolve_locale(variant);
+            assert_eq!(
+                resolved.code, "zh-CN",
+                "resolve_locale({variant:?}) should hit zh-CN, got {:?}",
+                resolved.code
+            );
+        }
+
+        // Boundary chars / stopwords from the zh-CN pack must load too.
+        assert!(!manager.get_locale("zh-CN").unwrap().entity.boundary_chars.is_empty());
+        assert!(!manager.get_locale("zh-CN").unwrap().entity.stopwords.is_empty());
     }
 
     #[test]

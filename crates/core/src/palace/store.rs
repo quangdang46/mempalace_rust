@@ -38,3 +38,13 @@ pub use embedvec::EmbedvecStore;
 pub mod usearch_sqlite;
 #[cfg(feature = "store-usearch")]
 pub use usearch_sqlite::UsearchSqliteStore;
+
+// mr-mngt: deferred — no pgvector backend in this build.
+// When pgvector (postgres-based vector store) is added, port the
+// maintenance-hooks contract (vacuum, reindex, ANALYZE) and wire it
+// into the same `PalaceStore` trait that the embedvec/usearch tiers
+// already implement. The hooks should fire on:
+//   * `flush` — reindex after batch write
+//   * `delete` — vacuum on compaction
+//   * `count > threshold` — ANALYZE for the query planner
+// Until the backend lands, this module owns the only two tiers.

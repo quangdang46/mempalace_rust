@@ -376,6 +376,279 @@ pub fn auto_detect_from_directory(
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Manifest + git author scanning (mr-4fqp)
+// ---------------------------------------------------------------------------
+
+/// Manifest filenames that can carry an `authors` field we mine for entity
+/// candidates. Each parser knows how to extract a list of names from its
+/// file format.
+const MANIFEST_FILES: &[&str] = &[
+    "pyproject.toml",
+    "Cargo.toml",
+    "package.json",
+    "go.mod",
+];
+
+/// Scan nearby project manifests for author fields and add their authors
+/// to the candidate entity set (#mr-4fqp).
+///
+/// Each manifest is read best-effort — if a file is missing, malformed, or
+/// has no authors, we silently move on. A returned name always has a
+/// non-empty `name`; the `context` field identifies the source manifest
+/// (e.g. `Cargo.toml`).
+pub fn scan_manifest_authors(directory: &Path) -> Vec<PersonEntity> {
+    let mut out: Vec<PersonEntity> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for manifest in MANIFEST_FILES {
+        let path = directory.join(manifest);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let extracted = match *manifest {
+            "pyproject.toml" => extract_authors_pyproject(&text),
+            "Cargo.toml" => extract_authors_cargo_toml(&text),
+            "package.json" => extract_authors_package_json(&text),
+            "go.mod" => extract_authors_go_mod(&text),
+            _ => Vec::new(),
+        };
+        for name in extracted {
+            let key = name.to_lowercase();
+            if seen.insert(key) {
+                out.push(PersonEntity {
+                    name,
+                    confidence: 0.9,
+                    context: (*manifest).to_string(),
+                });
+            }
+        }
+    }
+
+    out
+}
+
+fn extract_authors_pyproject(text: &str) -> Vec<String> {
+    // Heuristic: regex-collect `name = "..."` lines inside [tool.poetry.authors]
+    // or [[authors]] arrays. Cheap and good-enough for first-run seeding.
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("name") {
+            continue;
+        }
+        if let Some(eq) = trimmed.find('=') {
+            let value = trimmed[eq + 1..].trim();
+            if let Some(name) = unquote(value) {
+                // Skip emails like "Name <a@b.com>" → keep just "Name"
+                let cleaned = name.split('<').next().unwrap_or(&name).trim().to_string();
+                if !cleaned.is_empty() {
+                    names.push(cleaned);
+                }
+            }
+        }
+    }
+    names
+}
+
+fn extract_authors_cargo_toml(text: &str) -> Vec<String> {
+    // Cargo workspace `authors = ["Alice <a@b>", "Bob"]` lines.
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("authors") {
+            continue;
+        }
+        if let Some(eq) = trimmed.find('=') {
+            let value = trimmed[eq + 1..].trim();
+            // Drop surrounding array brackets and quotes; split on comma.
+            let stripped = value.trim_matches(|c: char| c == '[' || c == ']' || c == ',');
+            for piece in stripped.split(',') {
+                if let Some(p) = unquote(piece.trim()) {
+                    let cleaned = p.split('<').next().unwrap_or(&p).trim().to_string();
+                    if !cleaned.is_empty() {
+                        names.push(cleaned);
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+fn extract_authors_package_json(text: &str) -> Vec<String> {
+    // Look for `"author": "Name <email>"` or `"authors": [...]` / `"contributors": [...]`.
+    // We do a tiny state machine: track whether we are inside one of those
+    // keys, then collect quoted strings.
+    let mut names = Vec::new();
+    let mut in_target = false;
+    for line in text.lines() {
+        let lower = line.to_lowercase();
+        if lower.contains("\"author\"")
+            || lower.contains("\"authors\"")
+            || lower.contains("\"contributors\"")
+        {
+            in_target = true;
+        }
+        if !in_target {
+            continue;
+        }
+        // Pull every "..." token from the line.
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'"' {
+                let start = i + 1;
+                let mut end = start;
+                while end < bytes.len() && bytes[end] != b'"' {
+                    end += 1;
+                }
+                if end > start {
+                    if let Ok(s) = std::str::from_utf8(&bytes[start..end]) {
+                        let cleaned = s.split('<').next().unwrap_or(s).trim().to_string();
+                        if !cleaned.is_empty() {
+                            names.push(cleaned);
+                        }
+                    }
+                }
+                i = end + 1;
+            } else {
+                i += 1;
+            }
+        }
+        // Reset when we leave the section.
+        if line.trim_end().ends_with('}') {
+            in_target = false;
+        }
+    }
+    names
+}
+
+fn extract_authors_go_mod(text: &str) -> Vec<String> {
+    // `go.mod` itself rarely has authors, but projects sometimes keep an
+    // `AUTHORS` block in a comment. Look for lines starting with `# Name`.
+    let mut names = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let after_hash = trimmed.strip_prefix('#').unwrap_or("").trim();
+        if after_hash.is_empty() {
+            continue;
+        }
+        // Heuristic: a single token or a "Name <email>" form, no spaces.
+        if after_hash.contains('<') {
+            let cleaned = after_hash.split('<').next().unwrap_or(after_hash).trim();
+            if !cleaned.is_empty() {
+                names.push(cleaned.to_string());
+            }
+        }
+    }
+    names
+}
+
+fn unquote(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return Some(trimmed[1..trimmed.len() - 1].to_string());
+    }
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return Some(trimmed[1..trimmed.len() - 1].to_string());
+    }
+    None
+}
+
+/// Run `git log --format='%aN <%aE>'` and collect unique author display
+/// names as candidate entities. Silently returns an empty Vec if `git` is
+/// missing, the directory is not a repo, or the command fails — entity
+/// seeding is a best-effort signal, not a hard prerequisite.
+pub fn scan_git_authors(directory: &Path) -> Vec<PersonEntity> {
+    let output = match std::process::Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .arg("log")
+        .arg("--format=%aN <%aE>")
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<PersonEntity> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let name = line.split('<').next().unwrap_or(line).trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let key = name.to_lowercase();
+        if seen.insert(key) {
+            out.push(PersonEntity {
+                name,
+                confidence: 0.8,
+                context: "git".to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// Convenience: combine manifest + git author signals into one de-duped
+/// candidate set. Entries from manifests are listed first (higher
+/// confidence) so the prompt can show them in priority order.
+pub fn scan_project_authors(directory: &Path) -> Vec<PersonEntity> {
+    let mut all: Vec<PersonEntity> = scan_manifest_authors(directory);
+    let known: std::collections::HashSet<String> =
+        all.iter().map(|p| p.name.to_lowercase()).collect();
+    for git_author in scan_git_authors(directory) {
+        if !known.contains(&git_author.name.to_lowercase()) {
+            all.push(git_author);
+        }
+    }
+    all
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code conversation dir scan (mr-l9o5)
+// ---------------------------------------------------------------------------
+
+/// Scan `~/.claude/projects/` for conversation directories. Each subdir
+/// represents one project; the dir name encodes the project (e.g.
+/// `myrepo` or `mypath-to-myrepo` for repos whose path contains a dash).
+/// We return the dir names as candidate project entities.
+pub fn scan_claude_projects(projects_dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(projects_dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if let Some(name) = entry.file_name().to_str() {
+                let name = name.trim();
+                if !name.is_empty() && !name.starts_with('.') {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Resolve `~/.claude/projects/` to an absolute path. Returns `None` if
+/// `HOME` (or `USERPROFILE` on Windows) is not set.
+pub fn default_claude_projects_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(PathBuf::from(home).join(".claude").join("projects"));
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return Some(PathBuf::from(profile).join(".claude").join("projects"));
+    }
+    None
+}
+
 pub fn warn_ambiguous(people: &[PersonEntry]) -> Vec<String> {
     people
         .iter()
@@ -993,6 +1266,91 @@ mod tests {
 
         let detected = auto_detect_from_directory(dir, &known_people);
         assert!(detected.iter().any(|p| p.name == "Alice"));
+    }
+
+    #[test]
+    fn test_scan_manifest_authors_extracts_cargo_and_package_json() {
+        // mr-4fqp: manifest authors must surface as candidate entities so
+        // the onboarding prompt can pre-fill the people list from
+        // pyproject.toml / Cargo.toml / package.json / go.mod.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+authors = ["Alice Kim <alice@example.com>", "Bob Stone"]
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{
+  "name": "demo",
+  "author": "Carol Lee <carol@example.com>",
+  "contributors": ["Dan"]
+}
+"#,
+        )
+        .unwrap();
+
+        let candidates = scan_manifest_authors(dir);
+        let names: Vec<String> = candidates.iter().map(|p| p.name.clone()).collect();
+        assert!(
+            names.iter().any(|n| n.contains("Alice")),
+            "expected Alice from Cargo.toml, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("Bob")),
+            "expected Bob from Cargo.toml, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("Carol")),
+            "expected Carol from package.json, got {names:?}"
+        );
+
+        // Each candidate must carry a source-manifest context.
+        for c in &candidates {
+            assert!(
+                ["Cargo.toml", "package.json", "pyproject.toml", "go.mod"]
+                    .contains(&c.context.as_str()),
+                "unexpected context {}",
+                c.context
+            );
+        }
+    }
+
+    #[test]
+    fn test_scan_git_authors_returns_empty_for_non_repo() {
+        // mr-4fqp: a non-git directory must NOT panic; it must return an
+        // empty candidate set so onboarding can fall back to manifests.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        // No git init — git log will exit non-zero and we must not error.
+        let candidates = scan_git_authors(dir);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn test_scan_claude_projects_lists_subdirs() {
+        // mr-l9o5: a fake `~/.claude/projects/` must yield each subdir
+        // name as a candidate project entity. Hidden dirs and stray
+        // files must be ignored.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        std::fs::create_dir(dir.join("mempalace_rust")).unwrap();
+        std::fs::create_dir(dir.join("side-project")).unwrap();
+        std::fs::create_dir(dir.join(".hidden")).unwrap();
+        std::fs::write(dir.join("stray-file.txt"), "x").unwrap();
+
+        let names = scan_claude_projects(dir);
+        assert!(names.contains(&"mempalace_rust".to_string()));
+        assert!(names.contains(&"side-project".to_string()));
+        assert!(!names.iter().any(|n| n.starts_with('.')));
+        assert!(!names.iter().any(|n| n.contains('.')));
     }
 
     #[test]

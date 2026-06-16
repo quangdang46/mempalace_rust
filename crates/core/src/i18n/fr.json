@@ -1,0 +1,29 @@
+{
+  "name": "Français",
+  "code": "fr",
+  "status_drawers": "{count} tiroirs classés",
+  "status_wings": "{count} ailes",
+  "status_rooms": "{count} pièces",
+  "error_not_found": "Introuvable : {item}",
+  "error_no_palace": "Aucun palais trouvé à {path}",
+  "error_invalid_input": "Entrée invalide : {reason}",
+  "entity": {
+    "person_verbs": ["a dit", "a demandé", "a raconté", "a répondu", "a parlé", "a mentionné", "a noté", "a suggéré", "a recommandé", "a décidé", "a accepté", "a pensé", "a cru", "s'est souvenu", "a oublié", "a réalisé", "a découvert", "a trouvé", "a vu", "a entendu", "a appris", "savait", "a compris", "espérait", "craignait", "doutait", "supposait", "prévoyait", "a confirmé", "a nié", "a rejeté", "a approuvé", "a autorisé", "a permis", "a interdit", "a commencé", "a fini", "a terminé", "a écrit", "a créé", "a construit"],
+    "project_verbs": ["a construit", "a créé", "a développé", "a conçu", "a implémenté", "a codé", "a programmé", "a maintenu", "a géré", "a déployé", "a publié", "a lancé", "a fondé", "dirige", "soutient", "a financé", "contribue"],
+    "pronouns": ["il", "lui", "son", "sa", "ses", "elle", "ils", "elles", "leur", "leurs", "nous", "vous", "je", "me", "moi", "mon", "ma"],
+    "stopwords": ["le", "la", "les", "un", "une", "des", "et", "ou", "mais", "si", "parce que", "comme", "que", "quand", "où", "qui", "quel", "comment", "pourquoi", "ce", "cette", "ces", "est", "sont", "était", "étaient", "être", "été", "a", "ont", "avait", "faire", "fera", "peut", "doit"],
+    "candidate_pattern": "[A-ZÀ-Ÿ][a-zà-ÿ]{2,}",
+    "boundary_chars": "'’",
+    "versioned_pattern": "[A-ZÀ-Ÿ][a-zà-ÿ]{2,}-v?\\d+(?:\\.\\d+)*"
+  },
+  "cli": {
+    "init_complete": "Initialisation terminée",
+    "mine_complete": "Extraction terminée",
+    "search_no_results": "Aucun résultat trouvé",
+    "palace_not_found": "Palais introuvable. Lancez 'mempalace init <dir>' d'abord.",
+    "corpus_empty": "Aucun contenu trouvé dans le répertoire spécifié."
+  },
+  "dialect": {
+    "compression_instructions": "Compressez vos souvenirs au format AAAK pour un stockage et une récupération efficaces. AAAK est un dialecte abrégé avec perte conçu pour les agents IA."
+  }
+}

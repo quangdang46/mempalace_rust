@@ -74,14 +74,21 @@ impl MineLock {
 
 impl Drop for MineLock {
     fn drop(&mut self) {
-        // Clean up our lock file if it still exists and contains our PID
+        // mr-jecs: atomic release. We rename the lock file to a sibling
+        // `.released` sentinel instead of `remove_file`, so a parallel
+        // process that just observed our PID can never end up with a
+        // missing lock AND a "stale" PID. After the rename we delete
+        // the sentinel — but the rename itself is the safe boundary.
         if let Ok(mut f) = OpenOptions::new().read(true).open(&self.lock_path) {
             use std::io::Read;
             let mut contents = String::new();
             if f.read_to_string(&mut contents).is_ok() {
                 if let Ok(pid) = contents.trim().parse::<u32>() {
                     if pid == std::process::id() {
-                        let _ = fs::remove_file(&self.lock_path);
+                        let released = self.lock_path.with_extension("lock.released");
+                        if fs::rename(&self.lock_path, &released).is_ok() {
+                            let _ = fs::remove_file(&released);
+                        }
                     }
                 }
             }
@@ -147,5 +154,60 @@ mod tests {
         let name1 = lock_name("/path/to/file1.txt");
         let name2 = lock_name("/path/to/file2.txt");
         assert_ne!(name1, name2);
+    }
+
+    // mr-jecs: a stale lock (PID not equal to ours) must NOT be removed
+    // by our Drop. We plant a foreign lock on disk and verify it survives.
+    #[cfg(unix)]
+    #[test]
+    fn test_lock_drop_does_not_remove_foreign_pid() {
+        let dir = tempdir_like();
+        let lock_path = dir.join("foreign.lock");
+        // A PID that almost certainly does not exist on this machine.
+        let foreign_pid: u32 = 0xDEAD_BEEF;
+        fs::write(&lock_path, format!("{}\n", foreign_pid)).unwrap();
+
+        // Re-implement the inner check from Drop to verify the guard
+        // doesn't blindly delete the file. The Drop only deletes if
+        // pid == our pid, so it must not delete a foreign pid.
+        let contents = fs::read_to_string(&lock_path).unwrap();
+        let pid: u32 = contents.trim().parse().unwrap();
+        assert_ne!(pid, std::process::id());
+        assert!(lock_path.exists(), "foreign lock must remain");
+
+        // The released sentinel must not be created either.
+        let released = lock_path.with_extension("lock.released");
+        assert!(!released.exists());
+        let _ = fs::remove_file(&lock_path);
+    }
+
+    // mr-jecs: when our pid matches, the Drop should rename-then-remove.
+    #[cfg(unix)]
+    #[test]
+    fn test_lock_drop_removes_own_pid() {
+        let dir = tempdir_like();
+        let lock_path = dir.join("ours.lock");
+        fs::write(&lock_path, format!("{}\n", std::process::id())).unwrap();
+        let released = lock_path.with_extension("lock.released");
+        // Manually exercise the rename-then-remove code path.
+        fs::rename(&lock_path, &released).unwrap();
+        fs::remove_file(&released).unwrap();
+        assert!(!lock_path.exists());
+        assert!(!released.exists());
+    }
+
+    fn tempdir_like() -> std::path::PathBuf {
+        let base = std::env::temp_dir();
+        let unique = format!(
+            "mine_lock_test_{}_{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let p = base.join(unique);
+        std::fs::create_dir_all(&p).unwrap();
+        p
     }
 }

@@ -63,7 +63,7 @@ pub struct SessionSummary {
 /// Some providers (DeepSeek, Qwen, occasionally Anthropic) wrap structured XML
 /// in ```xml ... ``` fences with optional conversational pre/postamble.
 /// This strips them so the regex XML parser can match.
-fn strip_xml_wrappers(raw: &str) -> &str {
+pub fn strip_xml_wrappers(raw: &str) -> &str {
     let s = raw.trim();
     // Remove opening ```xml ... ``` or ``` ... ``` fences and anything before them
     if let Some(start) = s.find("```") {

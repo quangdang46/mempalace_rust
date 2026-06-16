@@ -71,6 +71,24 @@ impl SessionStore {
         Ok(session)
     }
 
+    /// mr-kqrs: ensure_session — idempotent session creation. If a
+    /// session with this id already exists, return it; otherwise
+    /// create a stub session with the given project/cwd.
+    ///
+    /// Used by OpenCode normalizer to satisfy the observations.session_id
+    /// FK without requiring an explicit session bootstrap step.
+    pub fn ensure_session(
+        &self,
+        id: &str,
+        project: &str,
+        cwd: &str,
+    ) -> anyhow::Result<Session> {
+        if let Some(existing) = self.get_session(id)? {
+            return Ok(existing);
+        }
+        self.create_session(id, project, cwd)
+    }
+
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<Session>> {
         let conn = self.conn.blocking_lock();
         conn.query_row(
@@ -130,6 +148,29 @@ impl SessionStore {
             .as_ref()
             .map(|img| serde_json::to_string(img))
             .transpose()?;
+        // mr-kqrs (B15): INSERT OR IGNORE the parent session row
+        // before the observation insert. The sessions table has a
+        // FOREIGN KEY constraint on observations.session_id; without
+        // this, the observation insert fails with an FK error when a
+        // caller (notably the OpenCode normalizer) drops an
+        // observation into a never-created session.
+        //
+        // We populate a minimal session row from observation metadata
+        // when one is absent. The fields are best-effort: project and
+        // cwd fall back to "unknown"/"unknown" if not annotated.
+        let now = obs.timestamp.to_rfc3339();
+        let project = obs
+            .agent_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let cwd = "unknown";
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions
+                (id, project, cwd, started_at, status, observation_count,
+                 tags, commit_shas)
+             VALUES (?1, ?2, ?3, ?4, 'active', 0, '[]', '[]')",
+            params![obs.session_id, project, cwd, now],
+        )?;
         conn.execute(
             "INSERT INTO observations (
                 id, session_id, timestamp, hook_type, tool_name, tool_input,
@@ -332,5 +373,55 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    // mr-kqrs (B15): add_observation must auto-create the parent
+    // session row when none exists. Before this fix, an observation
+    // for a never-created session would fail with an FK violation on
+    // observations.session_id.
+    #[tokio::test]
+    async fn test_add_observation_auto_creates_session() {
+        tokio::task::spawn_blocking(|| {
+            let store = SessionStore::in_memory().unwrap();
+            // Pre-condition: no "ghost" session row.
+            assert!(store.get_session("ghost").unwrap().is_none());
+            let obs = RawObservation {
+                id: "o-ghost".into(),
+                session_id: "ghost".into(),
+                timestamp: chrono::Utc::now(),
+                hook_type: HookType::PostToolUse,
+                tool_name: None,
+                tool_input: None,
+                tool_output: None,
+                user_prompt: None,
+                assistant_response: None,
+                raw: None,
+                modality: "text".into(),
+                image_data: None,
+                agent_id: Some("claude".into()),
+            };
+            // Should succeed even though the session doesn't exist yet.
+            store.add_observation(&obs).unwrap();
+            // Post-condition: the session was auto-created.
+            let session = store
+                .get_session("ghost")
+                .unwrap()
+                .expect("session should be auto-created");
+            assert_eq!(session.project, "claude");
+            assert_eq!(session.observation_count, 1);
+        })
+        .await
+        .unwrap();
+    }
+
+    // mr-kqrs: ensure_session is idempotent.
+    #[test]
+    fn test_ensure_session_idempotent() {
+        let store = SessionStore::in_memory().unwrap();
+        let s1 = store.ensure_session("dup", "proj", "/tmp").unwrap();
+        let s2 = store.ensure_session("dup", "proj", "/tmp").unwrap();
+        assert_eq!(s1.id, s2.id);
+        let list = store.list_sessions(None).unwrap();
+        assert_eq!(list.len(), 1, "ensure_session must not duplicate");
     }
 }

@@ -80,6 +80,11 @@ pub mod gemini_remote;
 #[doc(hidden)]
 pub mod cohere_remote;
 
+// mr-75zk / mr-8mjs: deferred — no qdrant backend in this build.
+// When a qdrant client crate is added, port the embedder-identity
+// manifest contract from `manifest.rs` to a `qdrant_remote.rs` and
+// surface the same three-state `EmbedderIdentity` enum.
+
 pub use manifest::{EmbeddingManifest, ManifestMismatch};
 pub use null::NullEmbedder;
 

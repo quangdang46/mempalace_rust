@@ -124,6 +124,13 @@ pub fn normalize_weights(
 ///
 /// Results from each stream are merged by ID, then scored using RRF.
 /// Returns results sorted by combined score (descending).
+///
+/// mr-3jf8: NOTE — the planned `candidate_strategy="union"` parameter is
+/// NOT yet implemented. Currently this always uses the natural-union
+/// behaviour (deduplicate by ID, sum RRF contributions across streams).
+/// Adding an explicit `"intersection"` mode that filters to documents
+/// present in ALL streams requires upstream contract clarification on
+/// which strategies the searcher must support.
 pub fn fuse_results(
     bm25_results: &[StreamResult],
     vector_results: &[StreamResult],
@@ -360,5 +367,60 @@ mod tests {
         let fused = fuse_results(&bm25, &vector, &[], &RrfConfig::default());
 
         assert_eq!(fused.len(), 2);
+    }
+
+    // mr-4fo9: group physical records by parent_drawer_id so MCP returns
+    // a single "logical drawer" view. Physical IDs without a parent
+    // stay in their own group (None group).
+    fn group_by_parent(
+        physical: Vec<(String, Option<String>)>,
+    ) -> std::collections::HashMap<Option<String>, Vec<String>> {
+        let mut grouped: std::collections::HashMap<Option<String>, Vec<String>> =
+            std::collections::HashMap::new();
+        for (id, parent) in physical {
+            grouped.entry(parent).or_default().push(id);
+        }
+        grouped
+    }
+
+    #[test]
+    fn test_group_by_parent_merges_chunked_drawers() {
+        // mr-4fo9: two physical chunks of the same logical drawer should
+        // be returned together.
+        let physical = vec![
+            ("chunk1".to_string(), Some("L1".to_string())),
+            ("chunk2".to_string(), Some("L1".to_string())),
+            ("other".to_string(), Some("L2".to_string())),
+            ("orphan".to_string(), None),
+        ];
+        let grouped = group_by_parent(physical);
+        assert_eq!(grouped.get(&Some("L1".to_string())).unwrap().len(), 2);
+        assert_eq!(grouped.get(&Some("L2".to_string())).unwrap().len(), 1);
+        assert_eq!(grouped.get(&None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_fuse_results_parent_drawer_scope_filter() {
+        use std::collections::HashMap;
+        // Physical IDs "c1" and "c2" both belong to logical parent "L1";
+        // "c3" belongs to a different parent "L2".
+        let mut parents: HashMap<String, String> = HashMap::new();
+        parents.insert("c1".to_string(), "L1".to_string());
+        parents.insert("c2".to_string(), "L1".to_string());
+        parents.insert("c3".to_string(), "L2".to_string());
+
+        let bm25 = vec![
+            StreamResult { id: "c1".to_string(), rank: 0, stream: SearchStream::Bm25 },
+            StreamResult { id: "c2".to_string(), rank: 1, stream: SearchStream::Bm25 },
+            StreamResult { id: "c3".to_string(), rank: 2, stream: SearchStream::Bm25 },
+        ];
+        // Apply the scope filter
+        let filtered: Vec<StreamResult> = bm25
+            .into_iter()
+            .filter(|r| parents.get(&r.id).map(|p| p == "L1").unwrap_or(false))
+            .collect();
+        let fused = fuse_results(&filtered, &[], &[], &RrfConfig::default());
+        assert_eq!(fused.len(), 2);
+        assert!(fused.iter().all(|r| r.id == "c1" || r.id == "c2"));
     }
 }

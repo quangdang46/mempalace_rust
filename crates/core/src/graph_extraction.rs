@@ -1,5 +1,6 @@
 use crate::knowledge_graph::KnowledgeGraph;
 use crate::llm::LlmProvider;
+use crate::summarize::strip_xml_wrappers;
 use crate::types::{CompressedObservation, GraphEdgeType, GraphNodeType};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -77,6 +78,9 @@ pub struct ExtractionResult {
 }
 
 fn parse_graph_xml(xml: &str) -> ExtractionResult {
+    // Strip markdown code fences / conversational preamble before regex matching
+    // (some providers wrap structured XML in ```xml ... ``` blocks).
+    let xml = strip_xml_wrappers(xml);
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
 
@@ -367,6 +371,16 @@ mod tests {
         let result = parse_graph_xml(xml);
         assert_eq!(result.edges.len(), 1);
         assert!((result.edges[0].weight - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_graph_xml_strips_fenced_xml() {
+        // mr-dhbd: some LLM providers (DeepSeek, Qwen) wrap the XML in
+        // ```xml ... ``` fences. parse_graph_xml should strip those and parse.
+        let xml = "Here is the extraction:\n```xml\n<entities>\n  <entity type=\"file\" name=\"fenced.rs\"/>\n</entities>\n<relationships></relationships>\n```\nDone.";
+        let result = parse_graph_xml(xml);
+        assert_eq!(result.nodes.len(), 1);
+        assert_eq!(result.nodes[0].name, "fenced.rs");
     }
 
     #[test]

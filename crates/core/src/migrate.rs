@@ -228,4 +228,209 @@ mod tests {
         let schema = "CREATE TABLE unknown (id INTEGER)";
         assert_eq!(detect_chroma_version(schema), None);
     }
+
+    #[test]
+    fn test_migrate_wings_renames_and_preserves_legacy() {
+        // mr-qioh: every drawer must have its `wing` column normalized
+        // (lowercase, separators → underscore), and the original spelling
+        // must survive under `wing_legacy` in metadata so old
+        // references still resolve.
+        let temp = tempfile::tempdir().unwrap();
+        let palace = temp.path();
+
+        // Build a minimal palace.db with a `drawers` table that matches
+        // the production schema (id, wing, metadata).
+        let db = palace.join("palace.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE drawers (
+                 id TEXT PRIMARY KEY,
+                 content TEXT NOT NULL,
+                 kind TEXT,
+                 tier TEXT,
+                 wing TEXT,
+                 room TEXT,
+                 metadata TEXT
+             );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO drawers (id, content, kind, tier, wing, room, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params!["d1", "hello world", "note", "long", "Mixed Case", "room1", "{\"foo\":\"bar\"}"],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO drawers (id, content, kind, tier, wing, room, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params!["d2", "another", "note", "long", "with-dash", "room2", "{}"],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO drawers (id, content, kind, tier, wing, room, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params!["d3", "already ok", "note", "long", "lowercase_ok", "room3", "{}"],
+        ).unwrap();
+        drop(conn);
+
+        let stats = migrate_wings(Some(palace), false).unwrap();
+        assert_eq!(stats.drawers_scanned, 3);
+        assert!(stats.renamed >= 2, "expected at least 2 renames, got {}", stats.renamed);
+
+        // Verify the rows.
+        let conn = Connection::open(&db).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, wing, metadata FROM drawers ORDER BY id")
+            .unwrap();
+        let rows: Vec<(String, String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        // d1: "Mixed Case" → "mixed_case"
+        assert_eq!(rows[0].0, "d1");
+        assert_eq!(rows[0].1, "mixed_case");
+        let meta1: serde_json::Value = serde_json::from_str(&rows[0].2).unwrap();
+        assert_eq!(meta1.get("wing_legacy").and_then(|v| v.as_str()), Some("Mixed Case"));
+
+        // d2: "with-dash" → "with_dash"
+        assert_eq!(rows[1].0, "d2");
+        assert_eq!(rows[1].1, "with_dash");
+        let meta2: serde_json::Value = serde_json::from_str(&rows[1].2).unwrap();
+        assert_eq!(meta2.get("wing_legacy").and_then(|v| v.as_str()), Some("with-dash"));
+
+        // d3: already normalized, no rename, no wing_legacy.
+        assert_eq!(rows[2].0, "d3");
+        assert_eq!(rows[2].1, "lowercase_ok");
+        let meta3: serde_json::Value = serde_json::from_str(&rows[2].2).unwrap();
+        assert!(meta3.get("wing_legacy").is_none());
+    }
 }
+
+// ---------------------------------------------------------------------------
+// mr-qioh: `migrate-wings` — normalize every drawer's `wing` column.
+// ---------------------------------------------------------------------------
+
+/// Stats from a `migrate-wings` run.
+#[derive(Debug, Clone, Serialize, Default)]
+#[non_exhaustive]
+pub struct MigrateWingsStats {
+    pub drawers_scanned: usize,
+    pub renamed: usize,
+    pub unchanged: usize,
+    pub errors: usize,
+}
+
+/// Normalize every drawer's `wing` column in `<palace>/palace.db`.
+///
+/// Each drawer's `wing` is rewritten via `config::normalize_wing_name`
+/// (lowercase, separators → `_`). The original spelling is preserved
+/// inside the drawer's `metadata` JSON as `wing_legacy` so older code
+/// paths and human readers can still find the original taxonomy.
+///
+/// Idempotent: re-running on an already-migrated palace is a no-op.
+///
+/// `dry_run=true` reports what *would* change without writing.
+pub fn migrate_wings(
+    palace_path: Option<&Path>,
+    dry_run: bool,
+) -> anyhow::Result<MigrateWingsStats> {
+    let palace_path = match palace_path {
+        Some(p) => p.to_path_buf(),
+        None => Config::load()?.palace_path,
+    };
+    let db_path = palace_path.join("palace.db");
+    if !db_path.exists() {
+        anyhow::bail!(
+            "No palace.db found at {} — run `mpr init` first",
+            db_path.display()
+        );
+    }
+    let mut conn = Connection::open(&db_path)?;
+
+    // The drawers table may have been created by an older build without a
+    // `wing` column, or not at all in a brand-new palace. We probe for
+    // both and bail with a friendly error if neither is present.
+    let has_drawers: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='drawers' LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .is_ok();
+    if !has_drawers {
+        return Ok(MigrateWingsStats::default());
+    }
+    let has_wing_col: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('drawers') WHERE name='wing' LIMIT 1",
+            [],
+            |_| Ok(()),
+        )
+        .is_ok();
+    if !has_wing_col {
+        // No wing column to normalize; nothing to do.
+        return Ok(MigrateWingsStats::default());
+    }
+
+    let mut stats = MigrateWingsStats::default();
+
+    // Snapshot all (id, wing, metadata) so we can detect changes.
+    let mut stmt = conn.prepare("SELECT id, wing, metadata FROM drawers")?;
+    let rows: Vec<(String, Option<String>, Option<String>)> = stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .map(|r| r.unwrap())
+        .collect();
+    drop(stmt);
+    stats.drawers_scanned = rows.len();
+
+    for (id, wing, metadata_json) in rows {
+        let Some(raw) = wing else {
+            continue;
+        };
+        let normalized = crate::config::normalize_wing_name(&raw);
+        if normalized == raw {
+            stats.unchanged += 1;
+            continue;
+        }
+        if !dry_run {
+            // Preserve original spelling under metadata.wing_legacy. If
+            // metadata is missing or not JSON, fall back to a fresh
+            // object so we never silently lose pre-existing fields.
+            let new_meta = upsert_legacy_wing(&metadata_json, &raw);
+            let update = conn.execute(
+                "UPDATE drawers SET wing = ?1, metadata = ?2 WHERE id = ?3",
+                rusqlite::params![normalized, new_meta, id],
+            );
+            if let Err(e) = update {
+                stats.errors += 1;
+                eprintln!("  failed to migrate {id}: {e}");
+                continue;
+            }
+        }
+        stats.renamed += 1;
+    }
+
+    if dry_run {
+        println!(
+            "  [DRY RUN] would rename {} wings ({} unchanged)",
+            stats.renamed, stats.unchanged
+        );
+    } else {
+        println!(
+            "  Renamed {} wings ({} unchanged, {} errors)",
+            stats.renamed, stats.unchanged, stats.errors
+        );
+    }
+    Ok(stats)
+}
+
+fn upsert_legacy_wing(metadata_json: &Option<String>, legacy: &str) -> String {
+    let mut obj: serde_json::Map<String, serde_json::Value> = match metadata_json {
+        Some(s) if !s.trim().is_empty() => serde_json::from_str(s).unwrap_or_default(),
+        _ => serde_json::Map::new(),
+    };
+    // Only set wing_legacy if it isn't already present — never clobber.
+    obj.entry("wing_legacy".to_string())
+        .or_insert(serde_json::Value::String(legacy.to_string()));
+    serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string())
+}
+

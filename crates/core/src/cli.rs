@@ -549,7 +549,7 @@ const INSTRUCTION_HELP: &str = include_str!("../../../instructions/help.md");
 const INSTRUCTION_STATUS: &str = include_str!("../../../instructions/status.md");
 
 #[derive(Clone, Default, Debug)]
-enum MiningMode {
+pub enum MiningMode {
     #[default]
     Projects,
     Convos,
@@ -1007,7 +1007,7 @@ fn detect_mining_mode(dir: &PathBuf) -> MiningMode {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn cmd_mine(
+pub fn cmd_mine(
     dir: &PathBuf,
     mode: &MiningMode,
     wing: Option<&str>,
@@ -2204,16 +2204,34 @@ pub fn run() -> Result<()> {
             max_chunks_per_file,
         } => {
             let palace_path = resolve_palace_path(palace_arg)?;
-            if let Err(MineAlreadyRunning { pid }) =
-                mine_palace_lock::mine_palace_lock(&palace_path)
-            {
-                eprintln!(
-                    "  Error: another mpr mine process (PID {}) already running for this palace",
-                    pid
-                );
-                std::process::exit(1);
-            }
-            cmd_mine(
+            // mr-oy1m: acquire the lock and remember its path so we
+            // can release it via the same atomic-rename path used by
+            // `mine_lock.rs` (see `release_palace_lock`).
+            let lock_path = match mine_palace_lock::mine_palace_lock_with_path(&palace_path) {
+                Ok(p) => p,
+                Err(MineAlreadyRunning { pid }) => {
+                    eprintln!(
+                        "  Error: another mpr mine process (PID {}) already running for this palace",
+                        pid
+                    );
+                    eprintln!("  Holder PID: {}", pid);
+                    eprintln!(
+                        "  If you believe this is stale, remove: {}",
+                        std::env::var_os("HOME")
+                            .map(|h| std::path::PathBuf::from(h)
+                                .join(".mempalace")
+                                .join("locks")
+                                .display()
+                                .to_string())
+                            .unwrap_or_else(|| "<lock dir>".to_string())
+                    );
+                    // EX_TEMPFAIL (75) —> agents can retry without it
+                    // looking like a hard failure. mr-oy1m requires a
+                    // non-zero exit distinct from generic errors.
+                    std::process::exit(75);
+                }
+            };
+            let mine_result = cmd_mine(
                 dir,
                 mode,
                 wing.as_deref(),
@@ -2226,7 +2244,12 @@ pub fn run() -> Result<()> {
                 extract.as_deref(),
                 *redetect_origin,
                 *max_chunks_per_file,
-            )?
+            );
+            // Always release the lock, even on error. mr-jecs
+            // guarantees the release only succeeds when the PID
+            // inside the file is still ours.
+            mine_palace_lock::release_palace_lock(&lock_path);
+            mine_result?
         }
         Commands::Search {
             query,

@@ -1,0 +1,29 @@
+{
+  "name": "Español",
+  "code": "es",
+  "status_drawers": "{count} cajones archivados",
+  "status_wings": "{count} alas",
+  "status_rooms": "{count} habitaciones",
+  "error_not_found": "No encontrado: {item}",
+  "error_no_palace": "No se encontró ningún palacio en {path}",
+  "error_invalid_input": "Entrada inválida: {reason}",
+  "entity": {
+    "person_verbs": ["dijo", "preguntó", "contó", "respondió", "habló", "mencionó", "notó", "sugirió", "recomendó", "decidió", "acordó", "pensó", "creyó", "recordó", "olvidó", "se dio cuenta", "descubrió", "encontró", "vio", "oyó", "aprendió", "sabía", "entendió", "esperaba", "temía", "dudaba", "supuso", "confirmó", "negó", "rechazó", "aprobó", "autorizó", "permitió", "prohibió", "comenzó", "terminó", "escribió", "creó", "construyó"],
+    "project_verbs": ["construyó", "creó", "desarrolló", "diseñó", "implementó", "programó", "mantuvo", "gestionó", "desplegó", "publicó", "lanzó", "fundó", "dirige", "apoya", "financió", "contribuye"],
+    "pronouns": ["él", "lo", "le", "su", "sus", "ella", "ellos", "ellas", "nos", "vosotros", "ustedes", "yo", "me", "mi", "mis"],
+    "stopwords": ["el", "la", "los", "las", "un", "una", "unos", "unas", "y", "o", "pero", "si", "porque", "como", "que", "cuando", "donde", "quien", "cuál", "cómo", "por qué", "este", "esta", "estos", "estas", "es", "son", "era", "eran", "ser", "sido", "ha", "han", "había", "hacer", "hará", "puede", "debe"],
+    "candidate_pattern": "[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}",
+    "boundary_chars": "",
+    "versioned_pattern": "[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}-v?\\d+(?:\\.\\d+)*"
+  },
+  "cli": {
+    "init_complete": "Inicialización completa",
+    "mine_complete": "Minería completa",
+    "search_no_results": "No se encontraron resultados",
+    "palace_not_found": "No se encontró palacio. Ejecute 'mempalace init <dir>' primero.",
+    "corpus_empty": "No se encontró contenido en el directorio especificado."
+  },
+  "dialect": {
+    "compression_instructions": "Comprima sus recuerdos en formato AAAK para un almacenamiento y recuperación eficientes. AAAK es un dialecto de abreviaturas con pérdida diseñado para agentes de IA."
+  }
+}

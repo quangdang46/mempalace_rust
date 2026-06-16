@@ -138,6 +138,10 @@ impl LlmProvider for OpenAICompatProvider {
                 {"role": "user", "content": user},
             ],
             "temperature": 0.1,
+            // B19: explicit stream:false so providers like OpenRouter
+            // (which default to streaming) don't return SSE chunks that
+            // the JSON parser can't read.
+            "stream": false,
         });
 
         let mut request = self.client.post(&url);
@@ -336,5 +340,28 @@ mod tests {
         } else {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
+    }
+
+    #[test]
+    fn test_body_includes_stream_false() {
+        // B19 / mr-suzh: openai_compat_provider must send stream:false
+        // so OpenRouter / DeepSeek / etc. (which default to streaming) return
+        // a normal JSON response. We assert the field is explicitly set
+        // and serializes to JSON `false`.
+        let body = serde_json::json!({
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "user"},
+            ],
+            "temperature": 0.1,
+            "stream": false,
+        });
+        assert_eq!(
+            body.get("stream").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        let serialized = serde_json::to_string(&body).unwrap();
+        assert!(serialized.contains("\"stream\":false"));
     }
 }

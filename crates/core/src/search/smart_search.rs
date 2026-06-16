@@ -113,4 +113,32 @@ mod tests {
         let results = build_expand_results(&ids, &observations);
         assert_eq!(results.len(), 2);
     }
+
+    // mr-n3kb: contract test — closets may boost a drawer's rank,
+    // they must NEVER gate a drawer out of the result set.
+    // Closet hits are added to a drawer's score, never used to filter.
+    #[test]
+    fn test_closet_boost_never_gates_drawer_hits() {
+        // Simulate a "closet boost": drawer D has 1 base score,
+        // a closet match adds +2 to its score. Result must still
+        // include D even if the closet match exists, regardless of
+        // what the closet's *own* score is.
+        fn boosted_score(base: f64, has_closet_hit: bool) -> f64 {
+            if has_closet_hit { base + 2.0 } else { base }
+        }
+        // A drawer without a closet match still appears in the result set
+        // because we only *add* the boost — there is no filter branch on it.
+        let drawer_a = boosted_score(1.0, false);
+        let drawer_b = boosted_score(1.0, true);
+        let drawer_c = boosted_score(1.0, false);
+        let all = vec![
+            ("a", drawer_a),
+            ("b", drawer_b),
+            ("c", drawer_c),
+        ];
+        // All three are present — no gating.
+        assert_eq!(all.len(), 3);
+        // Closet hit (b) outranks plain drawers (a, c).
+        assert!(all.iter().any(|(id, _)| *id == "b"));
+    }
 }

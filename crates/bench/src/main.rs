@@ -3,7 +3,8 @@ use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
 use mempalace_bench::dataset::{
-    download_from_huggingface, load_from_file, Granularity, LOMEMEVAL_FILE,
+    download_from_huggingface, load_from_file, multilingual_sample, sample_to_entry,
+    is_supported_language, Granularity, LOMEMEVAL_FILE,
 };
 use mempalace_bench::runner::{run_benchmark, BenchmarkConfig};
 
@@ -46,6 +47,19 @@ struct Args {
     /// HuggingFace cache directory.
     #[arg(long, default_value = None)]
     cache_dir: Option<PathBuf>,
+
+    /// mr-d4k3: ISO-639-1 code for a multilingual sample (de/fr/hi/it/ko/ru).
+    /// When set, the bench runs the multilingual sample instead of the
+    /// English LongMemEval file.
+    #[arg(long, default_value = None)]
+    language: Option<String>,
+
+    /// mr-d4k3: number of context documents to include per question
+    /// (controls the corpus size for the multilingual samples, which
+    /// ship a fixed small set; this flag scales the bench up by
+    /// repeating the sample for stress tests).
+    #[arg(long, default_value = "1")]
+    num_ctx: usize,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, Default)]
@@ -84,8 +98,33 @@ async fn main() -> Result<()> {
 
     let cache_dir = args.cache_dir.unwrap_or_else(default_cache_dir);
 
-    // Load or download dataset
-    let entries = if let Some(path) = &args.dataset_path {
+    // mr-d4k3: --language short-circuits the LongMemEval load. We
+    // build a synthetic benchmark entry from the multilingual sample
+    // and repeat it `num_ctx` times to give the retriever more
+    // context to sift through.
+    let entries = if let Some(lang) = &args.language {
+        if !is_supported_language(lang) {
+            anyhow::bail!(
+                "unsupported language {:?}; supported: de, fr, hi, it, ko, ru",
+                lang
+            );
+        }
+        let sample = multilingual_sample(lang)
+            .ok_or_else(|| anyhow::anyhow!("no multilingual sample for {lang}"))?;
+        let entries: Vec<_> = (0..args.num_ctx.max(1))
+            .map(|i| {
+                let mut e = sample_to_entry(&sample);
+                e.question_id = format!("{lang}-q{}", i + 1);
+                e
+            })
+            .collect();
+        println!(
+            "Loaded {} multilingual ({}) sample(s)",
+            entries.len(),
+            lang
+        );
+        entries
+    } else if let Some(path) = &args.dataset_path {
         if !path.exists() {
             anyhow::bail!("Dataset file not found: {:?}", path);
         }

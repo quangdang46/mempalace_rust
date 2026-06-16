@@ -245,6 +245,13 @@ pub struct Config {
     /// "all-MiniLM-L6-v2" = fast English embeddings
     #[serde(default = "default_embedding_model")]
     pub embedding_model: String,
+    /// mr-tsk5 (RFC 001): embedder-identity strict mode.
+    /// When `true` (default), a fingerprint mismatch on palace open
+    /// returns a hard `Err`. When `false`, the open proceeds with a
+    /// `tracing::warn!` and the in-memory index is rebuilt
+    /// incrementally on the next batch of inserts.
+    #[serde(default = "default_true")]
+    pub embedder_identity_strict: bool,
     #[serde(default)]
     pub languages: Vec<String>,
     #[serde(default)]
@@ -392,6 +399,7 @@ impl Default for Config {
             llm_consent_given: false,
             max_backups: None,
             hooks_auto_save: true,
+            embedder_identity_strict: false,
         }
     }
 }
@@ -755,6 +763,7 @@ mod tests {
             topic_wings: default_topic_wings(),
             hall_keywords: default_hall_keywords(),
             embedding_model: default_embedding_model(),
+            embedder_identity_strict: true,
             languages: vec![],
             llm_provider: None,
             llm_model: None,
@@ -815,6 +824,7 @@ mod tests {
             topic_wings: default_topic_wings(),
             hall_keywords: default_hall_keywords(),
             embedding_model: default_embedding_model(),
+            embedder_identity_strict: true,
             languages: vec![],
             llm_provider: None,
             llm_model: None,

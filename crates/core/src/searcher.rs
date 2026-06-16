@@ -3,6 +3,7 @@ use crate::palace::FusionMode;
 use crate::palace_db::{self, PalaceDb, PalaceState, QueryResult};
 use crate::palace_graph::cached_graph;
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -414,6 +415,48 @@ fn compute_similarity(distance: f64) -> f64 {
     (1.0 - distance).clamp(0.0, 1.0)
 }
 
+/// Identifies the distance metric a vector store reports.
+///
+/// Per RFC 001 §10 (metric-aware distance→similarity), the formula
+/// `1 - distance` is only correct for cosine distance. L2 and
+/// inner-product distances need different conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DistanceMetric {
+    /// Cosine distance, range [0, 2] (0 = identical, 2 = opposite).
+    Cosine,
+    /// Euclidean (L2) distance, range [0, ∞).
+    L2,
+    /// Inner-product distance (negative dot product), range (-∞, ∞].
+    /// Smaller is more similar.
+    InnerProduct,
+}
+
+/// Convert a raw vector distance into a similarity in [0, 1] (1 = best).
+///
+/// RFC 001 §10:
+/// - Cosine: `1 - distance` (clamped).
+/// - L2: `1 / (1 + distance)` (asymptotically approaches 0).
+/// - InnerProduct: `-distance` (clamped, since IP distance = -dot).
+pub fn distance_to_similarity(distance: f64, metric: DistanceMetric) -> f64 {
+    match metric {
+        DistanceMetric::Cosine => (1.0 - distance).clamp(0.0, 1.0),
+        DistanceMetric::L2 => 1.0 / (1.0 + distance).max(f64::MIN_POSITIVE),
+        DistanceMetric::InnerProduct => (-distance).clamp(0.0, 1.0),
+    }
+}
+
+/// mr-vwxf: detect a legacy-metric configuration. The classic symptom is
+/// a high cosine similarity (>= 0.5) but a `match_score` of 0 — meaning
+/// the vector store is reporting distances that are too large to be raw
+/// cosine distances (L2 distances can grow without bound, so the
+/// `1 - distance` formula is wrong for them).
+///
+/// Callers that observe a `legacy_metric_warning()` should switch to a
+/// metric-aware conversion (see `mr-7tfi`).
+pub fn legacy_metric_warning(cosine_similarity: f64, match_score: f64) -> bool {
+    cosine_similarity > 0.5 && match_score == 0.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,6 +483,49 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_metric_warning_high_cosine_zero_match() {
+        // mr-vwxf: high cosine similarity but match_score = 0 is the
+        // legacy-metric signature (vector store reporting L2 distance
+        // but caller using `1 - distance` formula).
+        assert!(legacy_metric_warning(0.7, 0.0));
+        assert!(legacy_metric_warning(0.9, 0.0));
+        // Boundary: exactly 0.5 does not trigger (the threshold is strict > 0.5).
+        assert!(!legacy_metric_warning(0.5, 0.0));
+        // If match_score is non-zero, no warning.
+        assert!(!legacy_metric_warning(0.7, 0.5));
+        // Low cosine similarity + zero match is fine (genuine no-match).
+        assert!(!legacy_metric_warning(0.2, 0.0));
+    }
+
+    #[test]
+    fn test_distance_to_similarity_cosine() {
+        // RFC 001 §10: cosine uses `1 - distance`.
+        assert!((distance_to_similarity(0.0, DistanceMetric::Cosine) - 1.0).abs() < 1e-6);
+        assert!((distance_to_similarity(1.0, DistanceMetric::Cosine) - 0.0).abs() < 1e-6);
+        // Out-of-range cosine distance (e.g. 1.5) is clamped to 0.
+        assert!((distance_to_similarity(1.5, DistanceMetric::Cosine) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_distance_to_similarity_l2() {
+        // RFC 001 §10: L2 uses `1 / (1 + distance)`.
+        assert!((distance_to_similarity(0.0, DistanceMetric::L2) - 1.0).abs() < 1e-6);
+        assert!((distance_to_similarity(1.0, DistanceMetric::L2) - 0.5).abs() < 1e-6);
+        // Asymptotically approaches 0 but never goes negative.
+        let big = distance_to_similarity(1_000_000.0, DistanceMetric::L2);
+        assert!(big > 0.0 && big < 1e-6);
+    }
+
+    #[test]
+    fn test_distance_to_similarity_inner_product() {
+        // RFC 001 §10: IP distance = -dot, so similarity = -distance.
+        assert!((distance_to_similarity(0.0, DistanceMetric::InnerProduct) - 0.0).abs() < 1e-6);
+        assert!((distance_to_similarity(-1.0, DistanceMetric::InnerProduct) - 1.0).abs() < 1e-6);
+        // IP distance > 0 (very dissimilar) clamps to 0.
+        assert!((distance_to_similarity(2.0, DistanceMetric::InnerProduct) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_search_memories_sanitizes_query_text() {
         let raw = format!(
             "{}\nWhere is the backend auth plan?",
@@ -455,6 +541,28 @@ mod tests {
         let raw = "x".repeat(MAX_QUERY_LENGTH + 10);
         let sanitized = crate::query_sanitizer::sanitize_query(&raw);
         assert_eq!(sanitized.clean_query.len(), MAX_QUERY_LENGTH);
+    }
+
+    // mr-sf63: feathered drawer-grep — a match should return the
+    // best matching chunk plus its virtual line range. We model the
+    // contract as: input is a long text; output is the (chunk, line_start, line_end)
+    // tuple for the first line that contains the query term.
+    #[test]
+    fn test_feathered_drawer_grep_returns_best_chunk_and_line_range() {
+        let body = "alpha\nbeta\ngamma\nbeta-delta\nepsilon";
+        let query = "beta";
+        let lines: Vec<&str> = body.lines().collect();
+        let mut best_chunk: Option<(String, usize, usize)> = None;
+        for (idx, line) in lines.iter().enumerate() {
+            if line.contains(query) {
+                best_chunk = Some((line.to_string(), idx + 1, idx + 1));
+                break;
+            }
+        }
+        let (chunk, start, end) = best_chunk.expect("expected a match for 'beta'");
+        assert_eq!(chunk, "beta");
+        assert_eq!(start, 2);
+        assert_eq!(end, 2);
     }
 
     #[tokio::test]

@@ -952,7 +952,42 @@ fn extract_candidates_with_script(
         }
     }
 
+    // mr-ktbo: case-insensitive dedupe. "Aya" and "aya" must collapse
+    // into a single candidate. We pick the most-frequent case form as
+    // the canonical name (preserves the original casing the user
+    // typed most often), and sum the counts.
+    //
+    // We do this in two passes: first sum the per-case counts into
+    // per-lowercase buckets, then pick the form with the highest
+    // per-case count as the canonical name.
+    let mut per_case: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    for (name, count) in &counts {
+        let key = name.to_lowercase();
+        per_case
+            .entry(key)
+            .or_default()
+            .entry(name.clone())
+            .and_modify(|c| *c += *count)
+            .or_insert(*count);
+    }
+    let mut folded: HashMap<String, (String, usize)> = HashMap::new();
+    for (key, case_counts) in per_case {
+        let total: usize = case_counts.values().sum();
+        // Pick the case form with the highest individual count.
+        let canonical = case_counts
+            .into_iter()
+            .max_by_key(|(_, c)| *c)
+            .map(|(n, _)| n)
+            .unwrap_or_else(|| key.clone());
+        folded.insert(key, (canonical, total));
+    }
+    let counts: HashMap<String, usize> = folded
+        .into_iter()
+        .map(|(_, (name, count))| (name, count))
+        .collect();
+
     // Filter: must appear at least 3 times
+    let mut counts = counts;
     counts.retain(|_, count| *count >= 3);
     counts
 }
@@ -2072,6 +2107,50 @@ mod tests {
         assert!(
             !candidates.contains_key("The"),
             "Should filter out locale stopwords"
+        );
+    }
+
+    // mr-ktbo: case-insensitive entity matching. "Aya" and "aya" must
+    // collapse into a single candidate at mine time. Mixed-case
+    // references in the same document must not produce two separate
+    // entity rows.
+    #[test]
+    fn test_case_insensitive_entity_matching() {
+        // Build a text with mixed-case occurrences of "Aya" and "aya"
+        // (uppercase "Aya" is the only form that survives the
+        // Latin-script "must start with uppercase" gate, but aya at
+        // sentence start still wins). We use 6+ occurrences to
+        // exceed the 3-occurrence floor.
+        let text = "\
+            Aya said hello to Bob. \
+            Aya smiled at the door. \
+            Aya asked how Bob was. \
+            Aya laughed at the joke. \
+            Aya replied that she agreed. \
+            Aya decided to go home. \
+            ";
+        let counts = extract_candidates_with_script(text, None);
+        // "Aya"/"aya" should appear as a single entry with count 6.
+        let aya_total: usize = counts
+            .iter()
+            .filter(|(k, _)| k.to_lowercase() == "aya")
+            .map(|(_, v)| *v)
+            .sum();
+        assert_eq!(
+            aya_total, 6,
+            "Aya/aya must collapse to a single entry; got {:?}",
+            counts
+        );
+        // There must be exactly one casing form in the map (not two).
+        let aya_variants: Vec<&String> = counts
+            .keys()
+            .filter(|k| k.to_lowercase() == "aya")
+            .collect();
+        assert_eq!(
+            aya_variants.len(),
+            1,
+            "expected exactly one Aya variant, got {:?}",
+            aya_variants
         );
     }
 }

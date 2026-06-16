@@ -694,4 +694,57 @@ mod tests {
         let ctx = collect_contexts(&corpus, "Alice", 2);
         assert!(ctx.len() <= 2);
     }
+
+    // mr-o5nq: the think flag is plumbed through classify() →
+    // classify_with_think(). A provider that overrides the latter
+    // should observe the flag.
+    #[test]
+    fn test_think_flag_is_forwarded_to_provider() {
+        use crate::llm_client::{LlmProvider, LlmResponse};
+        use std::sync::Mutex;
+
+        struct CapturingProvider {
+            name: String,
+            think: Mutex<Option<bool>>,
+        }
+        impl LlmProvider for CapturingProvider {
+            fn classify_with_think(
+                &self,
+                _system: &str,
+                _user: &str,
+                _json_mode: bool,
+                think: bool,
+            ) -> Result<LlmResponse, crate::llm_client::LlmError> {
+                *self.think.lock().unwrap() = Some(think);
+                Ok(LlmResponse {
+                    text: "{}".into(),
+                    model: "test-model".into(),
+                    provider: "test".into(),
+                    raw: serde_json::json!({}),
+                })
+            }
+            fn check_available(&self) -> crate::llm_client::Availability {
+                (true, "ok".to_string())
+            }
+            fn name(&self) -> &str {
+                &self.name
+            }
+            fn model(&self) -> &str {
+                "test-model"
+            }
+            fn endpoint(&self) -> Option<String> {
+                Some("http://localhost:0".into())
+            }
+        }
+        let p = CapturingProvider {
+            name: "test".into(),
+            think: Mutex::new(None),
+        };
+        // Default classify() folds to think=false.
+        let _ = p.classify("sys", "usr", true);
+        assert_eq!(*p.think.lock().unwrap(), Some(false));
+        // classify_with_think() forwards the flag verbatim.
+        let _ = p.classify_with_think("sys", "usr", true, true);
+        assert_eq!(*p.think.lock().unwrap(), Some(true));
+    }
 }

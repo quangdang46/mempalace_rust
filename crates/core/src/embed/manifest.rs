@@ -204,6 +204,70 @@ impl EmbeddingManifest {
         }
         Ok(())
     }
+
+    /// mr-tsk5 (RFC 001): three-state embedder-identity check.
+    ///
+    /// Returns:
+    ///   * `EmbedderIdentity::Match` — runtime embedder matches the
+    ///     recorded manifest. Open the palace normally.
+    ///   * `EmbedderIdentity::MismatchBlocking` — fingerprint differs
+    ///     (different model). When `strict`, the caller must surface
+    ///     this as an error. When not strict, the caller proceeds with
+    ///     a warning and triggers a background rebuild.
+    ///   * `EmbedderIdentity::MismatchDimension` — the runtime
+    ///     embedder has a different `dim`. This is **always**
+    ///     blocking because the on-disk HNSW index uses `dim` as a
+    ///     hard schema; re-embedding is the only recovery.
+    pub fn classify_against(&self, embedder: &dyn Embedder) -> EmbedderIdentity {
+        if self.dim != embedder.dim() {
+            return EmbedderIdentity::MismatchDimension {
+                recorded: self.dim,
+                runtime: embedder.dim(),
+            };
+        }
+        if self.fingerprint != embedder.fingerprint() {
+            return EmbedderIdentity::MismatchBlocking {
+                recorded: self.fingerprint.clone(),
+                runtime: embedder.fingerprint().to_string(),
+            };
+        }
+        EmbedderIdentity::Match
+    }
+}
+
+/// mr-tsk5 (RFC 001): three-state outcome of a palace-open
+/// embedder-identity check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EmbedderIdentity {
+    /// Fingerprint + dim match.
+    Match,
+    /// Fingerprint differs (e.g. user swapped BGE-Small for E5-Small
+    /// at the same dim). The caller decides strict vs lenient via
+    /// [`crate::config::Config::embedder_identity_strict`].
+    MismatchBlocking {
+        recorded: String,
+        runtime: String,
+    },
+    /// Dimensionality differs. Always blocking — the on-disk index
+    /// cannot be reused.
+    MismatchDimension {
+        recorded: usize,
+        runtime: usize,
+    },
+}
+
+impl EmbedderIdentity {
+    /// True when the caller must refuse to open the palace.
+    /// Dimension mismatches are always blocking; fingerprint
+    /// mismatches depend on the strict flag.
+    pub fn is_blocking(&self, strict: bool) -> bool {
+        match self {
+            EmbedderIdentity::Match => false,
+            EmbedderIdentity::MismatchDimension { .. } => true,
+            EmbedderIdentity::MismatchBlocking { .. } => strict,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -403,5 +467,60 @@ mod tests {
         assert_eq!(value["fingerprint"], "null:384");
         assert!(value["created_at"].is_string());
         assert_eq!(value["mempalace_version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    // mr-tsk5 (RFC 001): three-state state machine.
+    //
+    //   Match            → not blocking, regardless of strict
+    //   MismatchBlocking → blocking iff strict
+    //   MismatchDimension → always blocking
+    #[test]
+    fn test_embedder_identity_three_state() {
+        let recorded = EmbeddingManifest::from_embedder(
+            &FixedEmbedder {
+                dim: 384,
+                fingerprint: "bge:384".into(),
+            },
+            "bge",
+        );
+
+        // 1. Match: same dim + same fingerprint.
+        let same = FixedEmbedder {
+            dim: 384,
+            fingerprint: "bge:384".into(),
+        };
+        assert_eq!(
+            recorded.classify_against(&same),
+            EmbedderIdentity::Match
+        );
+        assert!(!recorded.classify_against(&same).is_blocking(true));
+        assert!(!recorded.classify_against(&same).is_blocking(false));
+
+        // 2. MismatchBlocking: same dim, different fingerprint.
+        let swapped = FixedEmbedder {
+            dim: 384,
+            fingerprint: "e5:384".into(),
+        };
+        let outcome = recorded.classify_against(&swapped);
+        assert!(matches!(
+            outcome,
+            EmbedderIdentity::MismatchBlocking { .. }
+        ));
+        // Strict → blocking. Lenient → not blocking.
+        assert!(outcome.is_blocking(true));
+        assert!(!outcome.is_blocking(false));
+
+        // 3. MismatchDimension: different dim. Always blocking.
+        let bigger = FixedEmbedder {
+            dim: 768,
+            fingerprint: "bge:384".into(),
+        };
+        let outcome = recorded.classify_against(&bigger);
+        assert!(matches!(
+            outcome,
+            EmbedderIdentity::MismatchDimension { .. }
+        ));
+        assert!(outcome.is_blocking(true));
+        assert!(outcome.is_blocking(false));
     }
 }
