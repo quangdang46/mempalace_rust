@@ -79,20 +79,19 @@ Single binary `mpr` installed to `/usr/local/bin/`. The installer auto-detects y
 ### Windows (native PowerShell)
 
 ```powershell
-# Download the latest Windows binary from releases
-# https://github.com/quangdang46/mempalace_rust/releases
-# Extract mpr.exe and add to PATH, or use:
-iwr -Uri "https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.ps1" | iex
+irm https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.ps1 | iex
 ```
 
-MemPalace runs natively on Windows 10/11 (x86_64 and ARM). The PowerShell installer handles PATH setup and MCP configuration for Windows AI tools (Claude Code via WSL, Cursor, VS Code).
+Mặc định cài vào `%USERPROFILE%\.mempalace\bin\mpr.exe` và thêm vào PATH. Hỗ trợ biến môi trường:
 
-**PowerShell note:** If `npx` caches a stale version, clear with:
 ```powershell
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\npm-cache\_npx"
+$env:MPR_VERSION = "v0.4.0"   # pin version
+$env:MPR_PREFIX  = "D:\tools" # thay đổi thư mục cài
 ```
 
-Or force the latest with `npx -y mempalace@latest`.
+Hoặc [tải tay từ releases](https://github.com/quangdang46/mempalace_rust/releases): chọn `mpr-windows-x86_64.zip`, giải nén, chạy `mpr.exe`.
+
+Chạy native trên Windows 10/11 x86_64. ARM cần WSL2 (chưa có native ARM build).
 
 ### From source
 
