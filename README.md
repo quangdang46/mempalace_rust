@@ -82,16 +82,16 @@ Single binary `mpr` installed to `/usr/local/bin/`. The installer auto-detects y
 irm https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.ps1 | iex
 ```
 
-Mặc định cài vào `%USERPROFILE%\.mempalace\bin\mpr.exe` và thêm vào PATH. Hỗ trợ biến môi trường:
+Installs to `%USERPROFILE%\.mempalace\bin\mpr.exe` and adds to PATH. Supports env overrides:
 
 ```powershell
-$env:MPR_VERSION = "v0.4.0"   # pin version
-$env:MPR_PREFIX  = "D:\tools" # thay đổi thư mục cài
+$env:MPR_VERSION = "v0.4.0"   # pin a specific version
+$env:MPR_PREFIX  = "D:\tools" # custom install directory
 ```
 
-Hoặc [tải tay từ releases](https://github.com/quangdang46/mempalace_rust/releases): chọn `mpr-windows-x86_64.zip`, giải nén, chạy `mpr.exe`.
+Or [download manually from releases](https://github.com/quangdang46/mempalace_rust/releases): grab `mpr-windows-x86_64.zip`, extract, run `mpr.exe`.
 
-Chạy native trên Windows 10/11 x86_64. ARM cần WSL2 (chưa có native ARM build).
+Runs natively on Windows 10/11 x86_64. ARM requires WSL2 (no native ARM build yet).
 
 ### From source
 
