@@ -218,8 +218,16 @@ mod tests {
     fn test_mine_already_running_contains_pid() {
         let err = MineAlreadyRunning { pid: 4242 };
         let formatted = format!("{}", err);
-        assert!(formatted.contains("4242"), "Display must include PID, got: {}", formatted);
+        assert!(
+            formatted.contains("4242"),
+            "Display must include PID, got: {}",
+            formatted
+        );
         let debug = format!("{:?}", err);
-        assert!(debug.contains("4242"), "Debug must include PID, got: {}", debug);
+        assert!(
+            debug.contains("4242"),
+            "Debug must include PID, got: {}",
+            debug
+        );
     }
 }

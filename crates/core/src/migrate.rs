@@ -270,7 +270,11 @@ mod tests {
 
         let stats = migrate_wings(Some(palace), false).unwrap();
         assert_eq!(stats.drawers_scanned, 3);
-        assert!(stats.renamed >= 2, "expected at least 2 renames, got {}", stats.renamed);
+        assert!(
+            stats.renamed >= 2,
+            "expected at least 2 renames, got {}",
+            stats.renamed
+        );
 
         // Verify the rows.
         let conn = Connection::open(&db).unwrap();
@@ -287,13 +291,19 @@ mod tests {
         assert_eq!(rows[0].0, "d1");
         assert_eq!(rows[0].1, "mixed_case");
         let meta1: serde_json::Value = serde_json::from_str(&rows[0].2).unwrap();
-        assert_eq!(meta1.get("wing_legacy").and_then(|v| v.as_str()), Some("Mixed Case"));
+        assert_eq!(
+            meta1.get("wing_legacy").and_then(|v| v.as_str()),
+            Some("Mixed Case")
+        );
 
         // d2: "with-dash" → "with_dash"
         assert_eq!(rows[1].0, "d2");
         assert_eq!(rows[1].1, "with_dash");
         let meta2: serde_json::Value = serde_json::from_str(&rows[1].2).unwrap();
-        assert_eq!(meta2.get("wing_legacy").and_then(|v| v.as_str()), Some("with-dash"));
+        assert_eq!(
+            meta2.get("wing_legacy").and_then(|v| v.as_str()),
+            Some("with-dash")
+        );
 
         // d3: already normalized, no rename, no wing_legacy.
         assert_eq!(rows[2].0, "d3");
@@ -374,9 +384,7 @@ pub fn migrate_wings(
     // Snapshot all (id, wing, metadata) so we can detect changes.
     let mut stmt = conn.prepare("SELECT id, wing, metadata FROM drawers")?;
     let rows: Vec<(String, Option<String>, Option<String>)> = stmt
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .map(|r| r.unwrap())
         .collect();
     drop(stmt);
@@ -433,4 +441,3 @@ fn upsert_legacy_wing(metadata_json: &Option<String>, legacy: &str) -> String {
         .or_insert(serde_json::Value::String(legacy.to_string()));
     serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string())
 }
-

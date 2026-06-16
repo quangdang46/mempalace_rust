@@ -1,5 +1,69 @@
 # Changelog
 
+## v0.4.0 (2026-06-16)
+
+### Upstream Port — mempalace 3.4.1 + agentmemory 0.9.27
+
+Complete port of 87 upstream fixes and features across 10 waves + 3
+additional beads, with 20 review-swarm findings addressed.
+
+For the full per-issue breakdown, see `93ba103` (wave 1), `303dfdd` (wave
+2), `e3a9bc8` (3 beads), and `0310dec` (review fixes).
+
+### Metrics
+
+- **46 files changed**, 5,298+ insertions
+- **1,321 tests** (1,275 → 1,321)
+- **87 port issues** closed, **3 beads** closed, **20 review findings** fixed
+
+### Security & Privacy
+- Privacy consent gate for env-fallback LLM API keys (P0)
+- External LLM call warning with Tailscale CGNAT whitelist
+- MCP `tool_mine` now canonicalizes paths (prevents path traversal)
+- Lock holder PID no longer leaked in stderr
+
+### Storage
+- Sharded index persistence with manifest commit/rollback
+- HNSW stale-quarantine (SIGSEGV prevention)
+- `max_backups` retention (env `MEMPALACE_MAX_BACKUPS`, default 10)
+- Atomic `EntityRegistry::save()`, per-target PID guard
+
+### Search & KG
+- Metric-aware distance→similarity (cosine/L2/inner product)
+- FollowupTracker diagnostic for smart-search
+- BM25 hybrid rerank with legacy-metric warning
+- Cross-project memory isolation (per-project filter)
+- KG cache canonicalize, temporal date validation, inverted interval rejection
+
+### CLI & MCP
+- 10 new CLI subcommands (context, actions, frontier, signals, import,
+  snapshot, profile, diagnose, forget, evolve)
+- `mempalace_mine`, `mempalace_observe`, `mempalace_list_hallways`,
+  `mempalace_delete_hallway` MCP tools
+- Background task runner with retention sweep
+- `--no-background` flag, `hooks.auto_save` config
+
+### i18n & Cross-Lingual
+- 9 new locale files (fr, es, de, zh-cn, zh-tw, hi, ja, ko, be)
+- Embeddinggemma-300m ONNX embedder stub
+- Multilingual benchmark datasets (DE/FR/HI/IT/KO/RU)
+
+### Documentation
+- CHANGELOG.md updated throughout
+- 9 new i18n locale files
+
+## v0.3.1 (2026-06-11)
+
+### Fixes
+- CI build fixes, GitHub API parsing robustness
+- Search fixes (BM25-only achieves 95.79% R@5, RRF_K=25)
+
+## v0.3.0 (2026-06-08)
+
+### Features
+- AgentMemory migration to native mempalace types
+- 50+ enhancements across storage, search, graph, CLI, MCP
+
 ## v0.2.0 (2026-06-07)
 
 ### Coordination System (PRs #37–#48)

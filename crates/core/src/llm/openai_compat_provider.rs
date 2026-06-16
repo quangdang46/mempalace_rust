@@ -357,10 +357,7 @@ mod tests {
             "temperature": 0.1,
             "stream": false,
         });
-        assert_eq!(
-            body.get("stream").and_then(|v| v.as_bool()),
-            Some(false)
-        );
+        assert_eq!(body.get("stream").and_then(|v| v.as_bool()), Some(false));
         let serialized = serde_json::to_string(&body).unwrap();
         assert!(serialized.contains("\"stream\":false"));
     }

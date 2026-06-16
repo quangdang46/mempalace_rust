@@ -429,8 +429,18 @@ mod tests {
         }
 
         // Boundary chars / stopwords from the zh-CN pack must load too.
-        assert!(!manager.get_locale("zh-CN").unwrap().entity.boundary_chars.is_empty());
-        assert!(!manager.get_locale("zh-CN").unwrap().entity.stopwords.is_empty());
+        assert!(!manager
+            .get_locale("zh-CN")
+            .unwrap()
+            .entity
+            .boundary_chars
+            .is_empty());
+        assert!(!manager
+            .get_locale("zh-CN")
+            .unwrap()
+            .entity
+            .stopwords
+            .is_empty());
     }
 
     #[test]

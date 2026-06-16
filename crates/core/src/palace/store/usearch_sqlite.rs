@@ -25,8 +25,7 @@ pub struct UsearchSqliteStore {
 const CONNECT_SLOTS: usize = 64;
 
 fn connect_locks() -> &'static [Mutex<()>; CONNECT_SLOTS] {
-    static LOCKS: std::sync::OnceLock<Box<[Mutex<()>; CONNECT_SLOTS]>> =
-        std::sync::OnceLock::new();
+    static LOCKS: std::sync::OnceLock<Box<[Mutex<()>; CONNECT_SLOTS]>> = std::sync::OnceLock::new();
     LOCKS.get_or_init(|| {
         let arr: [Mutex<()>; CONNECT_SLOTS] = std::array::from_fn(|_| Mutex::new(()));
         Box::new(arr)
@@ -545,8 +544,8 @@ pub fn try_load_sharded(
                 shard.path
             ));
         }
-        let bytes = std::fs::read(&p)
-            .map_err(|e| anyhow::anyhow!("read shard {}: {e}", shard.path))?;
+        let bytes =
+            std::fs::read(&p).map_err(|e| anyhow::anyhow!("read shard {}: {e}", shard.path))?;
         buffer.extend_from_slice(&bytes);
     }
     Ok(Some((manifest, buffer)))
@@ -663,7 +662,10 @@ mod tests {
         // 16-byte shards force many small shards.
         let m = flush_sharded(&dir, &idx, 4, 16).unwrap();
         let manifest_path = dir.join(format!("index.usearch.{:016}.manifest", m.generation));
-        assert!(manifest_path.exists(), "manifest must exist after successful flush");
+        assert!(
+            manifest_path.exists(),
+            "manifest must exist after successful flush"
+        );
         for shard in &m.shards {
             let p = dir.join(&shard.path);
             assert!(p.exists(), "shard {} must exist", shard.path);
@@ -718,7 +720,10 @@ mod tests {
         // all because the first iteration fails before any push to
         // `written_paths`. So we expect: error, no manifest, no
         // extra shard files we wrote ourselves.
-        assert!(res.is_err(), "expected flush to fail when shard slot is a directory");
+        assert!(
+            res.is_err(),
+            "expected flush to fail when shard slot is a directory"
+        );
         let mut found_manifest = false;
         let mut our_shard_writes = 0;
         for entry in std::fs::read_dir(&dir).unwrap() {
@@ -734,7 +739,10 @@ mod tests {
         // We pre-created 10 directories; flush_sharded may not have
         // created any new ones (the first write failed). Just check
         // no manifest and total shard entries <= 10.
-        assert!(!found_manifest, "no manifest should be published on rollback");
+        assert!(
+            !found_manifest,
+            "no manifest should be published on rollback"
+        );
         assert!(our_shard_writes <= 10, "no extra shard files should remain");
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -760,11 +768,7 @@ mod tests {
             shards: vec![],
         };
         let body = serde_json::to_vec_pretty(&manifest).unwrap();
-        std::fs::write(
-            dir.join("index.usearch.0000000000000001.manifest"),
-            &body,
-        )
-        .unwrap();
+        std::fs::write(dir.join("index.usearch.0000000000000001.manifest"), &body).unwrap();
         let err = try_load_sharded(&dir, 4).unwrap_err();
         assert!(err.to_string().contains("dim"));
         std::fs::remove_dir_all(&dir).ok();
@@ -791,11 +795,7 @@ mod tests {
             ],
         };
         let body = serde_json::to_vec_pretty(&manifest).unwrap();
-        std::fs::write(
-            dir.join("index.usearch.0000000000000001.manifest"),
-            &body,
-        )
-        .unwrap();
+        std::fs::write(dir.join("index.usearch.0000000000000001.manifest"), &body).unwrap();
         // Only write shard 0; shard 1 is missing.
         std::fs::write(
             dir.join("index.usearch.0000000000000001.shard.0000"),

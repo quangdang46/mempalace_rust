@@ -251,8 +251,7 @@ impl BackgroundRunner {
 
             for qr in &memories_results {
                 // Fix 2: use enumerate() instead of .position() to avoid O(n²) per batch.
-                for (idx, (meta, _doc)) in
-                    qr.metadatas.iter().zip(qr.documents.iter()).enumerate()
+                for (idx, (meta, _doc)) in qr.metadatas.iter().zip(qr.documents.iter()).enumerate()
                 {
                     evaluated += 1;
                     let access_count = meta
@@ -303,10 +302,7 @@ impl BackgroundRunner {
             }
         }
 
-        Ok(RetentionSweepResult {
-            evaluated,
-            evicted,
-        })
+        Ok(RetentionSweepResult { evaluated, evicted })
     }
 }
 
@@ -581,7 +577,9 @@ pub fn start_background_tasks(palace_path: std::path::PathBuf) -> BackgroundRunn
     let retention_path = palace_path.clone();
     let retention_shutdown = shutdown.clone();
     tokio::spawn(async move {
-        let mut ticker = interval(StdDuration::from_secs(RETENTION_SWEEP_INTERVAL_MINUTES * 60));
+        let mut ticker = interval(StdDuration::from_secs(
+            RETENTION_SWEEP_INTERVAL_MINUTES * 60,
+        ));
         // Run once at startup after a delay
         tokio::time::sleep(StdDuration::from_secs(180)).await;
 

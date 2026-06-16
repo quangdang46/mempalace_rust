@@ -124,18 +124,18 @@ mod tests {
         // include D even if the closet match exists, regardless of
         // what the closet's *own* score is.
         fn boosted_score(base: f64, has_closet_hit: bool) -> f64 {
-            if has_closet_hit { base + 2.0 } else { base }
+            if has_closet_hit {
+                base + 2.0
+            } else {
+                base
+            }
         }
         // A drawer without a closet match still appears in the result set
         // because we only *add* the boost — there is no filter branch on it.
         let drawer_a = boosted_score(1.0, false);
         let drawer_b = boosted_score(1.0, true);
         let drawer_c = boosted_score(1.0, false);
-        let all = vec![
-            ("a", drawer_a),
-            ("b", drawer_b),
-            ("c", drawer_c),
-        ];
+        let all = vec![("a", drawer_a), ("b", drawer_b), ("c", drawer_c)];
         // All three are present — no gating.
         assert_eq!(all.len(), 3);
         // Closet hit (b) outranks plain drawers (a, c).

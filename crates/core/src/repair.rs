@@ -243,11 +243,7 @@ pub fn rebuild_via_staging(palace_path: &Path) -> anyhow::Result<()> {
             if id.is_empty() {
                 continue;
             }
-            let meta = entry
-                .metadatas
-                .get(i)
-                .cloned()
-                .unwrap_or_default();
+            let meta = entry.metadatas.get(i).cloned().unwrap_or_default();
             to_upsert.push((id, doc.clone(), meta));
         }
     }
@@ -310,10 +306,7 @@ pub fn pre_repair_backup_path(palace_path: &Path) -> std::path::PathBuf {
 /// mr-f23w: snapshot the palace to a sibling directory. Best-effort
 /// copy of every entry — we walk the source tree and create files
 /// one at a time so a mid-copy failure leaves the source intact.
-pub fn take_pre_repair_backup(
-    palace_path: &Path,
-    backup_path: &Path,
-) -> anyhow::Result<()> {
+pub fn take_pre_repair_backup(palace_path: &Path, backup_path: &Path) -> anyhow::Result<()> {
     if !palace_path.exists() {
         return Ok(());
     }
@@ -345,10 +338,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// mr-f23w: rename the backup back to its original location. On
 /// success the palace is byte-for-byte identical to its pre-repair
 /// state. On failure the caller logs and continues.
-pub fn restore_from_backup(
-    palace_path: &Path,
-    backup_path: &Path,
-) -> anyhow::Result<()> {
+pub fn restore_from_backup(palace_path: &Path, backup_path: &Path) -> anyhow::Result<()> {
     if !backup_path.exists() {
         anyhow::bail!("backup does not exist: {}", backup_path.display());
     }

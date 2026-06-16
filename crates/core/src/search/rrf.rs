@@ -410,9 +410,21 @@ mod tests {
         parents.insert("c3".to_string(), "L2".to_string());
 
         let bm25 = vec![
-            StreamResult { id: "c1".to_string(), rank: 0, stream: SearchStream::Bm25 },
-            StreamResult { id: "c2".to_string(), rank: 1, stream: SearchStream::Bm25 },
-            StreamResult { id: "c3".to_string(), rank: 2, stream: SearchStream::Bm25 },
+            StreamResult {
+                id: "c1".to_string(),
+                rank: 0,
+                stream: SearchStream::Bm25,
+            },
+            StreamResult {
+                id: "c2".to_string(),
+                rank: 1,
+                stream: SearchStream::Bm25,
+            },
+            StreamResult {
+                id: "c3".to_string(),
+                rank: 2,
+                stream: SearchStream::Bm25,
+            },
         ];
         // Apply the scope filter
         let filtered: Vec<StreamResult> = bm25

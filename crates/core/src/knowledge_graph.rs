@@ -421,7 +421,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         // partial dates — and normalizes `+00:00` → `Z`. Callers that bypass
         // the MCP layer (e.g. internal bulk imports) still get the same shape
         // guarantees so KG TEXT comparisons stay correct.
-        let valid_from: Option<String> = crate::config::sanitize_iso_temporal(valid_from, "valid_from")?;
+        let valid_from: Option<String> =
+            crate::config::sanitize_iso_temporal(valid_from, "valid_from")?;
         let valid_to: Option<String> = crate::config::sanitize_iso_temporal(valid_to, "valid_to")?;
 
         // Reject inverted intervals (#1214): a triple with valid_to < valid_from

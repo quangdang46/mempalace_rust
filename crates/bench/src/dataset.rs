@@ -205,9 +205,18 @@ fn de_sample() -> MultilingualSample {
         question: "Welche Programmiersprache verwende ich am liebsten?",
         expected_answer: "Rust",
         haystack: vec![
-            ("de_s0", "Ich arbeite seit drei Jahren mit Rust an meinem Memory-Palace-Projekt."),
-            ("de_s1", "Heute habe ich ein neues Modul in Rust geschrieben und es funktioniert großartig."),
-            ("de_s2", "Die Performance von Rust ist beeindruckend im Vergleich zu Python."),
+            (
+                "de_s0",
+                "Ich arbeite seit drei Jahren mit Rust an meinem Memory-Palace-Projekt.",
+            ),
+            (
+                "de_s1",
+                "Heute habe ich ein neues Modul in Rust geschrieben und es funktioniert großartig.",
+            ),
+            (
+                "de_s2",
+                "Die Performance von Rust ist beeindruckend im Vergleich zu Python.",
+            ),
         ],
     }
 }
@@ -218,8 +227,14 @@ fn fr_sample() -> MultilingualSample {
         question: "Quel est mon langage de programmation préféré?",
         expected_answer: "Rust",
         haystack: vec![
-            ("fr_s0", "Je travaille sur un projet Rust depuis six mois et j'adore ça."),
-            ("fr_s1", "Aujourd'hui j'ai compilé un nouveau module Rust sans aucun warning."),
+            (
+                "fr_s0",
+                "Je travaille sur un projet Rust depuis six mois et j'adore ça.",
+            ),
+            (
+                "fr_s1",
+                "Aujourd'hui j'ai compilé un nouveau module Rust sans aucun warning.",
+            ),
             ("fr_s2", "La gestion de la mémoire en Rust est élégante."),
         ],
     }
@@ -231,7 +246,10 @@ fn hi_sample() -> MultilingualSample {
         question: "मेरी पसंदीदा प्रोग्रामिंग भाषा कौन सी है?",
         expected_answer: "Rust",
         haystack: vec![
-            ("hi_s0", "मैं पिछले दो साल से रस्ट प्रोग्रामिंग भाषा का उपयोग कर रहा हूँ।"),
+            (
+                "hi_s0",
+                "मैं पिछले दो साल से रस्ट प्रोग्रामिंग भाषा का उपयोग कर रहा हूँ।",
+            ),
             ("hi_s1", "आज मैंने रस्ट में एक नया मॉड्यूल बनाया है।"),
             ("hi_s2", "रस्ट की मेमोरी प्रबंधन प्रणाली बहुत अच्छी है।"),
         ],
@@ -245,8 +263,14 @@ fn it_sample() -> MultilingualSample {
         expected_answer: "Rust",
         haystack: vec![
             ("it_s0", "Lavoro con Rust da due anni ed è fantastico."),
-            ("it_s1", "Oggi ho scritto un nuovo modulo in Rust e funziona benissimo."),
-            ("it_s2", "La gestione della memoria in Rust è elegante e sicura."),
+            (
+                "it_s1",
+                "Oggi ho scritto un nuovo modulo in Rust e funziona benissimo.",
+            ),
+            (
+                "it_s2",
+                "La gestione della memoria in Rust è elegante e sicura.",
+            ),
         ],
     }
 }
@@ -270,8 +294,14 @@ fn ru_sample() -> MultilingualSample {
         question: "Какой мой любимый язык программирования?",
         expected_answer: "Rust",
         haystack: vec![
-            ("ru_s0", "Я работаю с Rust уже два года и мне нравится этот язык."),
-            ("ru_s1", "Сегодня я написал новый модуль на Rust, и он работает отлично."),
+            (
+                "ru_s0",
+                "Я работаю с Rust уже два года и мне нравится этот язык.",
+            ),
+            (
+                "ru_s1",
+                "Сегодня я написал новый модуль на Rust, и он работает отлично.",
+            ),
             ("ru_s2", "Управление памятью в Rust элегантно и безопасно."),
         ],
     }
@@ -411,8 +441,8 @@ mod tests {
     #[test]
     fn test_multilingual_samples_round_trip() {
         for &lang in SUPPORTED_LANGUAGES {
-            let sample = multilingual_sample(lang)
-                .unwrap_or_else(|| panic!("missing sample for {lang}"));
+            let sample =
+                multilingual_sample(lang).unwrap_or_else(|| panic!("missing sample for {lang}"));
             assert!(!sample.question.is_empty());
             assert!(!sample.expected_answer.is_empty());
             assert!(!sample.haystack.is_empty());

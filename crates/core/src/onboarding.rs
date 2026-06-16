@@ -383,12 +383,7 @@ pub fn auto_detect_from_directory(
 /// Manifest filenames that can carry an `authors` field we mine for entity
 /// candidates. Each parser knows how to extract a list of names from its
 /// file format.
-const MANIFEST_FILES: &[&str] = &[
-    "pyproject.toml",
-    "Cargo.toml",
-    "package.json",
-    "go.mod",
-];
+const MANIFEST_FILES: &[&str] = &["pyproject.toml", "Cargo.toml", "package.json", "go.mod"];
 
 /// Scan nearby project manifests for author fields and add their authors
 /// to the candidate entity set (#mr-4fqp).

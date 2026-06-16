@@ -145,12 +145,7 @@ pub trait LlmProvider: Send + Sync {
     /// `think` (mr-o5nq) enables extended chain-of-thought. Providers
     /// that don't support it should ignore the flag. Default for
     /// existing call sites is `false`.
-    fn classify(
-        &self,
-        system: &str,
-        user: &str,
-        json_mode: bool,
-    ) -> Result<LlmResponse, LlmError> {
+    fn classify(&self, system: &str, user: &str, json_mode: bool) -> Result<LlmResponse, LlmError> {
         self.classify_with_think(system, user, json_mode, false)
     }
 

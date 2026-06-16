@@ -2527,13 +2527,14 @@ fn cmd_hook(
     };
 
     let obs = process_observation(&payload)?;
-    let store = SessionStore::open(
-        resolve_palace_path(None)?.join("sessions"),
-    )?;
+    let store = SessionStore::open(resolve_palace_path(None)?.join("sessions"))?;
     store.add_observation(&obs)?;
 
     // Auto-end session when hook_type is SessionEnd or Stop
-    if matches!(hook_type, crate::types::HookType::SessionEnd | crate::types::HookType::Stop) {
+    if matches!(
+        hook_type,
+        crate::types::HookType::SessionEnd | crate::types::HookType::Stop
+    ) {
         let _ = store.end_session(session_id, None);
     }
 

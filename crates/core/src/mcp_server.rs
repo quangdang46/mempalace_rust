@@ -176,7 +176,8 @@ pub struct AppState {
     pub mesh: std::sync::RwLock<crate::coordination::mesh::Mesh>,
     /// Followup tracking for smart_search (mr-6g8z). Tracks when a
     /// second search within the time window has zero overlap with the prior.
-    pub followup_tracker: std::sync::Arc<std::sync::Mutex<crate::search::followup::FollowupTracker>>,
+    pub followup_tracker:
+        std::sync::Arc<std::sync::Mutex<crate::search::followup::FollowupTracker>>,
     /// Shared session store (Finding 5). Opened once at startup and reused
     /// across tool_observe calls instead of opening a new connection each time.
     pub session_store: std::sync::Arc<crate::session::SessionStore>,
@@ -5616,8 +5617,7 @@ fn tool_observe(state: &AppState, args: JsonObject) -> Result<CallToolResult, Er
 
     // Finding 19: reject oversized data payload before processing
     if let Some(ref data_val) = input.data {
-        let data_str = serde_json::to_string(data_val)
-            .map_err(|e| internal_error_safe(&e))?;
+        let data_str = serde_json::to_string(data_val).map_err(|e| internal_error_safe(&e))?;
         if data_str.len() > 65536 {
             return Err(ErrorData::invalid_params(
                 format!(
@@ -6053,10 +6053,9 @@ async fn tool_mine(state: &AppState, args: JsonObject) -> Result<CallToolResult,
     let path = std::path::PathBuf::from(&input.path);
     // Canonicalize to verify the path is accessible and real (replaces old path.exists check)
     if std::fs::canonicalize(&path).is_err() {
-        return Ok(CallToolResult::error(vec![rmcp::model::Content::text(format!(
-            "Path does not exist: {}",
-            input.path
-        ))]));
+        return Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+            format!("Path does not exist: {}", input.path),
+        )]));
     }
 
     // Finding 17: validate mode string before mapping
@@ -6109,9 +6108,9 @@ async fn tool_mine(state: &AppState, args: JsonObject) -> Result<CallToolResult,
             "path": input.path,
             "mode": format!("{:?}", mode).to_lowercase(),
         })),
-        Err(e) => Ok(CallToolResult::error(vec![rmcp::model::Content::text(format!(
-            "mine failed: {e}"
-        ))])),
+        Err(e) => Ok(CallToolResult::error(vec![rmcp::model::Content::text(
+            format!("mine failed: {e}"),
+        )])),
     }
 }
 
@@ -6665,10 +6664,7 @@ mod tests {
             mesh: std::sync::RwLock::new(crate::coordination::mesh::Mesh::new(None)),
             followup_tracker: state.followup_tracker.clone(),
             session_store: std::sync::Arc::new(
-                crate::session::SessionStore::open(
-                    &state.palace_path.join("sessions"),
-                )
-                .unwrap(),
+                crate::session::SessionStore::open(&state.palace_path.join("sessions")).unwrap(),
             ),
         };
         let f = make_dispatch(Arc::new(owned_state));
@@ -7439,8 +7435,7 @@ mod tests {
             .unwrap();
             db.flush().unwrap();
         }
-        let result = dispatch(&state, "mempalace_list_hallways", json!({}))
-            .expect("list_hallways");
+        let result = dispatch(&state, "mempalace_list_hallways", json!({})).expect("list_hallways");
         let text = serde_json::to_value(&result.content[0])
             .unwrap()
             .get("text")
@@ -8135,12 +8130,7 @@ mod tests {
             s.read_only = true;
             s
         };
-        let result = dispatch(
-            &state,
-            "mempalace_mine",
-            json!({ "path": "." }),
-        )
-        .unwrap();
+        let result = dispatch(&state, "mempalace_mine", json!({ "path": "." })).unwrap();
         assert_eq!(result.is_error, Some(true));
     }
 

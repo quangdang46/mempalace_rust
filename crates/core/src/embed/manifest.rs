@@ -245,16 +245,10 @@ pub enum EmbedderIdentity {
     /// Fingerprint differs (e.g. user swapped BGE-Small for E5-Small
     /// at the same dim). The caller decides strict vs lenient via
     /// [`crate::config::Config::embedder_identity_strict`].
-    MismatchBlocking {
-        recorded: String,
-        runtime: String,
-    },
+    MismatchBlocking { recorded: String, runtime: String },
     /// Dimensionality differs. Always blocking — the on-disk index
     /// cannot be reused.
-    MismatchDimension {
-        recorded: usize,
-        runtime: usize,
-    },
+    MismatchDimension { recorded: usize, runtime: usize },
 }
 
 impl EmbedderIdentity {
@@ -489,10 +483,7 @@ mod tests {
             dim: 384,
             fingerprint: "bge:384".into(),
         };
-        assert_eq!(
-            recorded.classify_against(&same),
-            EmbedderIdentity::Match
-        );
+        assert_eq!(recorded.classify_against(&same), EmbedderIdentity::Match);
         assert!(!recorded.classify_against(&same).is_blocking(true));
         assert!(!recorded.classify_against(&same).is_blocking(false));
 
@@ -502,10 +493,7 @@ mod tests {
             fingerprint: "e5:384".into(),
         };
         let outcome = recorded.classify_against(&swapped);
-        assert!(matches!(
-            outcome,
-            EmbedderIdentity::MismatchBlocking { .. }
-        ));
+        assert!(matches!(outcome, EmbedderIdentity::MismatchBlocking { .. }));
         // Strict → blocking. Lenient → not blocking.
         assert!(outcome.is_blocking(true));
         assert!(!outcome.is_blocking(false));

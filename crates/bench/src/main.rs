@@ -3,8 +3,8 @@ use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
 use mempalace_bench::dataset::{
-    download_from_huggingface, load_from_file, multilingual_sample, sample_to_entry,
-    is_supported_language, Granularity, LOMEMEVAL_FILE,
+    download_from_huggingface, is_supported_language, load_from_file, multilingual_sample,
+    sample_to_entry, Granularity, LOMEMEVAL_FILE,
 };
 use mempalace_bench::runner::{run_benchmark, BenchmarkConfig};
 
@@ -118,11 +118,7 @@ async fn main() -> Result<()> {
                 e
             })
             .collect();
-        println!(
-            "Loaded {} multilingual ({}) sample(s)",
-            entries.len(),
-            lang
-        );
+        println!("Loaded {} multilingual ({}) sample(s)", entries.len(), lang);
         entries
     } else if let Some(path) = &args.dataset_path {
         if !path.exists() {

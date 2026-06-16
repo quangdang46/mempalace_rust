@@ -32,10 +32,7 @@ use std::sync::Arc;
 /// completions URL or a bare base URL.
 pub fn base_url_is_local(url: &str) -> bool {
     // Strip scheme
-    let after_scheme = url
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(url);
+    let after_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
     // Drop path/query/fragment
     let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
     let host_port = host_port.split('?').next().unwrap_or(host_port);
@@ -67,7 +64,7 @@ pub fn base_url_is_local(url: &str) -> bool {
                 v4.is_loopback()                  // 127.0.0.0/8
                     || v4.is_private()            // 10/8, 172.16/12, 192.168/16
                     || v4.is_link_local()         // 169.254/16
-                    || is_tailscale_cgnat_v4(v4)  // 100.64/10
+                    || is_tailscale_cgnat_v4(v4) // 100.64/10
             }
             std::net::IpAddr::V6(v6) => {
                 v6.is_loopback()

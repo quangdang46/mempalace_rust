@@ -80,12 +80,7 @@ impl SessionStore {
     ///
     /// Used by OpenCode normalizer to satisfy the observations.session_id
     /// FK without requiring an explicit session bootstrap step.
-    pub fn ensure_session(
-        &self,
-        id: &str,
-        project: &str,
-        cwd: &str,
-    ) -> anyhow::Result<Session> {
+    pub fn ensure_session(&self, id: &str, project: &str, cwd: &str) -> anyhow::Result<Session> {
         let conn = self.conn.blocking_lock();
         conn.execute(
             "INSERT OR IGNORE INTO sessions
@@ -95,7 +90,8 @@ impl SessionStore {
             rusqlite::params![id, project, cwd, chrono::Utc::now().to_rfc3339()],
         )?;
         drop(conn);
-        self.get_session(id)?.ok_or_else(|| anyhow::anyhow!("session {} not found after ensure", id))
+        self.get_session(id)?
+            .ok_or_else(|| anyhow::anyhow!("session {} not found after ensure", id))
     }
 
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<Session>> {
