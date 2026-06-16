@@ -132,6 +132,10 @@ fn default_embedding_model() -> String {
     "naive".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_topic_wings() -> Vec<String> {
     vec![
         "emotions",
@@ -277,6 +281,27 @@ pub struct Config {
     pub vector_weight: Option<f64>,
     #[serde(default)]
     pub graph_weight: Option<f64>,
+    /// `mr-ekep`: when true (default), log a `tracing::warn!` before any LLM
+    /// call whose `base_url` resolves to a public/external host. Local
+    /// (loopback, RFC1918, link-local, Tailscale CGNAT) endpoints are
+    /// silent. Set to `false` to suppress the privacy warning.
+    #[serde(default = "default_true")]
+    pub llm_external_warn: bool,
+    /// `mr-2k4g`: user consent to use an LLM API key supplied via process
+    /// environment variables. The default (`false`) makes every
+    /// env-fallback LLM call fail with a remediation error until the user
+    /// explicitly grants consent (via `mpr config record-llm-consent` or
+    /// the `MEMPALACE_LLM_CONSENT` env override).
+    #[serde(default)]
+    pub llm_consent_given: bool,
+    /// `mr-jh4e`: number of backups to keep (None = 10 default, 0 = keep all).
+    /// Set to `None` for default behavior, `Some(0)` to keep every backup.
+    #[serde(default)]
+    pub max_backups: Option<usize>,
+    /// `mr-g3av`: when false, the save hook (and any other auto-save
+    /// path) short-circuits. Honors `MEMPALACE_HOOKS_AUTO_SAVE=false`.
+    #[serde(default = "default_true")]
+    pub hooks_auto_save: bool,
 }
 
 #[cfg(unix)]
@@ -363,6 +388,10 @@ impl Default for Config {
             bm25_weight: None,
             vector_weight: None,
             graph_weight: None,
+            llm_external_warn: true,
+            llm_consent_given: false,
+            max_backups: None,
+            hooks_auto_save: true,
         }
     }
 }
@@ -420,6 +449,14 @@ impl Config {
                     .get("languages")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default(),
+                llm_consent_given: file_config
+                    .get("llm_consent_given")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                llm_external_warn: file_config
+                    .get("llm_external_warn")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
                 ..Default::default()
             })
         } else {
@@ -485,6 +522,28 @@ impl Config {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."))
             .join("tunnels.json")
+    }
+
+    /// `mr-jh4e`: effective backup cap. Precedence: env
+    /// `MEMPALACE_MAX_BACKUPS` (if set) → persisted `max_backups` (if Some) →
+    /// default 10. `0` means keep every backup.
+    pub fn max_backups_effective(&self) -> usize {
+        if let Ok(v) = std::env::var("MEMPALACE_MAX_BACKUPS") {
+            if let Ok(n) = v.parse::<usize>() {
+                return n;
+            }
+        }
+        self.max_backups.unwrap_or(10)
+    }
+
+    /// `mr-2k4g`: persist the user's grant of consent to use env-fallback
+    /// LLM API keys. The flag is set in-memory, the config is written
+    /// atomically with 0600 permissions (via [`Self::save`]), and the
+    /// updated instance is returned. Idempotent — calling it twice is a
+    /// no-op aside from the disk write.
+    pub fn record_llm_consent(&mut self) -> anyhow::Result<()> {
+        self.llm_consent_given = true;
+        self.save()
     }
 
     pub fn identity_file_path() -> anyhow::Result<PathBuf> {
@@ -714,6 +773,10 @@ mod tests {
             bm25_weight: None,
             vector_weight: None,
             graph_weight: None,
+            llm_external_warn: true,
+            llm_consent_given: false,
+            max_backups: None,
+            hooks_auto_save: true,
         };
         let people_map = config.load_people_map().unwrap();
         assert_eq!(people_map.get("bob"), Some(&"Robert".to_string()));
@@ -770,6 +833,10 @@ mod tests {
             bm25_weight: None,
             vector_weight: None,
             graph_weight: None,
+            llm_external_warn: true,
+            llm_consent_given: false,
+            max_backups: None,
+            hooks_auto_save: true,
         };
         assert_eq!(
             cfg.tunnel_file(),
@@ -904,5 +971,43 @@ mod tests {
     fn test_sanitize_iso_temporal_rejects_impossible_calendar_day() {
         assert!(super::sanitize_iso_temporal(Some("2026-02-30"), "valid_from").is_err());
         assert!(super::sanitize_iso_temporal(Some("2026-13-01"), "valid_from").is_err());
+    }
+
+    /// `mr-ekep`: external-LLM warning is opt-out, defaulting to on.
+    #[test]
+    fn test_default_llm_external_warn_is_true() {
+        let cfg = Config::default();
+        assert!(cfg.llm_external_warn);
+    }
+
+    /// `mr-2k4g`: consent is opt-in, defaulting to off. This is the
+    /// fail-closed default — env-fallback LLM calls must error out until
+    /// the user explicitly grants consent.
+    #[test]
+    fn test_default_llm_consent_is_false() {
+        let cfg = Config::default();
+        assert!(!cfg.llm_consent_given);
+    }
+
+    /// `mr-2k4g`: `record_llm_consent` flips the in-memory flag *and*
+    /// persists it to disk so subsequent `Config::load()` reads see the
+    /// grant without needing the env override.
+    #[test]
+    fn test_record_llm_consent_persists_flag() {
+        let _guard = test_env_lock().lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let xdg_root = temp_dir.path().to_str().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", xdg_root);
+
+        let mut config = Config::default();
+        assert!(!config.llm_consent_given);
+        config.record_llm_consent().unwrap();
+        assert!(config.llm_consent_given);
+
+        // Re-load from disk: the flag must survive a round-trip.
+        let reloaded = Config::load().unwrap();
+        assert!(reloaded.llm_consent_given);
+
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }

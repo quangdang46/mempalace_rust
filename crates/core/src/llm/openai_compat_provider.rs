@@ -3,6 +3,7 @@
 //! Works with OpenAI, Ollama, OpenRouter, LM Studio, llama.cpp, vLLM, Groq, etc.
 //! POST to `/v1/chat/completions`.
 
+use super::base_url_is_local;
 use super::provider::{LlmCompletion, LlmError, LlmProvider, LlmUsage};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -15,12 +16,19 @@ pub struct OpenAICompatConfig {
     pub model: String,
     pub base_url: String,
     pub timeout_ms: u64,
+    /// `mr-2k4g`: `true` when the key was sourced from the
+    /// `OPENAI_API_KEY` env-fallback. Providers constructed from explicit
+    /// user config (e.g. `OpenAICompatConfig { api_key: Some(...), .. }`)
+    /// leave this `false`. The consent gate only fires when this is `true`.
+    pub key_from_env: bool,
 }
 
 impl Default for OpenAICompatConfig {
     fn default() -> Self {
+        let api_key = std::env::var("OPENAI_API_KEY").ok();
+        let key_from_env = api_key.is_some();
         Self {
-            api_key: std::env::var("OPENAI_API_KEY").ok(),
+            api_key,
             model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
             base_url: std::env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| "https://api.openai.com".to_string()),
@@ -28,6 +36,7 @@ impl Default for OpenAICompatConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(60_000),
+            key_from_env,
         }
     }
 }
@@ -69,6 +78,57 @@ impl LlmProvider for OpenAICompatProvider {
     }
 
     async fn complete(&self, system: &str, user: &str) -> Result<LlmCompletion, LlmError> {
+        // `mr-2k4g`: env-fallback API keys require explicit user consent
+        // before any LLM call may transmit data to the endpoint. Keys
+        // configured explicitly in `mempalace.yaml` are exempt (their
+        // `key_from_env` flag is `false`).
+        if self.config.key_from_env {
+            if let Some(ref key) = self.config.api_key {
+                if !key.is_empty() {
+                    if let Ok(cfg) = crate::config::Config::load() {
+                        let status = crate::privacy::check_env_consent(
+                            cfg.llm_consent_given,
+                            self.name(),
+                            &self.config.base_url,
+                        );
+                        if matches!(status, crate::privacy::ConsentStatus::Required) {
+                            tracing::warn!(
+                                target: "mempalace::llm",
+                                provider = self.name(),
+                                base_url = %self.config.base_url,
+                                "env-fallback LLM API key detected; user consent not granted. \
+                                 Set MEMPALACE_LLM_CONSENT=true for this process, or run \
+                                 `mpr config record-llm-consent` to grant persistent consent."
+                            );
+                            return Err(LlmError::ConsentRequired {
+                                provider: self.name().to_string(),
+                                reason: "consent required for env-fallback API key".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // `mr-ekep`: warn (opt-out) when the configured base_url points at a
+        // public/external host. Loopback / RFC1918 / link-local / Tailscale
+        // CGNAT are silent because they stay on the user's own network.
+        if std::env::var("MEMPALACE_LLM_EXTERNAL_WARN")
+            .map(|v| !matches!(v.as_str(), "0" | "false" | "no" | "off"))
+            .unwrap_or(true)
+            && !base_url_is_local(&self.config.base_url)
+        {
+            let approx_bytes = system.len() + user.len();
+            tracing::warn!(
+                target: "mempalace.llm",
+                provider = self.name(),
+                model = %self.config.model,
+                base_url = %self.config.base_url,
+                approx_input_bytes = approx_bytes,
+                "sending LLM request to external host (set MEMPALACE_LLM_EXTERNAL_WARN=false to silence)"
+            );
+        }
+
         let url = self.resolve_url();
 
         let body = serde_json::json!({
@@ -174,6 +234,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             api_key: None,
             timeout_ms: 60_000,
+            key_from_env: false,
         };
         let provider = OpenAICompatProvider::new(config);
         assert_eq!(
@@ -189,11 +250,91 @@ mod tests {
             model: "gemma4".to_string(),
             api_key: None,
             timeout_ms: 60_000,
+            key_from_env: false,
         };
         let provider = OpenAICompatProvider::new(config);
         assert_eq!(
             provider.resolve_url(),
             "http://localhost:11434/v1/chat/completions"
         );
+    }
+
+    /// `mr-2k4g`: when the key is marked as env-fallback, `complete()` must
+    /// surface `ConsentRequired` instead of attempting to send the request.
+    /// We use a synthetic fake base URL so the test never reaches the
+    /// network — the gate is a precondition check that returns before
+    /// the HTTP client is touched.
+    #[test]
+    fn test_complete_consent_required_when_env_key_without_consent() {
+        let _guard = crate::test_env_lock().lock().unwrap();
+        // No env override, force a clean (no XDG_CONFIG_HOME) Config::load().
+        std::env::remove_var("MEMPALACE_LLM_CONSENT");
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::remove_var("XDG_CONFIG_HOME");
+        // Set a temp XDG so Config::load() reads a config with default
+        // `llm_consent_given = false`.
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", temp.path().to_str().unwrap());
+
+        let config = OpenAICompatConfig {
+            base_url: "http://127.0.0.1:1".to_string(), // unreachable on purpose
+            model: "gpt-4o-mini".to_string(),
+            api_key: Some("sk-test-MOCK_env_fallback".to_string()),
+            timeout_ms: 60_000,
+            key_from_env: true,
+        };
+        let provider = OpenAICompatProvider::new(config);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let res = rt.block_on(provider.complete("sys", "user"));
+        match res {
+            Err(LlmError::ConsentRequired { provider, .. }) => {
+                assert_eq!(provider, "openai-compat");
+            }
+            other => panic!("expected ConsentRequired, got {:?}", other),
+        }
+
+        if let Some(prev) = prev_xdg {
+            std::env::set_var("XDG_CONFIG_HOME", prev);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+    }
+
+    /// `mr-2k4g`: when the env override is set, the gate opens even if no
+    /// consent is recorded. This is the CI escape hatch.
+    #[test]
+    fn test_complete_consent_env_override_unblocks() {
+        let _guard = crate::test_env_lock().lock().unwrap();
+        std::env::set_var("MEMPALACE_LLM_CONSENT", "true");
+        let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", temp.path().to_str().unwrap());
+
+        let config = OpenAICompatConfig {
+            base_url: "http://127.0.0.1:1".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            api_key: Some("sk-test-MOCK_env_fallback".to_string()),
+            timeout_ms: 100, // fast-fail rather than hang
+            key_from_env: true,
+        };
+        let provider = OpenAICompatProvider::new(config);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // The gate should NOT raise ConsentRequired. We don't care if the
+        // network call itself fails — that proves we got past the gate.
+        let res = rt.block_on(provider.complete("sys", "user"));
+        match res {
+            Err(LlmError::ConsentRequired { .. }) => {
+                panic!("env override should have unblocked the gate");
+            }
+            _ => {}
+        }
+
+        std::env::remove_var("MEMPALACE_LLM_CONSENT");
+        if let Some(prev) = prev_xdg {
+            std::env::set_var("XDG_CONFIG_HOME", prev);
+        } else {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
     }
 }

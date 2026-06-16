@@ -157,7 +157,66 @@ pub fn rebuild_index(palace_path: Option<&Path>) -> anyhow::Result<()> {
     println!("\n  Repair complete. {} drawers.", total);
     println!("{}\n", "=".repeat(55));
 
+    // mr-jh4e: prune stale backups after a successful rebuild
+    let cap = config.max_backups_effective();
+    if cap > 0 {
+        let dir = backup_dir(palace_path);
+        if let Ok(n) = prune_old_backups(&dir, cap) {
+            if n > 0 {
+                println!("  Pruned {} stale backup(s) (cap={}).", n, cap);
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// `mr-jh4e`: prune oldest `*.tar` / `*.tgz` / `*.tar.gz` files in
+/// `backup_dir` so the disk cannot fill with stale snapshots. Strictly
+/// scoped to the backup naming pattern — live palace data is never
+/// touched. Returns the number of files deleted.
+pub fn prune_old_backups(backup_dir: &Path, cap: usize) -> anyhow::Result<usize> {
+    if cap == 0 || !backup_dir.exists() {
+        return Ok(0);
+    }
+    let mut snapshots: Vec<_> = std::fs::read_dir(backup_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let p = e.path();
+            let ext_ok = p
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s == "tar" || s == "tgz" || s == "gz")
+                .unwrap_or(false);
+            let name_ok = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.ends_with(".tar.gz"))
+                .unwrap_or(false);
+            ext_ok || name_ok
+        })
+        .collect();
+    if snapshots.len() <= cap {
+        return Ok(0);
+    }
+    snapshots.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+    let excess = snapshots.len() - cap;
+    let mut deleted = 0usize;
+    for entry in snapshots.into_iter().take(excess) {
+        match std::fs::remove_file(entry.path()) {
+            Ok(_) => deleted += 1,
+            Err(e) => eprintln!("  warn: could not delete {}: {}", entry.path().display(), e),
+        }
+    }
+    Ok(deleted)
+}
+
+/// `mr-jh4e`: standard palace backup directory (sibling of palace_path).
+pub fn backup_dir(palace_path: &Path) -> std::path::PathBuf {
+    palace_path
+        .parent()
+        .map(|p| p.join("backups"))
+        .unwrap_or_else(|| std::path::PathBuf::from("backups"))
 }
 
 /// Clean up stale PID file from interrupted mine operations.

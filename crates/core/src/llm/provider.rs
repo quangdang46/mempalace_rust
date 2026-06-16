@@ -45,6 +45,21 @@ pub enum LlmError {
     #[error("API key not configured for {provider}")]
     MissingApiKey { provider: String },
 
+    /// `mr-2k4g`: API key was sourced from a process environment variable
+    /// but the user has not granted consent to use it. `reason` is a
+    /// short machine-readable explanation surfaced to the CLI.
+    #[error("API key for {provider} requires consent: {reason}")]
+    ConsentRequired { provider: String, reason: String },
+
+    /// `mr-ktc7`: provider rejected the configured model — usually because
+    /// the model name is wrong, retired, or only available on a different
+    /// endpoint. The fallback chain treats this as a hard re-resolve
+    /// signal: it rebuilds a fresh provider from the next factory and
+    /// retries the call, rather than counting it against the circuit
+    /// breaker like a normal failure.
+    #[error("model {model} not found at provider {provider}")]
+    ModelNotFound { provider: String, model: String },
+
     #[error("request timeout after {timeout_ms}ms")]
     Timeout { timeout_ms: u64 },
 
@@ -101,3 +116,11 @@ pub trait LlmProvider: Send + Sync + 'static {
         )))
     }
 }
+
+/// `mr-ktc7`: a factory closure that builds a fresh `Arc<dyn LlmProvider>`
+/// on demand. The fallback chain invokes a factory when it needs to
+/// re-resolve a provider (e.g. after `LlmError::ModelNotFound`), so each
+/// retry sees the most current env / config snapshot — including any
+/// model the user may have just exported.
+pub type ProviderFactory =
+    Box<dyn Fn() -> anyhow::Result<std::sync::Arc<dyn LlmProvider>> + Send + Sync>;

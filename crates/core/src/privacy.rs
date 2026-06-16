@@ -54,6 +54,63 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+/// Outcome of the LLM-API-key consent gate (mr-2k4g).
+///
+/// The gate is invoked at the entry of every LLM `complete()` call when the
+/// provider's `api_key` was sourced from a process environment variable
+/// (the `*_API_KEY` env-fallback path), rather than from explicit user
+/// configuration. This protects the user from an LLM call silently
+/// transmitting data to an external endpoint without their consent.
+///
+/// The check is intentionally cheap: a single env-var read plus a bool
+/// lookup on the persisted config. It runs on every LLM call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConsentStatus {
+    /// Consent granted — either via the persisted flag, or via the
+    /// `MEMPALACE_LLM_CONSENT` environment override for this process.
+    Granted,
+    /// The provider would use an env-fallback key but consent has not been
+    /// recorded. The caller must return an error and surface remediation
+    /// guidance to the user.
+    Required,
+    /// The provider's key came from explicit config (not env-fallback), so
+    /// the consent gate does not apply and `complete()` may proceed.
+    NotRequired,
+}
+
+/// Check whether the LLM consent gate is satisfied for an env-fallback key.
+///
+/// Precedence (highest first):
+/// 1. **`MEMPALACE_LLM_CONSENT` env override** — set to one of
+///    `true` / `1` / `yes` / `on` (case-insensitive, whitespace-trimmed) to
+///    grant one-shot consent for the lifetime of the process. Used by CI
+///    jobs and tests that have a key in the environment but no persisted
+///    config yet.
+/// 2. **Persisted `llm_consent_given` flag** — granted at some prior point
+///    by `mpr config record-llm-consent`. Sticks across runs.
+/// 3. Otherwise: `Required`.
+///
+/// `provider` and `base_url` are accepted for symmetry / future use
+/// (e.g. surfacing a more specific warning per-provider) but the current
+/// implementation does not gate on them. The caller is responsible for
+/// deciding *whether* the key came from env-fallback before calling this
+/// function.
+pub fn check_env_consent(persisted: bool, _provider: &str, _base_url: &str) -> ConsentStatus {
+    // 1. Env override — sticky for the lifetime of the process.
+    if let Ok(v) = std::env::var("MEMPALACE_LLM_CONSENT") {
+        let s = v.trim().to_ascii_lowercase();
+        if matches!(s.as_str(), "true" | "1" | "yes" | "on") {
+            return ConsentStatus::Granted;
+        }
+    }
+    // 2. Persisted flag from prior `mpr config record-llm-consent`.
+    if persisted {
+        return ConsentStatus::Granted;
+    }
+    // 3. No override, no persisted grant → consent must be obtained.
+    ConsentStatus::Required
+}
+
 /// Categories of secrets the redactor knows about.
 ///
 /// The variant name is interpolated verbatim into the `<REDACTED:KIND>`
@@ -358,6 +415,7 @@ fn secret_patterns() -> &'static [(RedactionKind, Regex)] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env_lock;
 
     // ---------- Pattern coverage: each canonical example should match ----
 
@@ -644,5 +702,82 @@ mod tests {
         assert_eq!(*kind, RedactionKind::OpenAiKey);
         assert_eq!(range.start, prefix.len());
         assert_eq!(range.end, prefix.len() + key.len());
+    }
+
+    // ---------- mr-2k4g: LLM consent gate ----------
+
+    /// Persisted flag = true is the strongest in-band signal: granted.
+    #[test]
+    fn test_check_env_consent_persisted_true_grants() {
+        let _guard = test_env_lock().lock().unwrap();
+        std::env::remove_var("MEMPALACE_LLM_CONSENT");
+        assert_eq!(
+            check_env_consent(true, "openai", "https://api.openai.com"),
+            ConsentStatus::Granted
+        );
+    }
+
+    /// Persisted flag = false with no env override → consent is required.
+    /// This is the default-first-run behavior; the user must run
+    /// `mpr config record-llm-consent` (or set the env var) before
+    /// env-fallback LLM calls succeed.
+    #[test]
+    fn test_check_env_consent_persisted_false_requires() {
+        let _guard = test_env_lock().lock().unwrap();
+        std::env::remove_var("MEMPALACE_LLM_CONSENT");
+        assert_eq!(
+            check_env_consent(false, "anthropic", "https://api.anthropic.com"),
+            ConsentStatus::Required
+        );
+    }
+
+    /// The env override grants consent even when the persisted flag is
+    /// false. This is the "I know what I'm doing" path for CI / tests.
+    #[test]
+    fn test_check_env_consent_env_true_overrides_persisted_false() {
+        let _guard = test_env_lock().lock().unwrap();
+        std::env::set_var("MEMPALACE_LLM_CONSENT", "true");
+        assert_eq!(
+            check_env_consent(false, "openai", "https://api.openai.com"),
+            ConsentStatus::Granted
+        );
+        std::env::remove_var("MEMPALACE_LLM_CONSENT");
+    }
+
+    /// All four documented truthy spellings must grant consent. Common
+    /// typos like `"True "` (mixed case, surrounding whitespace) should
+    /// also work because we trim + lowercase.
+    #[test]
+    fn test_check_env_consent_env_truthy_variants_grant() {
+        let _guard = test_env_lock().lock().unwrap();
+        for truthy in ["1", "yes", "on", "True", "  YES  ", "On"] {
+            std::env::set_var("MEMPALACE_LLM_CONSENT", truthy);
+            assert_eq!(
+                check_env_consent(false, "openai", "https://api.openai.com"),
+                ConsentStatus::Granted,
+                "env value {:?} should grant consent",
+                truthy
+            );
+        }
+        std::env::remove_var("MEMPALACE_LLM_CONSENT");
+    }
+
+    /// When the env var is unset, the persisted flag is the sole
+    /// determinant. We don't conflate "not granted" with "required" —
+    /// that's the caller's distinction to make.
+    #[test]
+    fn test_check_env_consent_env_unset_returns_prior_state() {
+        let _guard = test_env_lock().lock().unwrap();
+        std::env::remove_var("MEMPALACE_LLM_CONSENT");
+        // Persisted true → Granted.
+        assert_eq!(
+            check_env_consent(true, "openai", "https://api.openai.com"),
+            ConsentStatus::Granted
+        );
+        // Persisted false → Required.
+        assert_eq!(
+            check_env_consent(false, "openai", "https://api.openai.com"),
+            ConsentStatus::Required
+        );
     }
 }

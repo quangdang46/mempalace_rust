@@ -35,11 +35,19 @@ pub struct OpenAIRemoteEmbedder {
 
 impl OpenAIRemoteEmbedder {
     /// Build from environment for `model` (e.g. `text-embedding-3-small`).
+    /// `OPENAI_EMBEDDING_API_KEY` / `OPENAI_EMBEDDING_BASE_URL` take
+    /// precedence over `OPENAI_API_KEY` / `OPENAI_BASE_URL` so embeddings
+    /// can be routed to a different endpoint than LLM calls (B20).
     pub fn from_env(model: &str) -> anyhow::Result<Self> {
-        let api_key = std::env::var("OPENAI_API_KEY").map_err(|_| {
-            anyhow::anyhow!("OPENAI_API_KEY is required for the openai remote embedder")
-        })?;
-        let base_url = std::env::var("OPENAI_BASE_URL")
+        let api_key = std::env::var("OPENAI_EMBEDDING_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "OPENAI_EMBEDDING_API_KEY or OPENAI_API_KEY is required for the openai remote embedder"
+                )
+            })?;
+        let base_url = std::env::var("OPENAI_EMBEDDING_BASE_URL")
+            .or_else(|_| std::env::var("OPENAI_BASE_URL"))
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
         let dim = match std::env::var("OPENAI_EMBEDDING_DIMENSIONS")
             .ok()

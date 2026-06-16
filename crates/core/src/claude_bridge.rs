@@ -127,6 +127,21 @@ pub fn write_memory_file(path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
+/// `mr-g3av`: resolve the effective auto-save toggle. Env
+/// `MEMPALACE_HOOKS_AUTO_SAVE` (case-insensitive: `false`/`0`/`no`/`off`
+/// disables; any other non-empty value enables) wins; otherwise the
+/// persisted `Config.hooks_auto_save` is honored. Defaults to `true` when
+/// the env is unset and the config can't be loaded.
+pub fn hooks_auto_save_enabled() -> bool {
+    if let Ok(v) = std::env::var("MEMPALACE_HOOKS_AUTO_SAVE") {
+        let s = v.trim().to_ascii_lowercase();
+        return !matches!(s.as_str(), "" | "false" | "0" | "no" | "off");
+    }
+    crate::config::Config::load()
+        .map(|c| c.hooks_auto_save)
+        .unwrap_or(true)
+}
+
 /// Sync memories to MEMORY.md.
 pub fn sync_to_claude(
     config: &ClaudeBridgeConfig,
@@ -135,6 +150,12 @@ pub fn sync_to_claude(
 ) -> Result<usize> {
     if !config.enabled {
         return Err(anyhow::anyhow!("Claude bridge not enabled"));
+    }
+    if !hooks_auto_save_enabled() {
+        // mr-g3av: silent-mode — no-op when the user has disabled
+        // auto-save via `MEMPALACE_HOOKS_AUTO_SAVE=false`. The diary
+        // file is intentionally left untouched.
+        return Ok(0);
     }
     let path = config
         .memory_file_path
