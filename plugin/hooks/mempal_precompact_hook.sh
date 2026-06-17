@@ -16,4 +16,4 @@ case "$HARNESS" in
 esac
 
 BIN="${MEMPALACE_BIN:-mpr}"
-exec "$BIN" hook --hook precompact
+exec "$BIN" hook --hook pre_compact

@@ -583,7 +583,7 @@ case "\$HARNESS" in
     exit 1
     ;;
 esac
-exec "${bin_path}" hook --hook precompact
+exec "${bin_path}" hook --hook pre_compact
 EOF
 
   chmod 755 "$hooks_dir/mempal_save_hook.sh" "$hooks_dir/mempal_precompact_hook.sh"
