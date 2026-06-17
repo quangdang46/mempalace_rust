@@ -430,180 +430,137 @@ pub fn start_background_tasks(palace_path: std::path::PathBuf) -> BackgroundRunn
     let runner = BackgroundRunner::new(palace_path.clone());
     let shutdown = runner.shutdown.clone();
 
-    // Auto-forget task: every 60 minutes
-    let auto_forget_path = palace_path.clone();
-    let auto_forget_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        let mut ticker = interval(StdDuration::from_secs(AUTO_FORGET_INTERVAL_MINUTES * 60));
-        // Run once at startup after a short delay
-        tokio::time::sleep(StdDuration::from_secs(30)).await;
+    // Spawn the background tasks on their own Tokio runtime in a dedicated
+    // thread.  Without this the function panics with "there is no reactor
+    // running" when called from a sync context (e.g. mpr serve).
+    std::thread::Builder::new()
+        .name("mempalace-bg".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Runtime::new()
+                .expect("failed to create background Tokio runtime");
+            rt.block_on(async {
+                // Auto-forget task: every 60 minutes
+                let auto_forget_path = palace_path.clone();
+                let auto_forget_shutdown = shutdown.clone();
+                tokio::spawn(async move {
+                    let mut ticker = interval(StdDuration::from_secs(AUTO_FORGET_INTERVAL_MINUTES * 60));
+                    tokio::time::sleep(StdDuration::from_secs(30)).await;
 
-        while !auto_forget_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            ticker.tick().await;
-            if auto_forget_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-
-            let runner = BackgroundRunner::new(auto_forget_path.clone());
-            match runner.run_auto_forget() {
-                Ok(result) => {
-                    info!(
-                        "Auto-forget completed: evaluated={} evicted={} protected={}",
-                        result.evaluated, result.evicted, result.protected
-                    );
-                }
-                Err(e) => {
-                    warn!("Auto-forget task failed: {}", e);
-                }
-            }
-        }
-        info!("Auto-forget task stopped");
-    });
-
-    // Consolidation task: every 2 hours
-    let consolidation_path = palace_path.clone();
-    let consolidation_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        let mut ticker = interval(StdDuration::from_secs(CONSOLIDATION_INTERVAL_MINUTES * 60));
-        // Run once at startup after a longer delay (let other things initialize first)
-        tokio::time::sleep(StdDuration::from_secs(120)).await;
-
-        while !consolidation_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            ticker.tick().await;
-            if consolidation_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-
-            let runner = BackgroundRunner::new(consolidation_path.clone());
-            match runner.run_consolidation().await {
-                Ok(result) => {
-                    info!(
-                        "Consolidation completed: semantic_new={} procedural_new={} semantic_decayed={} procedural_decayed={}",
-                        result.semantic_new_facts, result.procedural_new, result.semantic_decayed, result.procedural_decayed
-                    );
-                }
-                Err(e) => {
-                    warn!("Consolidation task failed: {}", e);
-                }
-            }
-        }
-        info!("Consolidation task stopped");
-    });
-
-    // Lesson decay task: every 24 hours
-    let lesson_path = palace_path.clone();
-    let lesson_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        let mut ticker = interval(StdDuration::from_secs(LESSON_DECAY_INTERVAL_MINUTES * 60));
-        // Run once at startup after a delay
-        tokio::time::sleep(StdDuration::from_secs(300)).await;
-
-        while !lesson_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            ticker.tick().await;
-            if lesson_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-
-            let runner = BackgroundRunner::new(lesson_path.clone());
-            match runner.run_lesson_decay() {
-                Ok(result) => {
-                    info!("Lesson decay completed: decayed={}", result.decayed);
-                }
-                Err(e) => {
-                    warn!("Lesson decay task failed: {}", e);
-                }
-            }
-        }
-        info!("Lesson decay task stopped");
-    });
-
-    // Insight decay task: every 24 hours
-    let insight_path = palace_path.clone();
-    let insight_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        let mut ticker = interval(StdDuration::from_secs(INSIGHT_DECAY_INTERVAL_MINUTES * 60));
-        // Run once at startup after a delay
-        tokio::time::sleep(StdDuration::from_secs(330)).await;
-
-        while !insight_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            ticker.tick().await;
-            if insight_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-
-            let runner = BackgroundRunner::new(insight_path.clone());
-            match runner.run_insight_decay() {
-                Ok(result) => {
-                    info!("Insight decay completed: removed={}", result.removed);
-                }
-                Err(e) => {
-                    warn!("Insight decay task failed: {}", e);
-                }
-            }
-        }
-        info!("Insight decay task stopped");
-    });
-
-    // Index persistence task: every 30 minutes
-    let index_path = palace_path.clone();
-    let index_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        let mut ticker = interval(StdDuration::from_secs(INDEX_PERSIST_INTERVAL_MINUTES * 60));
-        // Run once at startup after a short delay
-        tokio::time::sleep(StdDuration::from_secs(60)).await;
-
-        while !index_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            ticker.tick().await;
-            if index_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
-
-            let runner = BackgroundRunner::new(index_path.clone());
-            match runner.run_index_persist() {
-                Ok(result) => {
-                    if result.persisted {
-                        info!("Index persistence completed");
+                    while !auto_forget_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        ticker.tick().await;
+                        if auto_forget_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        let runner = BackgroundRunner::new(auto_forget_path.clone());
+                        if let Ok(result) = runner.run_auto_forget() {
+                            info!("Auto-forget: evaluated={} evicted={} protected={}", result.evaluated, result.evicted, result.protected);
+                        }
                     }
-                }
-                Err(e) => {
-                    warn!("Index persistence task failed: {}", e);
-                }
-            }
-        }
-        info!("Index persistence task stopped");
-    });
+                    info!("Auto-forget task stopped");
+                });
 
-    // Retention sweep task: every 2 hours
-    let retention_path = palace_path.clone();
-    let retention_shutdown = shutdown.clone();
-    tokio::spawn(async move {
-        let mut ticker = interval(StdDuration::from_secs(
-            RETENTION_SWEEP_INTERVAL_MINUTES * 60,
-        ));
-        // Run once at startup after a delay
-        tokio::time::sleep(StdDuration::from_secs(180)).await;
+                // Consolidation task: every 2 hours
+                let consolidation_path = palace_path.clone();
+                let consolidation_shutdown = shutdown.clone();
+                tokio::spawn(async move {
+                    let mut ticker = interval(StdDuration::from_secs(CONSOLIDATION_INTERVAL_MINUTES * 60));
+                    tokio::time::sleep(StdDuration::from_secs(120)).await;
 
-        while !retention_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-            ticker.tick().await;
-            if retention_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
+                    while !consolidation_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        ticker.tick().await;
+                        if consolidation_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        let runner = BackgroundRunner::new(consolidation_path.clone());
+                        if let Ok(result) = runner.run_consolidation().await {
+                            info!("Consolidation: semantic+{} procedural+{} semantic-{} procedural-{}", result.semantic_new_facts, result.procedural_new, result.semantic_decayed, result.procedural_decayed);
+                        }
+                    }
+                    info!("Consolidation task stopped");
+                });
 
-            let runner = BackgroundRunner::new(retention_path.clone());
-            match runner.run_retention_sweep() {
-                Ok(result) => {
-                    info!(
-                        "Retention sweep completed: evaluated={} evicted={}",
-                        result.evaluated, result.evicted
-                    );
-                }
-                Err(e) => {
-                    warn!("Retention sweep task failed: {}", e);
-                }
-            }
-        }
-        info!("Retention sweep task stopped");
-    });
+                // Lesson decay task: every 24 hours
+                let lesson_path = palace_path.clone();
+                let lesson_shutdown = shutdown.clone();
+                tokio::spawn(async move {
+                    let mut ticker = interval(StdDuration::from_secs(LESSON_DECAY_INTERVAL_MINUTES * 60));
+                    tokio::time::sleep(StdDuration::from_secs(300)).await;
+
+                    while !lesson_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        ticker.tick().await;
+                        if lesson_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        let runner = BackgroundRunner::new(lesson_path.clone());
+                        if let Ok(result) = runner.run_lesson_decay() {
+                            info!("Lesson decay: decayed={}", result.decayed);
+                        }
+                    }
+                    info!("Lesson decay task stopped");
+                });
+
+                // Insight decay task: every 24 hours
+                let insight_path = palace_path.clone();
+                let insight_shutdown = shutdown.clone();
+                tokio::spawn(async move {
+                    let mut ticker = interval(StdDuration::from_secs(INSIGHT_DECAY_INTERVAL_MINUTES * 60));
+                    tokio::time::sleep(StdDuration::from_secs(330)).await;
+
+                    while !insight_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        ticker.tick().await;
+                        if insight_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        let runner = BackgroundRunner::new(insight_path.clone());
+                        if let Ok(result) = runner.run_insight_decay() {
+                            info!("Insight decay: removed={}", result.removed);
+                        }
+                    }
+                    info!("Insight decay task stopped");
+                });
+
+                // Index persistence task: every 30 minutes
+                let index_path = palace_path.clone();
+                let index_shutdown = shutdown.clone();
+                tokio::spawn(async move {
+                    let mut ticker = interval(StdDuration::from_secs(INDEX_PERSIST_INTERVAL_MINUTES * 60));
+                    tokio::time::sleep(StdDuration::from_secs(60)).await;
+
+                    while !index_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        ticker.tick().await;
+                        if index_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        let runner = BackgroundRunner::new(index_path.clone());
+                        if let Ok(result) = runner.run_index_persist() {
+                            if result.persisted { info!("Index persistence completed"); }
+                        }
+                    }
+                    info!("Index persistence task stopped");
+                });
+
+                // Retention sweep task: every 2 hours
+                let retention_path = palace_path.clone();
+                let retention_shutdown = shutdown.clone();
+                tokio::spawn(async move {
+                    let mut ticker = interval(StdDuration::from_secs(RETENTION_SWEEP_INTERVAL_MINUTES * 60));
+                    tokio::time::sleep(StdDuration::from_secs(180)).await;
+
+                    while !retention_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        ticker.tick().await;
+                        if retention_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        let runner = BackgroundRunner::new(retention_path.clone());
+                        if let Ok(result) = runner.run_retention_sweep() {
+                            info!("Retention sweep: evaluated={} evicted={}", result.evaluated, result.evicted);
+                        }
+                    }
+                    info!("Retention sweep task stopped");
+                });
+            })
+        })
+        .expect("failed to spawn background thread");
 
     info!(
         "Background tasks started: auto-forget={}m consolidation={}h lesson_decay={}h insight_decay={}h index_persist={}m retention_sweep={}m",
