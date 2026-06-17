@@ -249,7 +249,7 @@ EOF
 detect_mcp_providers() {
   local providers=()
 
-  [[ -f ~/.claude.json ]] || [[ -f ~/.claude/projects/*/settings.json ]] && providers+=("claude-code")
+  [[ -f ~/.claude.json ]] || [[ -f ~/.claude/settings.json ]] || [[ -f ~/.claude/projects/*/settings.json ]] && providers+=("claude-code")
   [[ -d ~/.codex ]] && providers+=("codex")
   [[ -d ~/.cursor ]] && providers+=("cursor")
   [[ -d ~/.codeium/windsurf ]] && providers+=("windsurf")
@@ -374,7 +374,7 @@ auto_install_mcp() {
     case "$provider" in
       claude-code)
         local path=~/.claude.json
-        if [[ -f "$path" ]] || [[ ! -f ~/.claude/projects/*/settings.json ]]; then
+        if [[ -f "$path" ]] || [[ -f ~/.claude/settings.json ]]; then
           local result
           result=$(write_mcp_json_config "$path" "mcpServers" "$bin_path" 2>&1) && echo "$result" || echo "error"
           if [[ "$result" == "installed" ]]; then
@@ -594,6 +594,79 @@ EOF
   log_info "Codex uses the same scripts with a trailing 'codex' argument"
 }
 
+install_claude_code_hooks() {
+  local hooks_dir
+  hooks_dir=$(hook_install_dir)
+  local claude_settings="$HOME/.claude/settings.json"
+
+  if [[ ! -f "$claude_settings" ]]; then
+    log_info "Claude Code settings.json not found, skipping hook registration"
+    return 0
+  fi
+
+  python3 - "$claude_settings" "$hooks_dir" <<'PY'
+import json
+import os
+import sys
+
+path, hooks_dir = sys.argv[1:3]
+
+with open(path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+if not isinstance(data, dict):
+    print("error: settings.json root is not a JSON object")
+    sys.exit(1)
+
+hooks = data.get("hooks", {})
+if not isinstance(hooks, dict):
+    hooks = {}
+    data["hooks"] = hooks
+
+save_hook = os.path.join(hooks_dir, "mempal_save_hook.sh")
+precompact_hook = os.path.join(hooks_dir, "mempal_precompact_hook.sh")
+
+hook_defs = {
+    "Stop": [{
+        "hooks": [{
+            "command": save_hook,
+            "type": "command",
+            "statusMessage": "mempalace: saving session state",
+        }],
+    }],
+    "PreCompact": [{
+        "hooks": [{
+            "command": precompact_hook,
+            "type": "command",
+            "statusMessage": "mempalace: saving before compact",
+        }],
+    }],
+}
+
+changed = False
+for hook_name, hook_config in hook_defs.items():
+    existing = hooks.get(hook_name, [])
+    found = False
+    for entry in existing:
+        if not isinstance(entry, dict):
+            continue
+        for h in entry.get("hooks", []):
+            if isinstance(h, dict) and "mempalace/hooks/mempal_" in h.get("command", ""):
+                found = True
+                break
+    if not found:
+        hooks[hook_name] = existing + hook_config
+        changed = True
+
+if changed:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    print("installed")
+else:
+    print("unchanged")
+PY
+}
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -748,6 +821,15 @@ main() {
   fi
 
   install_hook_wrappers "${install_dir}/${bin}" || log_warn "Hook wrapper install failed"
+
+  # Auto-install Claude Code hooks into settings.json
+  local cc_hook_result
+  cc_hook_result=$(install_claude_code_hooks 2>&1) && echo "$cc_hook_result" || log_warn "Claude Code hook install failed"
+  if [[ "$cc_hook_result" == "installed" ]]; then
+    log_ok "Registered MemPalace hooks in Claude Code settings.json"
+  elif [[ "$cc_hook_result" == "unchanged" ]]; then
+    log_info "MemPalace hooks already registered in Claude Code settings.json"
+  fi
 }
 
 # curl|bash safety: buffer entire script before executing
