@@ -42,22 +42,18 @@ pub fn inject_session_context(
         .map(|p| format!("recent session context project {}", p))
         .unwrap_or_else(|| format!("recent session {} context", session_id));
 
-    // Run async search in a blocking context
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(async {
-        crate::searcher::search_memories_with_rerank(
-            &query,
-            palace_path,
-            None,    // wing filter - none
-            None,    // room filter - none
-            5,       // limit
-            None,    // embedding model
-            false,   // no BM25 reranking
-            Some(3), // max_per_session
-            None,    // fusion mode
-        )
-        .await
-    });
+    // search_memories_with_rerank is synchronous (blocking IO)
+    let result = crate::searcher::search_memories_with_rerank(
+        &query,
+        palace_path,
+        None,    // wing filter - none
+        None,    // room filter - none
+        5,       // limit
+        None,    // embedding model
+        false,   // no BM25 reranking
+        Some(3), // max_per_session
+        None,    // fusion mode
+    );
 
     match result {
         Ok(response) => format_context_as_markdown(&response),
@@ -111,7 +107,6 @@ pub async fn inject_context_async(
         Some(3),
         None,
     )
-    .await
     .map_err(|e| e.to_string())?;
 
     Ok(format_context_as_markdown(&result))

@@ -1244,7 +1244,7 @@ fn cmd_search(
         }
     };
     let palace_path = resolve_palace_path(palace_arg)?;
-    let response = runtime().block_on(searcher::search_memories_with_rerank(
+    let response = searcher::search_memories_with_rerank(
         query,
         &palace_path,
         wing,
@@ -1254,7 +1254,7 @@ fn cmd_search(
         bm25,
         None,
         fusion,
-    ))?;
+    )?;
     if json_output {
         searcher::print_search_response_json(&response);
     } else {
@@ -3075,7 +3075,7 @@ fn cmd_hook(
 
 fn cmd_vision(query: &str, limit: usize, palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    let response = runtime().block_on(searcher::search_memories_with_rerank(
+    let response = searcher::search_memories_with_rerank(
         query,
         &palace_path,
         None, // no wing filter
@@ -3085,7 +3085,7 @@ fn cmd_vision(query: &str, limit: usize, palace_arg: Option<&str>) -> Result<()>
         false, // no BM25
         None,  // no max_per_session
         None,  // no fusion mode
-    ))?;
+    )?;
     searcher::print_search_response(&response);
     Ok(())
 }

@@ -1,27 +1,19 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Mutex;
 
-// SAFETY: `KnowledgeGraph` is `Send + Sync` because all mutable access to
-// `conn` goes through `&mut self` (Rust's normal borrow rules), SQLite
-// serializes concurrent writes internally (WAL mode), and multiple readers
-// are OK with SQLite's reader-writer lock. The caller must serialize concurrent
-// access, which the Palace layer (the primary consumer) does via its own
-// locking. This is the same safety contract as other SQLite wrappers like
-// r2d2, sqlx, etc.
-//
-// If you add a new code path that accesses conn from a background thread
-// without going through Palace's locking, you MUST add a mutex there.
+// SAFETY: `KnowledgeGraph` is `Send + Sync` because `conn` is wrapped in
+// a `Mutex` which makes interior mutation safe across threads. The Mutex
+// serialises all access, and SQLite's WAL mode handles concurrent reads at
+// the C level when the Mutex is not held.
 #[non_exhaustive]
 pub struct KnowledgeGraph {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
-// SAFETY: documented on the struct.
-unsafe impl Send for KnowledgeGraph {}
-
-// SAFETY: documented on the struct.
-unsafe impl Sync for KnowledgeGraph {}
+// KnowledgeGraph is Send + Sync because Mutex<Connection> is Send + Sync.
+// No unsafe impl needed — the compiler derives these automatically.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -154,13 +146,15 @@ impl KnowledgeGraph {
         let conn = Connection::open(db_path)?;
         // Enable WAL mode for better concurrent read performance and reduced SQLITE_BUSY risk
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
-        let kg = Self { conn };
+        let kg = Self {
+            conn: Mutex::new(conn),
+        };
         kg.init_db()?;
         Ok(kg)
     }
 
     fn init_db(&self) -> anyhow::Result<()> {
-        self.conn.execute_batch(
+        self.conn.lock().unwrap().execute_batch(
             "
             CREATE TABLE IF NOT EXISTS entities (
                 id TEXT PRIMARY KEY,
@@ -233,51 +227,46 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// introspect the schema and only issue the ALTER when the column is
     /// missing.
     fn migrate_schema(&self) -> anyhow::Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(triples)")?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(triples)")?;
         let names: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         if !names.iter().any(|n| n == "source_drawer_id") {
-            self.conn
-                .execute("ALTER TABLE triples ADD COLUMN source_drawer_id TEXT", [])?;
+            conn.execute("ALTER TABLE triples ADD COLUMN source_drawer_id TEXT", [])?;
         }
         if !names.iter().any(|n| n == "adapter_name") {
-            self.conn
-                .execute("ALTER TABLE triples ADD COLUMN adapter_name TEXT", [])?;
+            conn.execute("ALTER TABLE triples ADD COLUMN adapter_name TEXT", [])?;
         }
         if !names.iter().any(|n| n == "t_created") {
-            self.conn
-                .execute("ALTER TABLE triples ADD COLUMN t_created TEXT", [])?;
+            conn.execute("ALTER TABLE triples ADD COLUMN t_created TEXT", [])?;
         }
         if !names.iter().any(|n| n == "t_expired") {
-            self.conn
-                .execute("ALTER TABLE triples ADD COLUMN t_expired TEXT", [])?;
+            conn.execute("ALTER TABLE triples ADD COLUMN t_expired TEXT", [])?;
         }
         // mp-027 (#27): typed memory edges with traversal weights. `edge_kind`
         // is the variant name (e.g. "has_tag"); `weight` is the per-edge
         // traversal weight, separate from `confidence`.
         if !names.iter().any(|n| n == "edge_kind") {
-            self.conn
-                .execute("ALTER TABLE triples ADD COLUMN edge_kind TEXT", [])?;
+            conn.execute("ALTER TABLE triples ADD COLUMN edge_kind TEXT", [])?;
         }
         if !names.iter().any(|n| n == "weight") {
-            self.conn
-                .execute("ALTER TABLE triples ADD COLUMN weight REAL", [])?;
+            conn.execute("ALTER TABLE triples ADD COLUMN weight REAL", [])?;
         }
         // The typed-edge index is created after the columns are guaranteed
         // to exist, so palaces that pre-date edge_kind don't fail at the
         // CREATE INDEX statement. SQLite has no `CREATE INDEX IF NOT EXISTS`
         // safety here because the column not existing is what fails.
-        self.conn.execute(
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_triples_edge_kind ON triples(edge_kind)",
             [],
         )?;
         // Backfill existing rows that lack t_created
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples SET t_created = COALESCE(valid_from, extracted_at) WHERE t_created IS NULL",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples SET t_expired = NULL WHERE t_expired IS NULL",
             [],
         )?;
@@ -295,37 +284,37 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             "contradicts",
             "derived_from",
         ] {
-            self.conn.execute(
+            conn.execute(
                 "UPDATE triples SET edge_kind = ?1 WHERE edge_kind IS NULL AND predicate = ?2",
                 rusqlite::params![kind, kind],
             )?;
         }
         // Backfill the canonical weight for the fixed-weight kinds that
         // already had a typed edge_kind (form 1).
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples SET weight = 0.8 WHERE edge_kind = 'has_tag' AND weight IS NULL",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples SET weight = 0.6 WHERE edge_kind = 'in_cluster' AND weight IS NULL",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples SET weight = 0.9 WHERE edge_kind = 'supersedes' AND weight IS NULL",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples SET weight = 0.3 WHERE edge_kind = 'contradicts' AND weight IS NULL",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples SET weight = 0.7 WHERE edge_kind = 'derived_from' AND weight IS NULL",
             [],
         )?;
         // Legacy "<kind>_<weight>" pattern (form 2). Only the six documented
         // kinds participate; predicates with an unknown prefix are left
         // untouched.
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples
              SET edge_kind = 'has_tag',
                  weight = 0.8
@@ -333,7 +322,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                AND predicate LIKE 'has_tag\\_%' ESCAPE '\\'",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples
              SET edge_kind = 'in_cluster',
                  weight = 0.6
@@ -341,7 +330,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                AND predicate LIKE 'in_cluster\\_%' ESCAPE '\\'",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples
              SET edge_kind = 'supersedes',
                  weight = 0.9
@@ -349,7 +338,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                AND predicate LIKE 'supersedes\\_%' ESCAPE '\\'",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples
              SET edge_kind = 'contradicts',
                  weight = 0.3
@@ -357,7 +346,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                AND predicate LIKE 'contradicts\\_%' ESCAPE '\\'",
             [],
         )?;
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples
              SET edge_kind = 'derived_from',
                  weight = 0.7
@@ -366,7 +355,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             [],
         )?;
         // `relates_to_<weight>` carries its own weight; peel the suffix.
-        self.conn.execute(
+        conn.execute(
             "UPDATE triples
              SET edge_kind = 'relates_to',
                  weight = CAST(substr(predicate, length('relates_to_') + 1) AS REAL)
@@ -382,7 +371,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     }
 
     pub fn add_entity(
-        &mut self,
+        &self,
         name: &str,
         entity_type: &str,
         properties: Option<&serde_json::Value>,
@@ -392,7 +381,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             Some(p) => serde_json::to_string(p)?,
             None => "{}".to_string(),
         };
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT OR REPLACE INTO entities (id, name, entity_type, properties) VALUES (?1, ?2, ?3, ?4)",
             params![eid, name, entity_type, props],
         )?;
@@ -401,7 +390,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     #[allow(clippy::too_many_arguments)]
     pub fn add_triple(
-        &mut self,
+        &self,
         subject: &str,
         predicate: &str,
         object: &str,
@@ -440,16 +429,16 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let obj_id = Self::entity_id(object);
         let pred = predicate.to_lowercase().replace(' ', "_");
 
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
             params![sub_id, subject],
         )?;
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
             params![obj_id, object],
         )?;
 
-        let check_exists: Result<String, _> = self.conn.query_row(
+        let check_exists: Result<String, _> = self.conn.lock().unwrap().query_row(
             "SELECT id FROM triples WHERE subject=?1 AND predicate=?2 AND object=?3 AND valid_to IS NULL",
             params![sub_id, pred, obj_id],
             |row| row.get(0),
@@ -461,7 +450,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         // Auto-resolve conflicts: if same subject+predicate has different object,
         // invalidate the old triple first
-        let conflicting: Result<String, _> = self.conn.query_row(
+        let conflicting: Result<String, _> = self.conn.lock().unwrap().query_row(
             "SELECT id FROM triples WHERE subject=?1 AND predicate=?2 AND valid_to IS NULL AND object<>?3",
             params![sub_id, pred, obj_id],
             |row| row.get(0),
@@ -473,7 +462,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             let conflict_end = valid_from
                 .clone()
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-            self.conn.execute(
+            self.conn.lock().unwrap().execute(
                 "UPDATE triples SET valid_to=?1 WHERE id=?2",
                 params![conflict_end, conflict_id],
             )?;
@@ -489,7 +478,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let now = chrono::Utc::now().to_rfc3339();
         let triple_id = format!("t_{}_{}_{}_{}", sub_id, pred, obj_id, &now[..8]);
 
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT INTO triples (id, subject, predicate, object, valid_from, valid_to, confidence, source_closet, source_file, source_drawer_id, adapter_name, t_created, t_expired, edge_kind, weight)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
@@ -515,7 +504,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     }
 
     pub fn invalidate(
-        &mut self,
+        &self,
         subject: &str,
         predicate: &str,
         object: &str,
@@ -528,7 +517,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             .map(|s| s.to_string())
             .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
 
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "UPDATE triples SET valid_to=?1 WHERE subject=?2 AND predicate=?3 AND object=?4 AND valid_to IS NULL",
             params![ended_date, sub_id, pred, obj_id],
         )?;
@@ -567,7 +556,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(date) = as_of {
             if let Some(tt) = tt_as_of {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_created IS NULL OR t.t_created <= ?4) AND (t.t_expired IS NULL OR t.t_expired >= ?5)"
                 )?;
                 let mut rows = stmt.query(params![eid, date, date, tt, tt])?;
@@ -575,7 +565,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result(row, "outgoing", eid)?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_expired IS NULL OR t.t_expired > ?4)"
                 )?;
                 let mut rows = stmt.query(params![eid, date, date, date])?;
@@ -585,7 +576,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             }
         } else {
             if let Some(tt) = tt_as_of {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
                 let mut rows = stmt.query(params![eid, tt, tt])?;
@@ -593,7 +585,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result(row, "outgoing", eid)?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1"
                 )?;
                 let rows = stmt.query_map(params![eid], |row| {
@@ -618,7 +611,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(date) = as_of {
             if let Some(tt) = tt_as_of {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_created IS NULL OR t.t_created <= ?4) AND (t.t_expired IS NULL OR t.t_expired >= ?5)"
                 )?;
                 let mut rows = stmt.query(params![eid, date, date, tt, tt])?;
@@ -626,7 +620,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result_incoming(row, "incoming", eid)?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_expired IS NULL OR t.t_expired > ?4)"
                 )?;
                 let mut rows = stmt.query(params![eid, date, date, date])?;
@@ -636,7 +631,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             }
         } else {
             if let Some(tt) = tt_as_of {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
                 let mut rows = stmt.query(params![eid, tt, tt])?;
@@ -644,7 +640,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result_incoming(row, "incoming", eid)?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1"
                 )?;
                 let rows = stmt.query_map(params![eid], |row| {
@@ -722,7 +719,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(date) = as_of {
             if let Some(tt) = tt_as_of {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_created IS NULL OR t.t_created <= ?4) AND (t.t_expired IS NULL OR t.t_expired >= ?5)"
                 )?;
                 let rows = stmt.query_map(params![pred, date, date, tt, tt], |row| {
@@ -732,7 +730,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(row?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3)"
                 )?;
                 let rows = stmt.query_map(params![pred, date, date], |row| {
@@ -744,7 +743,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             }
         } else {
             if let Some(tt) = tt_as_of {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
                 let rows =
@@ -753,7 +753,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(row?);
                 }
             } else {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1"
                 )?;
                 let rows = stmt.query_map(params![pred], |row| self.row_to_triple(row, &pred))?;
@@ -792,7 +793,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(name) = entity_name {
             let eid = Self::entity_id(name);
-            let mut stmt = self.conn.prepare(
+            let _c = self.conn.lock().unwrap();
+            let mut stmt = _c.prepare(
                 "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.subject = ?1 OR t.object = ?1 ORDER BY t.valid_from ASC LIMIT 100"
             )?;
             let rows = stmt.query_map(params![eid], |row| {
@@ -818,7 +820,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 results.push(row?);
             }
         } else {
-            let mut stmt = self.conn.prepare(
+            let _c = self.conn.lock().unwrap();
+            let mut stmt = _c.prepare(
                 "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id ORDER BY t.valid_from ASC LIMIT 100"
             )?;
             let rows = stmt.query_map([], |row| {
@@ -860,7 +863,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         if let Some(name) = entity_name {
             let eid = Self::entity_id(name);
             if let Some(tt) = tt_as_of {
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
                      JOIN entities s ON t.subject = s.id \
                      JOIN entities o ON t.object = o.id \
@@ -894,7 +898,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             } else {
                 let now = chrono::Utc::now().to_rfc3339();
                 let eid = Self::entity_id(name);
-                let mut stmt = self.conn.prepare(
+                let _c = self.conn.lock().unwrap();
+                let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
                      JOIN entities s ON t.subject = s.id \
                      JOIN entities o ON t.object = o.id \
@@ -937,7 +942,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         &self,
         id: &str,
     ) -> anyhow::Result<(Option<String>, Option<String>)> {
-        let result = self.conn.query_row(
+        let result = self.conn.lock().unwrap().query_row(
             "SELECT t_created, t_expired FROM triples WHERE id = ?1",
             params![id],
             |row| Ok((row.get(0)?, row.get(1)?)),
@@ -946,7 +951,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     }
 
     pub fn set_t_expired(&self, id: &str, value: Option<&str>) -> anyhow::Result<()> {
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "UPDATE triples SET t_expired = ?1 WHERE id = ?2",
             params![value, id],
         )?;
@@ -955,14 +960,12 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     pub fn stats(&self) -> anyhow::Result<KgStats> {
         let total_entities: usize =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
 
         let total_triples: usize =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
+            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
 
-        let current_facts: usize = self.conn.query_row(
+        let current_facts: usize = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM triples WHERE valid_to IS NULL",
             [],
             |row| row.get(0),
@@ -970,9 +973,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         let expired_facts = total_triples - current_facts;
 
-        let mut stmt = self
-            .conn
-            .prepare("SELECT DISTINCT predicate FROM triples ORDER BY predicate")?;
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare("SELECT DISTINCT predicate FROM triples ORDER BY predicate")?;
         let relationship_types: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
             .filter_map(|r| r.ok())
@@ -1006,7 +1008,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// taken from [`crate::types::MemoryEdgeKind::traversal_weight`] so
     /// cascade retrieval sees the canonical jcode weight.
     pub fn add_memory_edge(
-        &mut self,
+        &self,
         from: &str,
         to: &str,
         kind: &crate::types::MemoryEdgeKind,
@@ -1017,11 +1019,11 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let obj_id = Self::entity_id(to);
 
         // Ensure both endpoints exist in the entities table.
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
             params![sub_id, from],
         )?;
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
             params![obj_id, to],
         )?;
@@ -1032,9 +1034,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let triple_id = format!("me_{}_{}_{}", sub_id, kind_str, obj_id);
 
         // Check for existing edge (idempotent — skip if already present).
-        let exists: bool = self
-            .conn
-            .query_row(
+        let exists: bool = self.conn.lock().unwrap().query_row(
                 "SELECT COUNT(*) > 0 FROM triples WHERE subject = ?1 AND edge_kind = ?2 AND object = ?3",
                 params![sub_id, kind_str, obj_id],
                 |row| row.get(0),
@@ -1046,7 +1046,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         let now = chrono::Utc::now().to_rfc3339();
 
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT INTO triples \
              (id, subject, predicate, object, valid_from, valid_to, confidence, \
               source_closet, source_file, source_drawer_id, adapter_name, \
@@ -1072,7 +1072,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         kind: &crate::types::MemoryEdgeKind,
     ) -> anyhow::Result<Vec<Triple>> {
         let kind_str = kind.as_str();
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
              JOIN entities s ON t.subject = s.id \
              JOIN entities o ON t.object = o.id \
@@ -1096,7 +1097,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     ) -> anyhow::Result<Vec<Triple>> {
         let eid = Self::entity_id(subject);
         let kind_str = kind.as_str();
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
              JOIN entities s ON t.subject = s.id \
              JOIN entities o ON t.object = o.id \
@@ -1117,7 +1119,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     ) -> anyhow::Result<Vec<Triple>> {
         let eid = Self::entity_id(object);
         let kind_str = kind.as_str();
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
              JOIN entities s ON t.subject = s.id \
              JOIN entities o ON t.object = o.id \
@@ -1137,7 +1140,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         query: &str,
         outcome: &str,
     ) -> anyhow::Result<()> {
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT INTO episodes (drawer_id, query, outcome) VALUES (?1, ?2, ?3)",
             params![drawer_id, query, outcome],
         )?;
@@ -1147,12 +1150,12 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Get helpfulness score for a drawer based on historical feedback.
     /// Returns a multiplier between 0.5 (unhelpful) and 1.5 (helpful).
     pub fn helpfulness_score(&self, drawer_id: &str) -> anyhow::Result<f64> {
-        let helpful: usize = self.conn.query_row(
+        let helpful: usize = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'helpful'",
             params![drawer_id],
             |row| row.get(0),
         )?;
-        let unhelpful: usize = self.conn.query_row(
+        let unhelpful: usize = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'unhelpful'",
             params![drawer_id],
             |row| row.get(0),
@@ -1168,7 +1171,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     /// Get feedback history for a drawer.
     pub fn get_feedback(&self, drawer_id: &str) -> anyhow::Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT query, outcome FROM episodes WHERE drawer_id = ?1 ORDER BY feedback_at DESC LIMIT 50",
         )?;
         let rows = stmt.query_map(params![drawer_id], |row| {
@@ -1205,7 +1209,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// entity so `query_outgoing_by_kind(InCluster)` works without extra
     /// plumbing.
     pub fn create_cluster(
-        &mut self,
+        &self,
         id: &str,
         name: Option<&str>,
         centroid: &[f32],
@@ -1214,7 +1218,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let now = chrono::Utc::now().to_rfc3339();
         let blob = Self::embedding_to_blob(centroid);
 
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT OR REPLACE INTO clusters (id, name, centroid, member_count, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![id, name, blob, members.len() as i64, now, now],
@@ -1222,7 +1226,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         // Ensure the cluster itself exists as an entity so InCluster edges
         // have valid foreign keys.
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
             rusqlite::params![id, name.unwrap_or(id)],
         )?;
@@ -1234,7 +1238,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let kind_str = kind.as_str();
         for member_id in members {
             let sub_id = Self::entity_id(member_id);
-            let existing: bool = self.conn.query_row(
+            let existing: bool = self.conn.lock().unwrap().query_row(
                 "SELECT COUNT(*) > 0 FROM triples \
                  WHERE subject = ?1 AND object = ?2 AND edge_kind = ?3 AND valid_to IS NULL",
                 rusqlite::params![sub_id, id, kind_str],
@@ -1250,7 +1254,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     /// Retrieve a cluster by ID.
     pub fn get_cluster(&self, id: &str) -> anyhow::Result<Option<ClusterEntry>> {
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT id, name, centroid, member_count, created_at, updated_at \
              FROM clusters WHERE id = ?1",
         )?;
@@ -1275,7 +1280,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// given cluster.
     pub fn get_cluster_members(&self, cluster_id: &str) -> anyhow::Result<Vec<String>> {
         let kind_str = crate::types::MemoryEdgeKind::InCluster.as_str();
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT s.name FROM triples t \
              JOIN entities s ON t.subject = s.id \
              WHERE t.object = ?1 AND t.edge_kind = ?2 AND t.valid_to IS NULL",
@@ -1289,7 +1295,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Update the human-readable name of a cluster.
     pub fn update_cluster_name(&self, id: &str, name: &str) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
-        let changed = self.conn.execute(
+        let changed = self.conn.lock().unwrap().execute(
             "UPDATE clusters SET name = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![name, now, id],
         )?;
@@ -1297,7 +1303,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             anyhow::bail!("cluster not found: {}", id);
         }
         // Also update the entity name so it appears correctly in the KG.
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "UPDATE entities SET name = ?1 WHERE id = ?2",
             rusqlite::params![name, id],
         )?;
@@ -1306,7 +1312,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     /// List all clusters, ordered by creation time.
     pub fn list_clusters(&self) -> anyhow::Result<Vec<ClusterEntry>> {
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT id, name, centroid, member_count, created_at, updated_at \
              FROM clusters ORDER BY created_at ASC",
         )?;
@@ -1331,9 +1338,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Compute the degree (number of incident triples) of a single entity.
     pub fn get_entity_degree(&self, name: &str) -> anyhow::Result<usize> {
         let eid = Self::entity_id(name);
-        let degree: usize = self
-            .conn
-            .query_row(
+        let degree: usize = self.conn.lock().unwrap().query_row(
                 "SELECT COUNT(*) FROM triples WHERE subject = ?1 OR object = ?1",
                 rusqlite::params![eid],
                 |row| row.get(0),
@@ -1345,13 +1350,12 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Build and persist a new graph snapshot from the current KG state.
     pub fn create_snapshot(&self) -> anyhow::Result<GraphSnapshot> {
         let total_nodes: usize =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
         let total_edges: usize =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
+            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
         let mut top_degrees = std::collections::HashMap::new();
-        let mut stmt = self.conn.prepare(
+        let _c = self.conn.lock().unwrap();
+        let mut stmt = _c.prepare(
             "SELECT e.name, COUNT(*) as degree FROM entities e \
              JOIN triples t ON t.subject = e.id OR t.object = e.id \
              GROUP BY e.id ORDER BY degree DESC LIMIT 500",
@@ -1366,8 +1370,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let snapshot_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let top_json = serde_json::to_string(&top_degrees)?;
-        self.conn.execute("DELETE FROM graph_snapshots", [])?;
-        self.conn.execute(
+        self.conn.lock().unwrap().execute("DELETE FROM graph_snapshots", [])?;
+        self.conn.lock().unwrap().execute(
             "INSERT INTO graph_snapshots (snapshot_id, total_nodes, total_edges, top_degrees, created_at, reset_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
             rusqlite::params![snapshot_id, total_nodes, total_edges, top_json, now],
@@ -1384,7 +1388,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     /// Read the current graph snapshot, if any.
     pub fn get_snapshot(&self) -> anyhow::Result<Option<GraphSnapshot>> {
-        let result = self.conn.query_row(
+        let result = self.conn.lock().unwrap().query_row(
             "SELECT snapshot_id, total_nodes, total_edges, top_degrees, created_at, reset_at \
              FROM graph_snapshots LIMIT 1",
             [],
@@ -1413,8 +1417,8 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     pub fn reset_snapshot(&self) -> anyhow::Result<GraphSnapshot> {
         let snapshot_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        self.conn.execute("DELETE FROM graph_snapshots", [])?;
-        self.conn.execute(
+        self.conn.lock().unwrap().execute("DELETE FROM graph_snapshots", [])?;
+        self.conn.lock().unwrap().execute(
             "INSERT INTO graph_snapshots (snapshot_id, total_nodes, total_edges, top_degrees, created_at, reset_at) \
              VALUES (?1, 0, 0, '{}', ?2, ?3)",
             rusqlite::params![snapshot_id, now, now],
@@ -1432,8 +1436,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Pre-flight check: returns node count and whether a prior snapshot exists.
     pub fn snapshot_preflight(&self) -> anyhow::Result<SnapshotPreflight> {
         let total_nodes: usize =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
         let existing = self.get_snapshot()?;
         Ok(SnapshotPreflight {
             total_nodes,
@@ -1456,7 +1459,7 @@ mod tests {
 
     #[test]
     fn test_knowledge_graph_basic() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         let eid = kg.add_entity("Max", "person", None).unwrap();
         assert!(eid.contains("max"));
@@ -1490,7 +1493,7 @@ mod tests {
 
     #[test]
     fn test_invalidation() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         kg.add_triple(
             "Max",
@@ -1533,7 +1536,7 @@ mod tests {
 
     #[test]
     fn test_temporal_filtering() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         kg.add_triple(
             "Max",
@@ -1580,7 +1583,7 @@ mod tests {
 
     #[test]
     fn test_timeline() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         kg.add_triple(
             "Max",
@@ -1645,7 +1648,7 @@ mod tests {
 
     #[test]
     fn test_auto_resolve_conflicts() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         // Add first triple
         kg.add_triple(
@@ -1712,7 +1715,7 @@ mod tests {
 
     #[test]
     fn test_query_relationship_without_as_of_returns_expired_and_current() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         kg.add_triple(
             "Alice",
@@ -1757,7 +1760,7 @@ mod tests {
         // temporal filter, so the row would be invisible to every query.
         // add_triple must reject it at write time instead of silently
         // accepting an unqueryable fact.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let err = kg
             .add_triple(
                 "Alice",
@@ -1784,7 +1787,7 @@ mod tests {
         // #1214: open intervals (only valid_from OR only valid_to) and
         // same-value point-in-time facts must remain accepted; only strict
         // inversion is rejected.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         kg.add_triple(
             "Alice",
             "born_on",
@@ -1818,7 +1821,7 @@ mod tests {
         // mr-gvpc: add_triple must canonicalize `+00:00` → `Z` so KG TEXT
         // comparisons stay consistent regardless of which zero-offset form
         // the caller used.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         kg.add_triple(
             "Alice",
             "works_at",
@@ -1854,7 +1857,7 @@ mod tests {
         // mr-gvpc: naive datetimes (no offset) are ambiguous — they cannot be
         // compared meaningfully as UTC. add_triple must reject them at write
         // time so the KG TEXT column is never polluted with non-UTC values.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let err = kg
             .add_triple(
                 "Alice",
@@ -1880,7 +1883,7 @@ mod tests {
         // mr-gvpc: a non-UTC offset (e.g. +05:30) would shift the timestamp
         // and break TEXT-based as_of comparisons. add_triple must reject any
         // non-UTC offset, even when the value is well-formed.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let err = kg
             .add_triple(
                 "Bob",
@@ -1906,7 +1909,7 @@ mod tests {
         // #1314 / RFC 002 §5.5: adapter-supplied provenance (source_drawer_id +
         // adapter_name) must round-trip into the triples row, not get silently
         // dropped at the storage layer.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let triple_id = kg
             .add_triple(
                 "operating-verb",
@@ -1926,9 +1929,7 @@ mod tests {
             Option<String>,
             Option<String>,
             Option<String>,
-        ) = kg
-            .conn
-            .query_row(
+        ) = kg.conn.lock().unwrap().query_row(
                 "SELECT source_closet, source_file, source_drawer_id, adapter_name \
                  FROM triples WHERE id = ?1",
                 params![triple_id],
@@ -1946,7 +1947,7 @@ mod tests {
         // #1314: callers reading from the KG (timeline / query_entity) must
         // see the source_drawer_id so they can navigate back to the drawer
         // that produced the triple.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         kg.add_triple(
             "Alice",
             "wrote",
@@ -2009,9 +2010,10 @@ mod tests {
 
         // Opening through KnowledgeGraph must run the in-place migration and
         // expose the new columns to add_triple without re-creating the table.
-        let mut kg = KnowledgeGraph::open(&db_path).unwrap();
+        let kg = KnowledgeGraph::open(&db_path).unwrap();
         let names: Vec<String> = {
-            let mut stmt = kg.conn.prepare("PRAGMA table_info(triples)").unwrap();
+            let conn_lock = kg.conn.lock().unwrap();
+            let mut stmt = conn_lock.prepare("PRAGMA table_info(triples)").unwrap();
             stmt.query_map([], |row| row.get::<_, String>(1))
                 .unwrap()
                 .map(|r| r.unwrap())
@@ -2041,9 +2043,7 @@ mod tests {
                 Some("legacy-adapter"),
             )
             .unwrap();
-        let (drawer, adapter): (Option<String>, Option<String>) = kg
-            .conn
-            .query_row(
+        let (drawer, adapter): (Option<String>, Option<String>) = kg.conn.lock().unwrap().query_row(
                 "SELECT source_drawer_id, adapter_name FROM triples WHERE id = ?1",
                 params![triple_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2060,7 +2060,7 @@ mod tests {
 
     #[test]
     fn test_typed_edge_round_trip() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let id = kg
             .add_memory_edge("alice", "rust", &MemoryEdgeKind::HasTag)
             .unwrap();
@@ -2081,7 +2081,7 @@ mod tests {
 
     #[test]
     fn test_query_by_edge_kind_filters_correctly() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         kg.add_memory_edge("alice", "rust", &MemoryEdgeKind::HasTag)
             .unwrap();
         kg.add_memory_edge("alice", "python", &MemoryEdgeKind::HasTag)
@@ -2118,7 +2118,7 @@ mod tests {
 
     #[test]
     fn test_query_outgoing_and_incoming_by_kind() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         kg.add_memory_edge("alice", "rust", &MemoryEdgeKind::HasTag)
             .unwrap();
         kg.add_memory_edge("alice", "bob", &MemoryEdgeKind::RelatesTo { weight: 0.5 })
@@ -2150,13 +2150,11 @@ mod tests {
     fn test_relates_to_weight_is_separate_from_confidence() {
         // The traversal weight lives in its own column and is independent
         // from `confidence`. The typed-edge API defaults confidence to 1.0.
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         kg.add_memory_edge("a", "b", &MemoryEdgeKind::RelatesTo { weight: 0.42 })
             .unwrap();
 
-        let (confidence, weight): (f64, f64) = kg
-            .conn
-            .query_row(
+        let (confidence, weight): (f64, f64) = kg.conn.lock().unwrap().query_row(
                 "SELECT confidence, weight FROM triples WHERE edge_kind = 'relates_to'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2190,7 +2188,8 @@ mod tests {
         // First open runs the migration.
         let kg = KnowledgeGraph::open(&db_path).unwrap();
         let names: Vec<String> = {
-            let mut stmt = kg.conn.prepare("PRAGMA table_info(triples)").unwrap();
+            let conn_lock = kg.conn.lock().unwrap();
+            let mut stmt = conn_lock.prepare("PRAGMA table_info(triples)").unwrap();
             stmt.query_map([], |row| row.get::<_, String>(1))
                 .unwrap()
                 .map(|r| r.unwrap())
@@ -2202,7 +2201,8 @@ mod tests {
         // Second open must be a no-op (idempotent).
         let kg2 = KnowledgeGraph::open(&db_path).unwrap();
         let names2: Vec<String> = {
-            let mut stmt = kg2.conn.prepare("PRAGMA table_info(triples)").unwrap();
+            let conn_lock = kg2.conn.lock().unwrap();
+            let mut stmt = conn_lock.prepare("PRAGMA table_info(triples)").unwrap();
             stmt.query_map([], |row| row.get::<_, String>(1))
                 .unwrap()
                 .map(|r| r.unwrap())
@@ -2243,9 +2243,8 @@ mod tests {
         }
 
         let kg = KnowledgeGraph::open(&db_path).unwrap();
-        let mut stmt = kg
-            .conn
-            .prepare("SELECT id, edge_kind, weight FROM triples ORDER BY id")
+        let conn_lock = kg.conn.lock().unwrap();
+        let mut stmt = conn_lock.prepare("SELECT id, edge_kind, weight FROM triples ORDER BY id")
             .unwrap();
         let rows: Vec<(String, Option<String>, Option<f64>)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
@@ -2358,14 +2357,12 @@ mod bitemporal_tests {
 
         // Row 1: valid_from = "2020-01-15" is more recent than extracted_at = "2019-06-01"
         // COALESCE(valid_from, extracted_at) = "2020-01-15"
-        let (t_created, t_expired): (String, Option<String>) = kg
-            .conn
-            .query_row(
-                "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_1'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
+        let (t_created, t_expired): (String, Option<String>) = kg.conn.lock().unwrap().query_row(
+            "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
         assert_eq!(
             t_created, "2020-01-15",
             "t_created should backfill from valid_from"
@@ -2376,14 +2373,12 @@ mod bitemporal_tests {
         );
 
         // Row 2: valid_from IS NULL → falls back to extracted_at = "2021-03-10"
-        let (t_created, t_expired): (String, Option<String>) = kg
-            .conn
-            .query_row(
-                "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_2'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
+        let (t_created, t_expired): (String, Option<String>) = kg.conn.lock().unwrap().query_row(
+            "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
         assert_eq!(
             t_created, "2021-03-10",
             "t_created should fall back to extracted_at"
@@ -2394,9 +2389,7 @@ mod bitemporal_tests {
         );
 
         // Row 3: valid_from = "2022-07-01" is more recent than extracted_at = "2022-06-15"
-        let (t_created, t_expired): (String, Option<String>) = kg
-            .conn
-            .query_row(
+        let (t_created, t_expired): (String, Option<String>) = kg.conn.lock().unwrap().query_row(
                 "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_3'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2417,7 +2410,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_new_triple_sets_t_created_to_now_and_t_expired_null() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let id = kg
             .add_triple(
                 "Bob",
@@ -2433,9 +2426,7 @@ mod bitemporal_tests {
             )
             .unwrap();
 
-        let (t_created, t_expired): (Option<String>, Option<String>) = kg
-            .conn
-            .query_row(
+        let (t_created, t_expired): (Option<String>, Option<String>) = kg.conn.lock().unwrap().query_row(
                 "SELECT t_created, t_expired FROM triples WHERE id = ?1",
                 params![id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2459,7 +2450,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_tt_as_of_returns_correct_version_of_facts() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         // Add Triple A (no valid_from — valid for all time)
         kg.add_triple(
@@ -2529,7 +2520,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_combined_valid_time_and_transaction_time_filter() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         // Add fact that is valid 2020–2022
         kg.add_triple(
@@ -2584,7 +2575,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_t_expired_supersedes_fact_in_transaction_time_query() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         // Add a triple
         let id = kg
@@ -2603,8 +2594,7 @@ mod bitemporal_tests {
             .unwrap();
 
         // Manually set t_expired to a date in the future
-        kg.conn
-            .execute(
+        kg.conn.lock().unwrap().execute(
                 "UPDATE triples SET t_expired = ?1 WHERE id = ?2",
                 params!["2050-01-01", id],
             )
@@ -2639,7 +2629,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_tt_as_of_with_valid_time_both_set() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         // Fact valid 2020-2025, added at transaction_time T1
         kg.add_triple(
@@ -2709,7 +2699,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_t_expired_is_null_for_current_triples() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         kg.add_triple(
             "Grace",
             "member_of",
@@ -2742,7 +2732,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_timeline_reflects_transaction_time_supersession() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         // Add first fact
         kg.add_triple(
@@ -2809,7 +2799,7 @@ mod bitemporal_tests {
     // -------------------------------------------------------------------------
     #[test]
     fn test_t_expired_boundary_exclusive_in_valid_time_query() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         // Add fact with t_expired set to exactly 2024-06-01
         kg.add_triple(
@@ -2827,8 +2817,7 @@ mod bitemporal_tests {
         .unwrap();
 
         // Update t_expired to 2024-06-01 (manual override for this test)
-        kg.conn
-            .execute(
+        kg.conn.lock().unwrap().execute(
                 "UPDATE triples SET t_expired = '2024-06-01' WHERE subject = 'ivy' AND object = 'alpha'",
                 [],
             )

@@ -1206,7 +1206,7 @@ pub trait MemoryProvider: Send + Sync + 'static {
         })
         .await?;
         if let Some(kg_lock) = self.kg() {
-            let mut kg = kg_lock.lock().expect("kg mutex poisoned");
+            let kg = kg_lock.lock().expect("kg mutex poisoned");
             kg.add_memory_edge(
                 &new_id.0,
                 &old_id.0,
@@ -1314,7 +1314,7 @@ pub trait MemoryProvider: Send + Sync + 'static {
         })
         .await?;
         if let Some(kg_lock) = self.kg() {
-            let mut kg = kg_lock.lock().expect("kg mutex poisoned");
+            let kg = kg_lock.lock().expect("kg mutex poisoned");
             kg.add_memory_edge(&id.0, tag, &crate::types::MemoryEdgeKind::HasTag)?;
         }
         Ok(())
@@ -1366,7 +1366,7 @@ pub trait MemoryProvider: Send + Sync + 'static {
         })
         .await?;
         if let Some(kg_lock) = self.kg() {
-            let mut kg = kg_lock.lock().expect("kg mutex poisoned");
+            let kg = kg_lock.lock().expect("kg mutex poisoned");
             kg.add_memory_edge(
                 &from_id.0,
                 &to_id.0,
@@ -1990,7 +1990,7 @@ impl Palace {
     fn wire_derived_from_edges(&self, added: &[DrawerId]) {
         if added.len() > 1 {
             if let Some(kg_lock) = self.kg.as_deref() {
-                if let Ok(mut kg) = kg_lock.lock() {
+                if let Ok(kg) = kg_lock.lock() {
                     let anchor = &added[0];
                     for other in added.iter().skip(1) {
                         if let Err(e) = kg.add_memory_edge(
@@ -2186,7 +2186,7 @@ impl MemoryProvider for Palace {
                                 Ok(true) => {
                                     // Create Contradicts edge in KG.
                                     if let Some(kg_lock) = &self.kg {
-                                        if let Ok(mut kg) = kg_lock.lock() {
+                                        if let Ok(kg) = kg_lock.lock() {
                                             if let Err(e) = kg.add_memory_edge(
                                                 &id.0,
                                                 &hit_id.0,

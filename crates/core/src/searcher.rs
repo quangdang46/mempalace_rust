@@ -1,22 +1,24 @@
-use crate::bm25::{Bm25Params, Bm25Scorer};
 use crate::palace::FusionMode;
 use crate::palace_db::{self, PalaceDb, PalaceState, QueryResult};
 use crate::palace_graph::cached_graph;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Open the palace for search using a real vector embedder so the hybrid RRF
-/// (BM25 + vector + graph) stream actually uses embeddings (G1 / benchmark
-/// parity). `open_with_embedder` re-syncs embeddings from stored drawer text
-/// on open, so this upgrades retrieval without changing the mining path.
+/// Open the palace for search.
 ///
-/// Falls back to the default (`NullEmbedder`, BM25-only) open path when no
-/// embedder is available (feature off, model download blocked) or when the
-/// stored embedding manifest disagrees — graceful degradation, never a hard
-/// failure for a query.
+/// When `embedding_model` is `"naive"`, opens without a vector embedder
+/// (word-overlap Jaccard similarity only). Otherwise, attempts to open
+/// with a real vector embedder so the hybrid RRF (BM25 + vector + graph)
+/// stream uses embeddings. Falls back to the naive open on any error.
 fn open_for_search(palace_path: &Path, embedding_model: Option<&str>) -> anyhow::Result<PalaceDb> {
+    // "naive" means Jaccard word-overlap — skip the vector path entirely.
+    match embedding_model {
+        Some("naive") | Some("jaccard") => return PalaceDb::open(palace_path),
+        _ => {}
+    }
     let resolved = match embedding_model {
         Some(name) => crate::embed::resolve_embedder(name),
         None => crate::embed::embedder_from_env(),
@@ -137,7 +139,7 @@ pub struct SearchFilters {
     pub room: Option<String>,
 }
 
-pub async fn search_memories(
+pub fn search_memories(
     query: &str,
     palace_path: &Path,
     wing: Option<&str>,
@@ -156,12 +158,17 @@ pub async fn search_memories(
         None,
         None,
     )
-    .await
 }
 
 /// Search with optional BM25 reranking and PPR fusion mode.
+///
+/// This function is synchronous (not async) because all blocking IO —
+/// JSON loading, BM25 indexing, vector HNSW search — happens inside
+/// the `PalaceDb` methods, which handle their own async embedding via
+/// dedicated off-runtime threads. The callers (CLI, MCP, tests) invoke
+/// this directly without `.await`.
 #[allow(clippy::too_many_arguments)]
-pub async fn search_memories_with_rerank(
+pub fn search_memories_with_rerank(
     query: &str,
     palace_path: &Path,
     wing: Option<&str>,
@@ -190,14 +197,14 @@ pub async fn search_memories_with_rerank(
         PalaceState::Ready => {}
     }
 
-    // G1: open with a real vector embedder so the hybrid RRF vector stream is
-    // live (mainline parity with the benchmark path). Falls back internally
-    // to the BM25-only null-embedder open on any error.
+    // Open palace — uses a real vector embedder when embedding_model is
+    // "vector"/"hnsw" or a named model, falls back to naive on error.
     let palace_db = open_for_search(palace_path, embedding_model)
         .map_err(|_| SearchError::NoPalace(palace_path.display().to_string()))?;
 
-    // Fetch results using hybrid_search (BM25 + vector + graph RRF fusion)
-    // when an embedder is available, falling back to naive similarity.
+    // Fetch results using hybrid_search (BM25 + vector + graph RRF fusion).
+    // When `use_bm25` is true, request a wider candidate set so the BM25
+    // reranking step considers more than just the top RRF results.
     let fetch_count = if use_bm25 { n_results * 3 } else { n_results };
     let results = palace_db
         .hybrid_search(&sanitized.clean_query, fetch_count, wing, room)
@@ -206,32 +213,25 @@ pub async fn search_memories_with_rerank(
     let mut search_results: Vec<SearchResult> =
         results.into_iter().map(SearchResult::from).collect();
 
-    if use_bm25 && !search_results.is_empty() {
-        // Extract documents for BM25 scoring
-        let documents: Vec<String> = search_results.iter().map(|r| r.text.clone()).collect();
-
-        // Create BM25 scorer
-        let scorer = Bm25Scorer::new(&documents, Bm25Params::default());
-
-        // Calculate BM25 scores for each result
+    // BM25 reranking: build a BM25 scorer from the (wider) candidate set
+    // returned by hybrid_search and re-rank. This only fires when requested
+    // (the `--bm25` CLI flag or when the MCP server sets use_bm25=true).
+    if use_bm25 && search_results.len() > 1 {
+        let docs: Vec<String> = search_results.iter().map(|r| r.text.clone()).collect();
+        let scorer = crate::bm25::Bm25Scorer::new(&docs, crate::bm25::Bm25Params::default());
         for result in &mut search_results {
             let bm25_score = scorer.score(&result.text, &sanitized.clean_query);
             result.bm25_score = Some(bm25_score);
-
-            // Combine scores: 70% similarity, 30% BM25 (weighted combination)
+            // Normalized BM25 score combined with similarity
             result.combined_score =
                 Some(0.7 * result.similarity + 0.3 * (bm25_score / (bm25_score + 1.0)));
         }
-
-        // Sort by combined score
         search_results.sort_by(|a, b| {
             b.combined_score
                 .unwrap_or(0.0)
                 .partial_cmp(&a.combined_score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-
-        // Truncate to requested count
         search_results.truncate(n_results);
     }
 
@@ -300,7 +300,7 @@ pub async fn search_memories_with_rerank(
     })
 }
 
-pub async fn search(
+pub fn search(
     query: &str,
     palace_path: &Path,
     wing: Option<&str>,
@@ -309,7 +309,7 @@ pub async fn search(
     embedding_model: Option<&str>,
 ) -> anyhow::Result<i32> {
     let response =
-        match search_memories(query, palace_path, wing, room, n_results, embedding_model).await {
+        match search_memories(query, palace_path, wing, room, n_results, embedding_model) {
             Ok(response) => response,
             Err(error) => {
                 if let Some(search_error) = error.downcast_ref::<SearchError>() {
@@ -388,7 +388,7 @@ pub fn print_search_response(response: &SearchResponse) -> i32 {
     0
 }
 
-pub async fn check_duplicate(
+pub fn check_duplicate(
     content: &str,
     palace_path: &Path,
     threshold: f64,
@@ -397,8 +397,7 @@ pub async fn check_duplicate(
     let palace_db = PalaceDb::open(palace_path).context("Failed to open palace database")?;
 
     let results = palace_db
-        .query(&sanitized.clean_query, None, None, 1)
-        .await
+        .query_sync(&sanitized.clean_query, None, None, 1)
         .context("Duplicate check query failed")?;
 
     if let Some(result) = results.into_iter().next() {
@@ -565,8 +564,8 @@ mod tests {
         assert_eq!(end, 2);
     }
 
-    #[tokio::test]
-    async fn test_search_memories_result_shape() {
+    #[test]
+    fn test_search_memories_result_shape() {
         let temp = tempfile::tempdir().unwrap();
         let palace_path = temp.path().join("palace");
         std::fs::create_dir_all(&palace_path).unwrap();
@@ -590,7 +589,6 @@ mod tests {
             DEFAULT_N_RESULTS,
             None,
         )
-        .await
         .unwrap();
 
         assert_eq!(response.query, "JWT authentication");
@@ -604,8 +602,8 @@ mod tests {
         assert!(hit.similarity >= 0.0);
     }
 
-    #[tokio::test]
-    async fn test_search_memories_respects_n_results_limit() {
+    #[test]
+    fn test_search_memories_respects_n_results_limit() {
         let temp = tempfile::tempdir().unwrap();
         let palace_path = temp.path().join("palace");
         std::fs::create_dir_all(&palace_path).unwrap();
@@ -638,17 +636,15 @@ mod tests {
         db.flush().unwrap();
 
         let response = search_memories("code", &palace_path, None, None, 2, None)
-            .await
             .unwrap();
         assert_eq!(response.results.len(), 2);
     }
 
-    #[tokio::test]
-    async fn test_search_memories_no_palace_errors() {
+    #[test]
+    fn test_search_memories_no_palace_errors() {
         let temp = tempfile::tempdir().unwrap();
         let missing = temp.path().join("missing");
         let error = search_memories("anything", &missing, None, None, DEFAULT_N_RESULTS, None)
-            .await
             .unwrap_err();
         let downcast = error.downcast_ref::<SearchError>().unwrap();
         assert!(matches!(downcast, SearchError::NoPalace(_)));
@@ -658,8 +654,8 @@ mod tests {
     /// #1498 regression: palace dir exists but no collection JSON — caller
     /// must see `NotInitialized` (action: `mpr mine`), not a generic missing
     /// palace error that suggests re-running `init`.
-    #[tokio::test]
-    async fn test_search_memories_palace_not_initialized_errors() {
+    #[test]
+    fn test_search_memories_palace_not_initialized_errors() {
         let temp = tempfile::tempdir().unwrap();
         let palace_path = temp.path().join("palace");
         std::fs::create_dir_all(&palace_path).unwrap();
@@ -671,7 +667,6 @@ mod tests {
             DEFAULT_N_RESULTS,
             None,
         )
-        .await
         .unwrap_err();
         let downcast = error.downcast_ref::<SearchError>().unwrap();
         assert!(
@@ -682,8 +677,8 @@ mod tests {
 
     /// #1498 regression: collection JSON exists but no drawers were filed —
     /// caller must see `Empty`, not `NoPalace`, so the hint is `mpr mine`.
-    #[tokio::test]
-    async fn test_search_memories_palace_empty_errors() {
+    #[test]
+    fn test_search_memories_palace_empty_errors() {
         let temp = tempfile::tempdir().unwrap();
         let palace_path = temp.path().join("palace");
         std::fs::create_dir_all(&palace_path).unwrap();
@@ -697,7 +692,6 @@ mod tests {
             DEFAULT_N_RESULTS,
             None,
         )
-        .await
         .unwrap_err();
         let downcast = error.downcast_ref::<SearchError>().unwrap();
         assert!(
@@ -706,8 +700,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_check_duplicate_returns_top_match_above_threshold() {
+    #[test]
+    fn test_check_duplicate_returns_top_match_above_threshold() {
         let temp = tempfile::tempdir().unwrap();
         let palace_path = temp.path().join("palace");
         std::fs::create_dir_all(&palace_path).unwrap();
@@ -724,13 +718,12 @@ mod tests {
         db.flush().unwrap();
 
         let duplicate = check_duplicate("JWT authentication uses bearer tokens", &palace_path, 0.9)
-            .await
             .unwrap();
         assert_eq!(duplicate.as_deref(), Some("dup1"));
     }
 
-    #[tokio::test]
-    async fn test_check_duplicate_respects_threshold() {
+    #[test]
+    fn test_check_duplicate_respects_threshold() {
         let temp = tempfile::tempdir().unwrap();
         let palace_path = temp.path().join("palace");
         std::fs::create_dir_all(&palace_path).unwrap();
@@ -747,7 +740,6 @@ mod tests {
         db.flush().unwrap();
 
         let duplicate = check_duplicate("JWT authentication", &palace_path, 0.95)
-            .await
             .unwrap();
         assert!(duplicate.is_none());
     }

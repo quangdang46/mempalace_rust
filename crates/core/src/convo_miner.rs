@@ -908,7 +908,6 @@ mod tests {
             3,
             None,
         )
-        .await
         .unwrap();
         assert!(!search.results.is_empty());
         assert!(search

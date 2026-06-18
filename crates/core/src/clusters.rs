@@ -93,7 +93,7 @@ fn compute_centroid(embeddings: &[&[f32]]) -> Option<Vec<f32>> {
 ///
 /// The cluster ID string on success.
 pub fn auto_cluster(
-    kg: &mut KnowledgeGraph,
+    kg: &KnowledgeGraph,
     member_ids: &[DrawerId],
     embeddings: &HashMap<DrawerId, Vec<f32>>,
     scope: &str,
@@ -241,7 +241,7 @@ pub fn heuristic_cluster_name(member_contents: &[String]) -> String {
 ///
 /// The number of merges performed.
 pub fn refine_clusters(
-    kg: &mut KnowledgeGraph,
+    kg: &KnowledgeGraph,
     embeddings: &HashMap<DrawerId, Vec<f32>>,
     threshold: f64,
 ) -> anyhow::Result<usize> {
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_auto_cluster_basic() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         let ids = vec![
             DrawerId::new("drawer_a"),
@@ -395,7 +395,7 @@ mod tests {
         emb.insert(DrawerId::new("drawer_b"), vec![0.0, 1.0, 0.0]);
         emb.insert(DrawerId::new("drawer_c"), vec![0.0, 0.0, 1.0]);
 
-        let cluster_id = auto_cluster(&mut kg, &ids, &emb, "retrieval").unwrap();
+        let cluster_id = auto_cluster(&kg, &ids, &emb, "retrieval").unwrap();
         assert!(cluster_id.starts_with("auto-retrieval-"));
 
         // Verify the cluster is persisted.
@@ -423,8 +423,8 @@ mod tests {
 
     #[test]
     fn test_auto_cluster_deterministic() {
-        let mut kg1 = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
-        let mut kg2 = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg1 = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg2 = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         let ids_a = vec![DrawerId::new("x"), DrawerId::new("y")];
         let ids_b = vec![DrawerId::new("y"), DrawerId::new("x")]; // reversed
@@ -433,19 +433,19 @@ mod tests {
         emb.insert(DrawerId::new("x"), vec![1.0, 0.0]);
         emb.insert(DrawerId::new("y"), vec![0.0, 1.0]);
 
-        let id1 = auto_cluster(&mut kg1, &ids_a, &emb, "s").unwrap();
-        let id2 = auto_cluster(&mut kg2, &ids_b, &emb, "s").unwrap();
+        let id1 = auto_cluster(&kg1, &ids_a, &emb, "s").unwrap();
+        let id2 = auto_cluster(&kg2, &ids_b, &emb, "s").unwrap();
         assert_eq!(id1, id2, "same members must yield same cluster ID");
     }
 
     #[test]
     fn test_auto_cluster_requires_two_members() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let ids = vec![DrawerId::new("solo")];
         let mut emb = HashMap::new();
         emb.insert(DrawerId::new("solo"), vec![1.0]);
 
-        let result = auto_cluster(&mut kg, &ids, &emb, "s");
+        let result = auto_cluster(&kg, &ids, &emb, "s");
         assert!(result.is_err(), "should fail with < 2 members");
     }
 
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_list_clusters() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         let ids1 = vec![DrawerId::new("a"), DrawerId::new("b")];
         let ids2 = vec![DrawerId::new("c"), DrawerId::new("d")];
@@ -482,8 +482,8 @@ mod tests {
         emb.insert(DrawerId::new("c"), vec![3.0]);
         emb.insert(DrawerId::new("d"), vec![4.0]);
 
-        auto_cluster(&mut kg, &ids1, &emb, "s1").unwrap();
-        auto_cluster(&mut kg, &ids2, &emb, "s2").unwrap();
+        auto_cluster(&kg, &ids1, &emb, "s1").unwrap();
+        auto_cluster(&kg, &ids2, &emb, "s2").unwrap();
 
         let clusters = kg.list_clusters().unwrap();
         assert_eq!(clusters.len(), 2);
@@ -491,14 +491,14 @@ mod tests {
 
     #[test]
     fn test_update_cluster_name() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
 
         let ids = vec![DrawerId::new("m1"), DrawerId::new("m2")];
         let mut emb = HashMap::new();
         emb.insert(DrawerId::new("m1"), vec![1.0, 0.0]);
         emb.insert(DrawerId::new("m2"), vec![0.0, 1.0]);
 
-        let cluster_id = auto_cluster(&mut kg, &ids, &emb, "s").unwrap();
+        let cluster_id = auto_cluster(&kg, &ids, &emb, "s").unwrap();
 
         // Initially name is None (auto-generated).
         let entry = kg.get_cluster(&cluster_id).unwrap().unwrap();
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_refine_clusters_merges_overlapping() {
-        let mut kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
+        let kg = KnowledgeGraph::open(std::path::Path::new(":memory:")).unwrap();
         let mut emb = HashMap::new();
         emb.insert(DrawerId::new("a"), vec![1.0]);
         emb.insert(DrawerId::new("b"), vec![2.0]);
@@ -555,14 +555,14 @@ mod tests {
 
         // Cluster 1: {a, b}
         let ids1 = vec![DrawerId::new("a"), DrawerId::new("b")];
-        auto_cluster(&mut kg, &ids1, &emb, "x").unwrap();
+        auto_cluster(&kg, &ids1, &emb, "x").unwrap();
 
         // Cluster 2: {b, c} — overlaps with cluster 1 on "b" (50% of smaller set)
         let ids2 = vec![DrawerId::new("b"), DrawerId::new("c")];
-        auto_cluster(&mut kg, &ids2, &emb, "y").unwrap();
+        auto_cluster(&kg, &ids2, &emb, "y").unwrap();
 
         // With threshold 0.4, 50% overlap should trigger a merge.
-        let merges = refine_clusters(&mut kg, &emb, 0.4).unwrap();
+        let merges = refine_clusters(&kg, &emb, 0.4).unwrap();
         assert_eq!(merges, 1, "expected 1 merge");
     }
 }

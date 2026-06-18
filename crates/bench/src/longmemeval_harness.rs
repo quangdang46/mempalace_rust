@@ -315,7 +315,6 @@ pub async fn run<W: std::io::Write>(
             SEARCH_LIMIT,
             Some(&embed_model),
         )
-        .await
         {
             Ok(r) => r,
             Err(e) => {

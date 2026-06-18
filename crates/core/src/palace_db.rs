@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -120,6 +122,25 @@ pub fn print_palace_state_hint(state: PalaceState, palace_path: &std::path::Path
     }
 }
 
+/// Atomically write data to a file with fsync protection.
+/// Uses the write-to-temp-then-rename pattern.
+pub fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp_path = path.with_extension("tmp");
+    {
+        let mut f = std::fs::File::create(&tmp_path)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, path)?;
+    // Sync the parent directory
+    if let Some(parent) = path.parent() {
+        if let Ok(f) = std::fs::File::open(parent) {
+            f.sync_all().ok();
+        }
+    }
+    Ok(())
+}
+
 pub struct PalaceDb {
     documents: HashMap<String, DocumentEntry>,
     palace_path: PathBuf,
@@ -127,7 +148,10 @@ pub struct PalaceDb {
     coordination: Arc<Mutex<CoordinationDb>>,
     bm25: SearchEngine<String>,
     embedder: Arc<dyn crate::embed::Embedder>,
-    embedding_db: EmbeddingDb,
+    /// Optional HNSW vector index. `None` when opened without a real embedder
+    /// (the "naive" Jaccard path). Populated lazily when first vector search
+    /// is requested, or eagerly by `open_with_embedder`.
+    embedding_db: Option<EmbeddingDb>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -168,8 +192,6 @@ impl std::ops::Deref for CoordinationDb {
     }
 }
 
-unsafe impl Send for CoordinationDb {}
-unsafe impl Sync for CoordinationDb {}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Action {
@@ -1183,7 +1205,6 @@ impl PalaceDb {
 
         let embedder: Arc<dyn crate::embed::Embedder> =
             Arc::new(crate::embed::NullEmbedder::new(384));
-        let embedding_db = EmbeddingDb::with_embedder(embedder.clone())?;
 
         // Rebuild BM25 index from loaded documents so hybrid_search has data.
         let mut bm25 = bm25::SearchEngineBuilder::with_avgdl(100.0)
@@ -1201,7 +1222,7 @@ impl PalaceDb {
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
             bm25,
             embedder,
-            embedding_db,
+            embedding_db: None,
         })
     }
 
@@ -1886,7 +1907,7 @@ impl PalaceDb {
                 .k1(1.5)
                 .build(),
             embedder,
-            embedding_db,
+            embedding_db: Some(embedding_db),
         };
 
         // Try loading cached embeddings first (fast), fall back to sync_embeddings (slow)
@@ -1894,13 +1915,15 @@ impl PalaceDb {
         match EmbeddingDb::load_cache(&cache_path, db.embedder.clone()) {
             Ok(cached) => {
                 tracing::debug!("loaded cached embeddings ({} vectors)", cached.len());
-                db.embedding_db = cached;
+                db.embedding_db = Some(cached);
             }
             Err(_) => {
                 tracing::debug!("no cached embeddings, computing from scratch");
                 let _ = db.sync_embeddings();
                 // Save cache for next reopen
-                let _ = db.embedding_db.save_cache(&cache_path);
+                if let Some(ref emb) = db.embedding_db {
+                    let _ = emb.save_cache(&cache_path);
+                }
             }
         }
 
@@ -2094,38 +2117,41 @@ impl PalaceDb {
             .collect();
 
         let query_lower = query_text.to_lowercase();
-        // Vector search using real embeddings (async embedder in sync context)
+        // Vector search using real embeddings (async embedder in sync context).
+        // Only performed when an EmbeddingDb has been populated (either by
+        // open_with_embedder or by lazy construction on first search).
         let vector_results: Vec<StreamResult> = {
-            let (embedder, q) = (self.embedder.clone(), query_text.to_string());
-            match run_off_runtime(move || async move { embedder.embed(&q).await }) {
-                Ok(query_embedding) => {
-                    let normalized_query = normalize_embedding(&query_embedding);
-                    match self
-                        .embedding_db
-                        .query_by_vector(&normalized_query, over_fetch)
-                    {
-                        Ok(results) => results
-                            .into_iter()
-                            .filter_map(|(dist, idx)| {
-                                let doc_id = self.embedding_db.id_at(idx)?;
-                                let entry = self.documents.get(&doc_id)?;
-                                if !passes_filter(entry) {
-                                    return None;
-                                }
-                                Some(StreamResult {
-                                    id: doc_id,
-                                    rank: idx,
-                                    stream: SearchStream::Vector,
+            if let Some(ref embedding_db) = self.embedding_db {
+                let (embedder, q) = (self.embedder.clone(), query_text.to_string());
+                match run_off_runtime(move || async move { embedder.embed(&q).await }) {
+                    Ok(query_embedding) => {
+                        let normalized_query = normalize_embedding(&query_embedding);
+                        match embedding_db.query_by_vector(&normalized_query, over_fetch) {
+                            Ok(results) => results
+                                .into_iter()
+                                .filter_map(|(dist, idx)| {
+                                    let doc_id = embedding_db.id_at(idx)?;
+                                    let entry = self.documents.get(&doc_id)?;
+                                    if !passes_filter(entry) {
+                                        return None;
+                                    }
+                                    Some(StreamResult {
+                                        id: doc_id,
+                                        rank: idx,
+                                        stream: SearchStream::Vector,
+                                    })
                                 })
-                            })
-                            .collect(),
-                        Err(_) => vec![],
+                                .collect(),
+                            Err(_) => vec![],
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("embedding failed: {}", e);
+                        vec![]
                     }
                 }
-                Err(e) => {
-                    tracing::debug!("embedding failed: {}", e);
-                    vec![]
-                }
+            } else {
+                vec![]
             }
         };
 
@@ -2252,7 +2278,7 @@ impl PalaceDb {
             anyhow::Ok(db)
         });
         match built {
-            Ok(db) => self.embedding_db = db,
+            Ok(db) => self.embedding_db = Some(db),
             Err(e) => tracing::debug!("embedding sync skipped: {}", e),
         }
         Ok(())
