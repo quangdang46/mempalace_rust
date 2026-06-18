@@ -132,6 +132,14 @@ fn default_embedding_model() -> String {
     "naive".to_string()
 }
 
+fn default_search_strategy() -> String {
+    "fts5".to_string()
+}
+
+fn default_max_cache_size_mb() -> usize {
+    128
+}
+
 fn default_true() -> bool {
     true
 }
@@ -399,6 +407,13 @@ pub struct Config {
     pub embedder_identity_strict: bool,
     #[serde(default)]
     pub languages: Vec<String>,
+    /// Search strategy (v0.6.0+): "fts5" (default, 0MB), "naive",
+    /// "bm25", or "embedding" (90MB+).
+    #[serde(default = "default_search_strategy")]
+    pub search_strategy: String,
+    /// Low-resource performance flags (v0.6.0+).
+    #[serde(default = "default_max_cache_size_mb")]
+    pub max_cache_size_mb: usize,
     #[serde(default)]
     pub llm_provider: Option<String>,
     #[serde(default)]
@@ -522,6 +537,8 @@ impl Default for Config {
             topic_wings: default_topic_wings(),
             hall_keywords: default_hall_keywords(),
             embedding_model: default_embedding_model(),
+            search_strategy: default_search_strategy(),
+            max_cache_size_mb: default_max_cache_size_mb(),
             languages: Vec::new(),
             llm_provider: None,
             llm_model: None,
@@ -942,6 +959,8 @@ mod tests {
             llm_consent_given: false,
             max_backups: None,
             hooks_auto_save: true,
+            search_strategy: default_search_strategy(),
+            max_cache_size_mb: default_max_cache_size_mb(),
         };
         let people_map = config.load_people_map().unwrap();
         assert_eq!(people_map.get("bob"), Some(&"Robert".to_string()));
@@ -1003,6 +1022,8 @@ mod tests {
             llm_consent_given: false,
             max_backups: None,
             hooks_auto_save: true,
+            search_strategy: default_search_strategy(),
+            max_cache_size_mb: default_max_cache_size_mb(),
         };
         assert_eq!(
             cfg.tunnel_file(),

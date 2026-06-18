@@ -130,6 +130,14 @@ pub enum Commands {
 
         #[arg(long)]
         lang: Option<String>,
+
+        /// Search strategy: fts5 (default, 0MB), naive, bm25, embedding (90MB+)
+        #[arg(long, value_name = "STRATEGY", default_value = "fts5")]
+        search_strategy: String,
+
+        /// Skip creating AGENT.md / USER.md notes
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        no_notes: bool,
     },
 
     /// Mine files into the palace.
@@ -204,6 +212,10 @@ pub enum Commands {
         /// Fusion mode: vector (default), ppr, or hybrid
         #[arg(long, value_name = "MODE")]
         fusion_mode: Option<String>,
+
+        /// Search strategy: fts5 (default, 0MB), naive, bm25, embedding
+        #[arg(long, value_name = "STRATEGY")]
+        strategy: Option<String>,
 
         /// Output results as JSON (for external consumers / piping)
         #[arg(long)]
@@ -503,6 +515,19 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Append a note to AGENT.md (agent's personal notes).
+    Remember {
+        /// The note text to remember
+        text: Vec<String>,
+    },
+
+    /// Recall all notes (AGENT.md + USER.md) and print them.
+    Recall,
+
+    /// Show or modify the user profile (USER.md).
+    #[command(subcommand)]
+    User(UserCommands),
+
     /// Show or modify MemPalace configuration.
     #[command(subcommand)]
     Config(ConfigCommands),
@@ -622,6 +647,24 @@ pub enum MiningMode {
     Auto,
 }
 
+#[derive(Subcommand, Clone, Debug)]
+pub enum UserCommands {
+    /// Set a key=value entry in USER.md
+    Set {
+        /// Key name
+        key: String,
+        /// Value to set
+        value: String,
+    },
+    /// Get a value from USER.md by key
+    Get {
+        /// Key name to query
+        key: String,
+    },
+    /// List all key=value entries in USER.md
+    List,
+}
+
 impl std::str::FromStr for MiningMode {
     type Err = String;
 
@@ -739,6 +782,8 @@ fn cmd_init(
     accept_external_llm: bool,
     auto_mine: bool,
     lang: Option<&str>,
+    search_strategy: &str,
+    no_notes: bool,
 ) -> Result<()> {
     println!();
     println!("{}", "=".repeat(55));
@@ -875,6 +920,29 @@ fn cmd_init(
         config.topic_wings = crate::config::default_topic_wings();
         config.hall_keywords = crate::config::default_hall_keywords();
     }
+
+    // Save search strategy choice
+    if !search_strategy.is_empty() {
+        config.search_strategy = search_strategy.to_string();
+        println!(
+            "  Search strategy: {} (FTS5=0MB, embedding=90MB+)",
+            search_strategy
+        );
+    }
+
+    // Create notes (AGENT.md / USER.md) unless --no-notes
+    if !no_notes {
+        let notes_dir = palace_path.join("notes");
+        match crate::notes::Notes::new(&notes_dir) {
+            Ok(_) => {
+                println!("  Notes created: {}/AGENT.md, USER.md", notes_dir.display());
+            }
+            Err(e) => {
+                eprintln!("  Warning: failed to create notes: {}", e);
+            }
+        }
+    }
+
     config.save()?;
 
     let config_path = config.init()?;
@@ -1263,6 +1331,7 @@ fn cmd_search(
     bm25: bool,
     palace_arg: Option<&str>,
     fusion_mode: Option<&str>,
+    strategy_override: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
     let fusion = match fusion_mode {
@@ -1279,6 +1348,38 @@ fn cmd_search(
         }
     };
     let palace_path = resolve_palace_path(palace_arg)?;
+
+    // If user passed --strategy, dispatch via new SearchStrategy trait.
+    // Otherwise use legacy searcher with fusion mode.
+    if let Some(strategy_name) = strategy_override {
+        let sname = crate::search_strategy::StrategyName::from_str_opt(strategy_name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown strategy '{}'. Use fts5, naive, bm25, or embedding.",
+                    strategy_name
+                )
+            })?;
+        let db = crate::palace_db::PalaceDb::open(&palace_path)?;
+        let hits = crate::search_strategy::run_search(sname, query, &db, results)?;
+        if json_output {
+            let json: Vec<serde_json::Value> = hits
+                .iter()
+                .map(|h| {
+                    serde_json::json!({
+                        "id": h.id,
+                        "score": h.score,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&json)?);
+        } else {
+            for (i, h) in hits.iter().enumerate() {
+                println!("  {}. {}  (score: {:.4})", i + 1, h.id, h.score);
+            }
+        }
+        return Ok(());
+    }
+
     let response = searcher::search_memories_with_rerank(
         query,
         &palace_path,
@@ -2788,6 +2889,8 @@ pub fn run() -> Result<()> {
             accept_external_llm,
             auto_mine,
             lang,
+            search_strategy,
+            no_notes,
         } => {
             let use_llm = !no_llm;
             cmd_init(
@@ -2802,6 +2905,8 @@ pub fn run() -> Result<()> {
                 *accept_external_llm,
                 *auto_mine,
                 lang.as_deref(),
+                search_strategy.as_str(),
+                *no_notes,
             )?
         }
         Commands::Mine {
@@ -2872,6 +2977,7 @@ pub fn run() -> Result<()> {
             results,
             bm25,
             fusion_mode,
+            strategy,
             json,
         } => cmd_search(
             query,
@@ -2881,6 +2987,7 @@ pub fn run() -> Result<()> {
             *bm25,
             palace_arg,
             fusion_mode.as_deref(),
+            strategy.as_deref(),
             *json,
         )?,
         Commands::WakeUp { wing } => cmd_wakeup(wing.as_deref(), palace_arg)?,
@@ -3051,6 +3158,15 @@ pub fn run() -> Result<()> {
         }
         Commands::Upgrade { apply } => {
             cmd_upgrade(*apply)?;
+        }
+        Commands::Remember { text } => {
+            cmd_remember(&text.join(" "), palace_arg)?;
+        }
+        Commands::Recall => {
+            cmd_recall(palace_arg)?;
+        }
+        Commands::User(ref user_cmd) => {
+            cmd_user(user_cmd, palace_arg)?;
         }
         Commands::Stop { pid_file, kill } => {
             cmd_stop(pid_file.as_deref().and_then(|p| p.to_str()), *kill)?;
@@ -3278,6 +3394,83 @@ fn cmd_demo(custom_dir: Option<&Path>, force: bool, palace_arg: Option<&str>) ->
         target.display()
     );
     println!("Try: mpr mine --dir {}", target.display());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Notes Commands (v0.6.0)
+// ---------------------------------------------------------------------------
+
+fn notes_dir_from_palace(palace_arg: Option<&str>) -> Result<std::path::PathBuf> {
+    let palace_path = resolve_palace_path(palace_arg)?;
+    Ok(palace_path.join("notes"))
+}
+
+fn cmd_remember(text: &str, palace_arg: Option<&str>) -> Result<()> {
+    let notes_dir = notes_dir_from_palace(palace_arg)?;
+    if !notes_dir.exists() {
+        anyhow::bail!(
+            "Notes directory not found at {}. Run `mpr init` first to create notes.",
+            notes_dir.display()
+        );
+    }
+    let notes = crate::notes::Notes::new(&notes_dir)?;
+    notes.remember(text)?;
+    println!("  Remembered: {}", text);
+    Ok(())
+}
+
+fn cmd_recall(palace_arg: Option<&str>) -> Result<()> {
+    let notes_dir = notes_dir_from_palace(palace_arg)?;
+    if !notes_dir.exists() {
+        anyhow::bail!(
+            "Notes directory not found at {}. Run `mpr init` first.",
+            notes_dir.display()
+        );
+    }
+    let notes = crate::notes::Notes::new(&notes_dir)?;
+    let content = notes.recall()?;
+    println!("=== AGENT.md ({} entries) ===", content.agent_entries);
+    println!("{}", content.agent);
+    println!("=== USER.md ({} entries) ===", content.user_entries);
+    println!("{}", content.user);
+    Ok(())
+}
+
+fn cmd_user(user_cmd: &UserCommands, palace_arg: Option<&str>) -> Result<()> {
+    let notes_dir = notes_dir_from_palace(palace_arg)?;
+    if !notes_dir.exists() {
+        anyhow::bail!(
+            "Notes directory not found at {}. Run `mpr init` first.",
+            notes_dir.display()
+        );
+    }
+    let notes = crate::notes::Notes::new(&notes_dir)?;
+    match user_cmd {
+        UserCommands::Set { key, value } => {
+            notes.set_user(key, value)?;
+            println!("  Set {}: {}", key, value);
+        }
+        UserCommands::Get { key } => match notes.get_user(key)? {
+            Some(v) => println!("{}: {}", key, v),
+            None => {
+                eprintln!("  Key '{}' not found in USER.md", key);
+                return Err(anyhow::anyhow!("user key not found"));
+            }
+        },
+        UserCommands::List => {
+            let content = notes.recall()?;
+            for line in content.user.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty()
+                    && !trimmed.starts_with('#')
+                    && !trimmed.starts_with("Update via")
+                {
+                    println!("{}", trimmed);
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -3512,6 +3705,7 @@ mod tests {
             results,
             bm25: _,
             fusion_mode: _,
+            strategy: _,
             json: _,
         } = args.command
         {
@@ -3618,6 +3812,8 @@ mod tests {
             false,
             false,
             None,
+            "fts5",
+            false,
         )
         .unwrap();
         std::env::remove_var("XDG_CONFIG_HOME");
@@ -3655,6 +3851,8 @@ mod tests {
             false,
             false,
             None,
+            "fts5",
+            false,
         );
         std::env::remove_var("MEMPALACE_NONINTERACTIVE");
         std::env::remove_var("XDG_CONFIG_HOME");
@@ -3702,6 +3900,8 @@ mod tests {
             false,
             false,
             None,
+            "fts5",
+            false,
         )
         .unwrap();
         let saved_palace_path = Config::load().unwrap().palace_path;
@@ -3745,6 +3945,8 @@ mod tests {
             false,
             false,
             None,
+            "fts5",
+            false,
         )
         .unwrap();
         let saved_palace_path = Config::load().unwrap().palace_path;

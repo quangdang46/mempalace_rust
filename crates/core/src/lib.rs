@@ -32,6 +32,7 @@ pub mod retention;
 pub mod search;
 pub mod search_strategy;
 pub mod searcher;
+pub mod notes;
 pub mod session;
 pub mod sync;
 pub mod types;
