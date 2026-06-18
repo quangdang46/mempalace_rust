@@ -422,6 +422,7 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 // Smart features - crystallize
                 "mempalace_crystallize" => tool_crystallize(&state, args),
                 // Smart features - diagnose
+                "mempalace_health" => tool_health(&state, args),
                 "mempalace_diagnose" => tool_diagnose(&state, args),
                 // Smart features - facet
                 "mempalace_facet_tag" => tool_facet_tag(&state, args),
@@ -886,6 +887,12 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Crystallize Actions",
             "Compress completed action chains into compact crystal digests with lessons learned.",
             serde_json::json!({ "type": "object", "properties": { "action_ids": { "type": "array", "items": { "type": "string" }, "description": "Action IDs to crystallize" }, "narrative": { "type": "string", "description": "Summary narrative of what was accomplished" }, "key_outcomes": { "type": "array", "items": { "type": "string" }, "description": "Key outcomes from this action chain" }, "files_affected": { "type": "array", "items": { "type": "string" }, "description": "Files affected by this action chain (optional)" } }, "required": ["action_ids", "narrative"] }),
+        ),
+        tool(
+            "mempalace_health",
+            "Health Check",
+            "Quick health check: palace connectivity, embedder, and coordination status. Returns a single overall status (okay/warning/error) suitable for stdio MCP mode health probes.",
+            serde_json::json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         ),
         tool(
             "mempalace_diagnose",
@@ -1686,6 +1693,50 @@ fn filter_by_agent_id(
 // ---------------------------------------------------------------------------
 // Tool handlers
 // ---------------------------------------------------------------------------
+
+fn tool_health(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    // Quick health check suitable for stdio MCP mode health probes.
+    // Does not need a fully loaded palace; just checks basic connectivity.
+    let palace_path = &state.palace_path;
+    if !palace_path.exists() {
+        return ok_json(serde_json::json!({
+            "status": "error",
+            "message": "Palace path does not exist",
+            "palace_path": palace_path.to_string_lossy(),
+        }));
+    }
+
+    let db = match fresh_db(state) {
+        Ok(db) => db,
+        Err(e) => {
+            return ok_json(serde_json::json!({
+                "status": "error",
+                "message": format!("Cannot open palace DB: {e}"),
+                "palace_path": palace_path.to_string_lossy(),
+            }));
+        }
+    };
+
+    let drawer_count = db.count();
+    let coordination_ok = db.coordination().action_list_all().is_ok();
+    let embedder = &state.config.embedding_model;
+
+    let (status, message) = if drawer_count == 0 {
+        ("okay", "Palace is open but has no memories yet. Run `mpr mine <dir>` to load data.".to_string())
+    } else if !coordination_ok {
+        ("warning", "Palace is open with memories but coordination subsystem is unavailable.".to_string())
+    } else {
+        ("okay", format!("Palace is healthy with {} memories", drawer_count))
+    };
+
+    ok_json(serde_json::json!({
+        "status": status,
+        "message": message,
+        "palace_path": palace_path.to_string_lossy(),
+        "drawer_count": drawer_count,
+        "embedder": embedder,
+    }))
+}
 
 fn tool_status(state: &AppState, _args: JsonObject) -> Result<CallToolResult, ErrorData> {
     if collection_missing(state) {
@@ -7812,6 +7863,7 @@ mod tests {
             "mempalace_sketch_create",
             "mempalace_sketch_promote",
             "mempalace_crystallize",
+            "mempalace_health",
             "mempalace_diagnose",
             "mempalace_facet_tag",
             "mempalace_facet_query",
