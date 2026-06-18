@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description.workspace = true
+publish = false
 
 [features]
 default = ["embed-fastembed"]
@@ -37,14 +38,13 @@ embed-clip = ["embed-fastembed"]
 sync = []
 llm-openai = []
 llm-anthropic = []
-coordination = []
 vision = []
 rerank = []
 # LLM-based extraction sidecar (issue #32). Enables `sidecar::Sidecar`
 # which calls an LLM to extract memories, check relevance, and detect
 # contradictions. Falls back to heuristic-only when not enabled.
 llm-sidecar = []
-full = ["llm-openai", "llm-anthropic", "coordination", "vision", "rerank"]
+full = ["llm-openai", "llm-anthropic", "vision", "rerank"]
 health = ["dep:sysinfo"]
 # HTTP REST API server (axum-based, `mpr serve --http`).
 http-server = ["dep:axum", "dep:tower-http"]

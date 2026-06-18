@@ -391,3 +391,43 @@ fn test_common_create_temp_palace_dir_isolation() {
     let (_dir2, path2) = common::create_temp_palace_dir("beta");
     assert_ne!(path1, path2, "two temp dirs should be isolated");
 }
+
+// --- Missing parse tests ---
+
+#[test]
+fn test_cli_sweep_parses_with_target() {
+    assert!(Cli::try_parse_from(["mpr", "sweep", "/tmp/target"]).is_ok());
+}
+
+#[test]
+fn test_cli_sweep_missing_target_fails() {
+    assert!(Cli::try_parse_from(["mpr", "sweep"]).is_err());
+}
+
+#[test]
+fn test_cli_mcp_parses() {
+    assert!(Cli::try_parse_from(["mpr", "mcp"]).is_ok());
+}
+
+#[test]
+fn test_cli_serve_instance_and_port_conflict() {
+    // This should fail because --instance and --port are mutually exclusive
+    assert!(Cli::try_parse_from(["mpr", "serve", "--instance", "1", "--port", "3333"]).is_err());
+}
+
+// --- Behavioral test: actions with temp palace ---
+
+#[test]
+fn test_cmd_actions_with_fresh_palace() {
+    let (dir, palace_path) = crate::common::create_temp_palace_dir("test_actions");
+    // Should produce output without panicking even on fresh palace
+    let result = mempalace_core::cli::cmd_actions(Some(palace_path.to_str().unwrap()), None, 10);
+    assert!(result.is_ok(), "cmd_actions should not error on fresh palace: {:?}", result.err());
+}
+
+#[test]
+fn test_cmd_diagnose_with_fresh_palace() {
+    let (dir, palace_path) = crate::common::create_temp_palace_dir("test_diagnose");
+    let result = mempalace_core::cli::cmd_diagnose(Some(palace_path.to_str().unwrap()), false);
+    assert!(result.is_ok(), "cmd_diagnose should not error on fresh palace: {:?}", result.err());
+}

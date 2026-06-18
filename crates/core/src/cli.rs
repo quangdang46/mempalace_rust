@@ -93,7 +93,7 @@ pub enum Commands {
         #[arg(long)]
         yes: bool,
 
-        /// DEPRECATED — LLM-assisted entity refinement is now ON by default.
+        /// DEPRECATED ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ LLM-assisted entity refinement is now ON by default.
         /// This flag is preserved for backward compatibility;
         /// pass --no-llm to opt out instead.
         #[arg(long, action = clap::ArgAction::SetTrue)]
@@ -577,7 +577,7 @@ enum InstructionName {
 
 const SAVE_INTERVAL: usize = 15;
 const STOP_BLOCK_REASON: &str = "AUTO-SAVE checkpoint. Save key topics, decisions, quotes, and code from this session to your memory system. Organize into appropriate categories. Use verbatim quotes where possible. Continue conversation after saving.";
-const PRECOMPACT_BLOCK_REASON: &str = "COMPACTION IMMINENT. Save ALL topics, decisions, quotes, code, and important context from this session to your memory system. Be thorough — after compaction, detailed context will be lost. Organize into appropriate categories. Use verbatim quotes where possible. Save everything, then allow compaction to proceed.";
+const PRECOMPACT_BLOCK_REASON: &str = "COMPACTION IMMINENT. Save ALL topics, decisions, quotes, code, and important context from this session to your memory system. Be thorough ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ after compaction, detailed context will be lost. Organize into appropriate categories. Use verbatim quotes where possible. Save everything, then allow compaction to proceed.";
 // Instruction markdown is embedded at compile time so the binary works
 // regardless of where it's installed. The previous version computed a
 // runtime path from `env!("CARGO_MANIFEST_DIR")` which baked the build
@@ -1317,7 +1317,7 @@ fn cmd_repair(cmd: &RepairCommands, palace_arg: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_mcp(palace_arg: Option<&str>) {
+pub fn cmd_mcp(palace_arg: Option<&str>) {
     let base_server_cmd = "mpr serve";
     if let Some(palace) = palace_arg {
         let resolved_palace = if let Some(stripped) = palace.strip_prefix("~/") {
@@ -1517,7 +1517,7 @@ fn cmd_compress(
     }
 
     // Connect to palace (#1498: stratify state messages so the hint matches
-    // the actual lifecycle stage — init pending vs mine pending vs empty).
+    // the actual lifecycle stage ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ init pending vs mine pending vs empty).
     let state = palace_db::classify_palace(&palace_path);
     if palace_db::print_palace_state_hint(state, &palace_path) {
         return Ok(());
@@ -1664,7 +1664,7 @@ fn cmd_compress(
     Ok(())
 }
 
-fn cmd_sweep(target: &Path, palace_arg: Option<&str>) -> Result<()> {
+pub fn cmd_sweep(target: &Path, palace_arg: Option<&str>) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
     let stats = if target.is_dir() {
@@ -1742,7 +1742,7 @@ fn cmd_split(
     println!();
     println!("{}", "=".repeat(60));
     println!(
-        "  Mega-file splitter — {}",
+        "  Mega-file splitter ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ {}",
         if dry_run { "DRY RUN" } else { "SPLITTING" }
     );
     println!("{}", "=".repeat(60));
@@ -1754,7 +1754,7 @@ fn cmd_split(
             .unwrap_or_else(|| "same dir as source".to_string())
     );
     println!("  Mega-files:  {}", mega_files.len());
-    println!("{}", "─".repeat(60));
+    println!("{}", "ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ".repeat(60));
     println!();
 
     let mut total_sessions = 0;
@@ -1786,7 +1786,7 @@ fn cmd_split(
                 if !dry_run && created_any {
                     let backup = file_path.with_extension("mega_backup");
                     match std::fs::rename(&file_path, &backup) {
-                        Ok(_) => println!("  → Original renamed to {}", backup.display()),
+                        Ok(_) => println!("  ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ Original renamed to {}", backup.display()),
                         Err(error) => errors.push(format!(
                             "Failed to rename {} to {}: {}",
                             file_path.display(),
@@ -1804,16 +1804,16 @@ fn cmd_split(
         }
     }
 
-    println!("{}", "─".repeat(60));
+    println!("{}", "ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ".repeat(60));
     if dry_run {
         println!(
-            "  DRY RUN — would create {} files from {} mega-files",
+            "  DRY RUN ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ would create {} files from {} mega-files",
             files_created.len(),
             total_sessions
         );
     } else {
         println!(
-            "  Done — created {} files from {} mega-files",
+            "  Done ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ created {} files from {} mega-files",
             files_created.len(),
             total_sessions
         );
@@ -2144,7 +2144,7 @@ fn cmd_sessions(palace_arg: Option<&str>, wing: Option<&str>, limit: usize) -> R
     Ok(())
 }
 
-fn cmd_actions(
+pub fn cmd_actions(
     palace_arg: Option<&str>,
     status_filter: Option<&str>,
     limit: usize,
@@ -2152,16 +2152,10 @@ fn cmd_actions(
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
     std::fs::create_dir_all(&coord_dir).with_context(|| {
-        format!(
-            "Could not create coordination directory at {}. Run 'mpr init' first.",
-            coord_dir.display()
-        )
+        "Could not create coordination directory. Run 'mpr init' first.".to_string()
     })?;
     let store = ActionStore::open(&coord_dir.join("actions.db")).with_context(|| {
-        format!(
-            "Could not open action store at {}. Run 'mpr init' to initialize the palace first.",
-            coord_dir.join("actions.db").display()
-        )
+        "Could not open action store. Run 'mpr init' to initialize the palace first.".to_string()
     })?;
 
     let parsed_status = match status_filter {
@@ -2177,10 +2171,7 @@ fn cmd_actions(
     };
 
     let actions = store.list_actions(None, parsed_status).with_context(|| {
-        format!(
-            "Could not read actions from the action store at {}. Run 'mpr repair scan' to check for corruption.",
-            coord_dir.join("actions.db").display()
-        )
+        "Could not read actions from the action store. Run 'mpr repair scan' to check for corruption.".to_string()
     })?;
 
     if actions.is_empty() {
@@ -2205,7 +2196,7 @@ fn cmd_actions(
 // Frontier Command
 // ---------------------------------------------------------------------------
 
-fn cmd_frontier(
+pub fn cmd_frontier(
     palace_arg: Option<&str>,
     agent: Option<&str>,
     include_completed: bool,
@@ -2213,23 +2204,14 @@ fn cmd_frontier(
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
     std::fs::create_dir_all(&coord_dir).with_context(|| {
-        format!(
-            "Could not create coordination directory at {}. Run 'mpr init' first.",
-            coord_dir.display()
-        )
+        "Could not create coordination directory. Run 'mpr init' first.".to_string()
     })?;
 
     let action_store = ActionStore::open(&coord_dir.join("actions.db")).with_context(|| {
-        format!(
-            "Could not open action store at {}. Run 'mpr init' to initialize the palace first.",
-            coord_dir.join("actions.db").display()
-        )
+        "Could not open action store. Run 'mpr init' to initialize the palace first.".to_string()
     })?;
     let lease_store = LeaseStore::open(&coord_dir.join("leases.db")).with_context(|| {
-        format!(
-            "Could not open lease store at {}. Run 'mpr init' to initialize the palace first.",
-            coord_dir.join("leases.db").display()
-        )
+        "Could not open lease store. Run 'mpr init' to initialize the palace first.".to_string()
     })?;
 
     let status_filter = if include_completed {
@@ -2272,7 +2254,7 @@ fn cmd_frontier(
 // Signals Command
 // ---------------------------------------------------------------------------
 
-fn cmd_signals(
+pub fn cmd_signals(
     palace_arg: Option<&str>,
     operation: &str,
     to: Option<&str>,
@@ -2281,16 +2263,10 @@ fn cmd_signals(
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
     std::fs::create_dir_all(&coord_dir).with_context(|| {
-        format!(
-            "Could not create coordination directory at {}. Run 'mpr init' first.",
-            coord_dir.display()
-        )
+        "Could not create coordination directory. Run 'mpr init' first.".to_string()
     })?;
     let store = SignalStore::open(&coord_dir.join("signals.db")).with_context(|| {
-        format!(
-            "Could not open signal store at {}. Run 'mpr init' to initialize the palace first.",
-            coord_dir.join("signals.db").display()
-        )
+        "Could not open signal store. Run 'mpr init' to initialize the palace first.".to_string()
     })?;
 
     match operation {
@@ -2355,16 +2331,13 @@ fn cmd_signals(
 // Context Command
 // ---------------------------------------------------------------------------
 
-fn cmd_context(palace_arg: Option<&str>, levels: usize) -> Result<()> {
+pub fn cmd_context(palace_arg: Option<&str>, levels: usize) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let token_budget = 8000 * levels.max(1);
     let builder = ContextBuilder::new(token_budget);
 
     let xml = builder.build_xml().with_context(|| {
-        format!(
-            "Could not build context XML from the palace at {}. Ensure the palace is initialized with 'mpr init' and contains mined data.",
-            palace_path.display(),
-        )
+        "Could not build context XML. Ensure the palace is initialized with 'mpr init' and contains mined data.".to_string()
     })?;
     println!("{}", xml);
     Ok(())
@@ -2382,10 +2355,7 @@ fn cmd_snapshot(
     let palace_path = resolve_palace_path(palace_arg)?;
     let snapshot_dir = palace_path.join("snapshots");
     let store = SnapshotStore::new(&snapshot_dir).with_context(|| {
-        format!(
-            "Could not open snapshot store at {}. Run 'mpr init' to initialize the palace first.",
-            snapshot_dir.display()
-        )
+        "Could not open snapshot store. Run 'mpr init' to initialize the palace first.".to_string()
     })?;
 
     let _ = with_embeddings;
@@ -2393,10 +2363,7 @@ fn cmd_snapshot(
     if let Some(snapshot_name) = name {
         // Save a snapshot: gather palace state
         let db = PalaceDb::open(&palace_path).with_context(|| {
-            format!(
-                "Could not open palace database at {}. Run 'mpr init' first.",
-                palace_path.display()
-            )
+            "Could not open palace database. Run 'mpr init' first.".to_string()
         })?;
         let all_docs = db.get_all(None, None, usize::MAX);
         let state_json = serde_json::to_string_pretty(&serde_json::json!({
@@ -2419,10 +2386,7 @@ fn cmd_snapshot(
     } else {
         // List snapshots
         let entries = store.list_snapshots().with_context(|| {
-            format!(
-                "Could not list snapshots in {}. The snapshot store may be corrupted. Run 'mpr repair scan'.",
-                snapshot_dir.display()
-            )
+            "Could not list snapshots. The snapshot store may be corrupted. Run 'mpr repair scan'.".to_string()
         })?;
         if entries.is_empty() {
             println!("  No snapshots found.");
@@ -2449,19 +2413,18 @@ fn cmd_import(
     let coord_dir = palace_path.join("coordination");
     std::fs::create_dir_all(&coord_dir).with_context(|| {
         format!(
-            "Could not create coordination directory at {}. Run 'mpr init' first.",
-            coord_dir.display()
+            "Could not create coordination directory. Run 'mpr init' first."
         )
     })?;
 
     let data_str = std::fs::read_to_string(input)
-        .with_context(|| format!("Could not read import file '{}'. Check that the file exists and is readable.", input.display()))?;
+        .with_context(|| "Could not read import file. Check that the file exists and is readable.".to_string())?;
 
     let data: crate::export::export_import::ExportData = match format {
         "json" | "jsonl" => serde_json::from_str(&data_str).with_context(|| {
             format!(
-                "Could not parse '{}' as {} format. Make sure the file contains valid {} data exported from MemPalace.",
-                input.display(), format, format
+                "Could not parse input as {} format. Make sure the file contains valid {} data exported from MemPalace.",
+                format, format
             )
         })?,
         other => anyhow::bail!(
@@ -2472,10 +2435,7 @@ fn cmd_import(
 
     // Open a separate connection to the coordination DB for import
     let conn = rusqlite::Connection::open(&coord_dir.join("coordination.db")).with_context(|| {
-        format!(
-            "Could not open coordination database at {}. Run 'mpr init' to initialize the palace first.",
-            coord_dir.join("coordination.db").display()
-        )
+        "Could not open coordination database. Run 'mpr init' to initialize the palace first.".to_string()
     })?;
     let import_store = ExportImportStore::new(conn)?;
     let result = import_store.import(&data, "merge")?;
@@ -2527,10 +2487,7 @@ fn cmd_profile(
 
     // Compute from palace data
     let db = PalaceDb::open(&palace_path).with_context(|| {
-        format!(
-            "Could not open palace database at {}. Run 'mpr init' first.",
-            palace_path.display()
-        )
+        "Could not open palace database. Run 'mpr init' first.".to_string()
     })?;
     let wing_filter = if wing.is_some() { wing } else { None };
     let results = db.get_all(wing_filter, None, 5000);
@@ -2545,10 +2502,7 @@ fn cmd_profile(
     }
 
     let session_store = SessionStore::open(palace_path.join("sessions")).with_context(|| {
-        format!(
-            "Could not open session store at {}. Run 'mpr init' first.",
-            palace_path.join("sessions").display()
-        )
+        "Could not open session store. Run 'mpr init' first.".to_string()
     })?;
     let sessions = session_store.list_sessions(wing_filter)?;
     let session_count = sessions.len();
@@ -2567,7 +2521,7 @@ fn cmd_profile(
 // Diagnose Command
 // ---------------------------------------------------------------------------
 
-fn cmd_diagnose(palace_arg: Option<&str>, deep: bool) -> Result<()> {
+pub fn cmd_diagnose(palace_arg: Option<&str>, deep: bool) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
     if !palace_path.exists() {
@@ -2580,7 +2534,7 @@ fn cmd_diagnose(palace_arg: Option<&str>, deep: bool) -> Result<()> {
     let report = run_doctor(&palace_path)?;
 
     println!("  Palace diagnosis for {}:", palace_path.display());
-    println!("  Overall health: {}", if report.healthy { "HEALTHY" } else { "ISSUES FOUND — see details below" });
+    println!("  Overall health: {}", if report.healthy { "HEALTHY" } else { "ISSUES FOUND ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ see details below" });
     if !report.healthy {
         println!("  Run 'mpr repair scan' to scan for corruption or 'mpr init' to re-initialize.");
     }
@@ -2612,10 +2566,7 @@ fn cmd_forget(
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let db = PalaceDb::open(&palace_path).with_context(|| {
-        format!(
-            "Could not open palace database at {}. Run 'mpr init' first.",
-            palace_path.display()
-        )
+        "Could not open palace database. Run 'mpr init' first.".to_string()
     })?;
 
     let all_memories = db.get_memories(None, usize::MAX);
@@ -2699,10 +2650,7 @@ fn cmd_evolve(
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let db = PalaceDb::open(&palace_path).with_context(|| {
-        format!(
-            "Could not open palace database at {}. Run 'mpr init' first.",
-            palace_path.display()
-        )
+        "Could not open palace database. Run 'mpr init' first.".to_string()
     })?;
 
     let memories = db.get_memories(wing, count.max(1));
@@ -2861,7 +2809,7 @@ pub fn run() -> Result<()> {
                                 .to_string())
                             .unwrap_or_else(|| "<lock dir>".to_string())
                     );
-                    // EX_TEMPFAIL (75) —> agents can retry without it
+                    // EX_TEMPFAIL (75) ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ> agents can retry without it
                     // looking like a hard failure. mr-oy1m requires a
                     // non-zero exit distinct from generic errors.
                     std::process::exit(75);
@@ -3175,11 +3123,11 @@ fn cmd_remove(force: bool, palace_only: bool, palace_arg: Option<&str>) -> Resul
 
     if palace_only {
         std::fs::remove_dir_all(&data_dir)
-            .with_context(|| format!("Failed to remove data directory: {}", data_dir.display()))?;
+            .with_context(|| "Failed to remove data directory.".to_string())?;
         println!("Removed data: {}", data_dir.display());
     } else {
         std::fs::remove_dir_all(&data_dir)
-            .with_context(|| format!("Failed to remove data directory: {}", data_dir.display()))?;
+            .with_context(|| "Failed to remove data directory.".to_string())?;
         println!("Removed data: {}", data_dir.display());
         let cd = Config::config_dir()?;
         println!(
@@ -3212,7 +3160,7 @@ fn cmd_demo(custom_dir: Option<&Path>, force: bool, palace_arg: Option<&str>) ->
     };
 
     std::fs::create_dir_all(&target)
-        .with_context(|| format!("Failed to create demo data directory: {}", target.display()))?;
+        .with_context(|| "Failed to create demo data directory.".to_string())?;
 
     let demo_files: &[(&str, &str)] = &[
         (
@@ -3240,7 +3188,7 @@ fn cmd_demo(custom_dir: Option<&Path>, force: bool, palace_arg: Option<&str>) ->
     for (filename, content) in demo_files {
         let path = target.join(filename);
         std::fs::write(&path, content)
-            .with_context(|| format!("Failed to write demo file: {}", path.display()))?;
+            .with_context(|| "Failed to write demo file.".to_string())?;
     }
 
     println!(
@@ -3294,7 +3242,7 @@ fn cmd_stop(pid_file: Option<&str>, kill: bool) -> Result<()> {
     }
 
     let pid_str = std::fs::read_to_string(&pid_path)
-        .with_context(|| format!("Failed to read PID file: {}", pid_path.display()))?;
+        .with_context(|| "Failed to read PID file.".to_string())?;
     let pid_str = pid_str.trim();
 
     if pid_str.is_empty() {
