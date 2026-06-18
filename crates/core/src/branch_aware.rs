@@ -264,7 +264,7 @@ mod tests {
         assert!(result.is_some());
         let wt = result.unwrap();
         assert!(wt.is_current);
-        assert_eq!(wt.branch, "master");
+        assert_eq!(wt.branch, "main");
     }
 
     #[test]
