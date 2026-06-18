@@ -6,7 +6,7 @@
 
 mod common;
 
-use clap::CommandFactory;
+use clap::{CommandFactory, Parser};
 use mempalace_core::cli::Cli;
 
 // ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ use mempalace_core::cli::Cli;
 
 #[test]
 fn test_cli_no_args_renders_help() {
-    let cmd = Cli::command();
+    let mut cmd = Cli::command();
     let help = cmd.render_help().to_string();
     assert!(help.contains("MemPalace"), "help should contain 'MemPalace'");
     // Should list representative subcommands

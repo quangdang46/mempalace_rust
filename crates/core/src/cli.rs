@@ -73,7 +73,7 @@ static VERBOSE: LazyLock<bool> = LazyLock::new(|| {
     long_about = None,
     infer_subcommands = true,
 )]
-struct Cli {
+pub struct Cli {
     /// Where the palace lives (default: from ~/.mempalace/config.json or ~/.mempalace/palace)
     #[arg(long)]
     palace: Option<String>,
@@ -83,7 +83,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum Commands {
+pub enum Commands {
     /// Detect rooms from your folder structure and initialize config.
     Init {
         /// Project directory to set up
@@ -545,7 +545,7 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum RepairCommands {
+pub enum RepairCommands {
     /// Scan for corrupt/unfetchable drawer IDs
     Scan {
         /// Only scan this wing
