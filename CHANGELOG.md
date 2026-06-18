@@ -1,5 +1,66 @@
 # Changelog
 
+## v0.5.0 (2026-06-18)
+
+### Masterplan Complete — 100% feature parity with agentmemory ~90%
+
+All 10 "Feature coming soon" CLI stubs wired to real backends. All 10 GitHub
+issues closed. All 395 beads closed. Complete review-swarm audit with 4 fixes.
+
+### Metrics
+
+- **19 commits** since v0.4.0
+- **~2,500+ lines added**, 10 files changed
+- **1,437 tests** (1,321 → 1,437)
+- **10 GitHub issues** closed, **395 beads** closed, **4 review findings** fixed
+
+### CLI — 10 Stubs → Real Commands
+
+- `mpr actions` — ActionStore SQLite CRUD (was "Feature coming soon")
+- `mpr frontier` — compute_frontier scoring (was "Feature coming soon")
+- `mpr signals` — SignalStore send/read/list (was "Feature coming soon")
+- `mpr context` — ContextBuilder XML output (was "Feature coming soon")
+- `mpr snapshot` — SnapshotStore save/load/list (was "Feature coming soon")
+- `mpr import` — ExportImportStore import (was "Feature coming soon")
+- `mpr profile` — ProfileStore compute/get (was "Feature coming soon")
+- `mpr diagnose` — doctor.rs 7 health checks (was "Feature coming soon")
+- `mpr forget` — auto_forget + evict + retention (was "Feature coming soon")
+- `mpr evolve` — memory_lifecycle LLM refine (was "Feature coming soon")
+- `mpr --version` — Version flag added
+- `mpr config show/path` — Config introspection
+- `mpr deinit` — Palace de-initialization
+- `mpr remove --all` — Full cleanup
+
+### Missing Features Added
+
+- `recent_searches_sweep.rs` — 207 lines, background task every 2h
+- `migrate_vector_index.rs` — 265 lines, repair subcommand
+- `mempalace_health` MCP tool — stdio health check endpoint
+- Domain-aware wing detection: `default_code_topic_wings()` for code repos
+
+### Bug Fixes (GitHub Issues)
+
+- #55: Vector search wired into production (HNSW+ONNX, not just bench)
+- #56: Atomic write + fsync for crash-safe persistence
+- #57: ONNX subprocess crash recovery
+- #59: Search pipeline — removed fake async, fixed BM25 funnel
+- #60: Wing detection domain-aware + stale config cleanup on re-init
+- #61: --version, deinit, config show, Remove --all
+- #62: Removed unsafe Send+Sync on rusqlite Connection (Mutex wrappers)
+- #63: Incremental mining via mtime comparison
+- #64: MCP health tool, stale wings fix, entity detection improvements
+
+### Stability
+
+- **Review-swarm fixes:**
+  - Removed filesystem path leakage from 11 error messages (HIGH)
+  - Added 6 behavioral tests (70 total, 0 failed)
+  - CI/CD: caching, no double-trigger, clippy on all OS
+  - Removed dead `coordination` feature flag, added `publish = false`
+- **1,437 tests, 0 failures**
+- **0 clippy warnings** on all platforms
+- **CI/CD**: cross-compilation with `--features full` (no more crippled Linux binaries)
+
 ## v0.4.0 (2026-06-16)
 
 ### Upstream Port — mempalace 3.4.1 + agentmemory 0.9.27
