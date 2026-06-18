@@ -14,7 +14,16 @@ path = "src/main.rs"
 
 [features]
 default = ["embed-fastembed"]
+full = ["mempalace-core/full"]
 embed-fastembed = ["mempalace-core/embed-fastembed"]
+embed-model2vec = ["mempalace-core/embed-model2vec"]
+embed-tract = ["mempalace-core/embed-tract"]
+llm-openai = ["mempalace-core/llm-openai"]
+llm-anthropic = ["mempalace-core/llm-anthropic"]
+vision = ["mempalace-core/vision"]
+rerank = ["mempalace-core/rerank"]
+health = ["mempalace-core/health"]
+http-server = ["mempalace-core/http-server"]
 
 [dependencies]
 mempalace-core = { path = "../core", default-features = false }
