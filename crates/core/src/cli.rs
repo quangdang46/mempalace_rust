@@ -2151,21 +2151,37 @@ fn cmd_actions(
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
-    std::fs::create_dir_all(&coord_dir).context("Failed to create coordination directory")?;
-    let store = ActionStore::open(&coord_dir.join("actions.db"))
-        .context("Failed to open action store")?;
+    std::fs::create_dir_all(&coord_dir).with_context(|| {
+        format!(
+            "Could not create coordination directory at {}. Run 'mpr init' first.",
+            coord_dir.display()
+        )
+    })?;
+    let store = ActionStore::open(&coord_dir.join("actions.db")).with_context(|| {
+        format!(
+            "Could not open action store at {}. Run 'mpr init' to initialize the palace first.",
+            coord_dir.join("actions.db").display()
+        )
+    })?;
 
     let parsed_status = match status_filter {
         Some(s) => Some(
-            s.parse::<ActionStatus>()
-                .map_err(|e: String| anyhow::anyhow!("Invalid action status '{}': {}", s, e))?,
+            s.parse::<ActionStatus>().map_err(|e: String| {
+                anyhow::anyhow!(
+                    "Invalid action status '{}'. Valid statuses: pending, running, completed, failed.",
+                    s
+                )
+            })?,
         ),
         None => None,
     };
 
-    let actions = store
-        .list_actions(None, parsed_status)
-        .context("Failed to list actions")?;
+    let actions = store.list_actions(None, parsed_status).with_context(|| {
+        format!(
+            "Could not read actions from the action store at {}. Run 'mpr repair scan' to check for corruption.",
+            coord_dir.join("actions.db").display()
+        )
+    })?;
 
     if actions.is_empty() {
         let msg = match status_filter {
@@ -2196,10 +2212,25 @@ fn cmd_frontier(
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
-    std::fs::create_dir_all(&coord_dir)?;
+    std::fs::create_dir_all(&coord_dir).with_context(|| {
+        format!(
+            "Could not create coordination directory at {}. Run 'mpr init' first.",
+            coord_dir.display()
+        )
+    })?;
 
-    let action_store = ActionStore::open(&coord_dir.join("actions.db"))?;
-    let lease_store = LeaseStore::open(&coord_dir.join("leases.db"))?;
+    let action_store = ActionStore::open(&coord_dir.join("actions.db")).with_context(|| {
+        format!(
+            "Could not open action store at {}. Run 'mpr init' to initialize the palace first.",
+            coord_dir.join("actions.db").display()
+        )
+    })?;
+    let lease_store = LeaseStore::open(&coord_dir.join("leases.db")).with_context(|| {
+        format!(
+            "Could not open lease store at {}. Run 'mpr init' to initialize the palace first.",
+            coord_dir.join("leases.db").display()
+        )
+    })?;
 
     let status_filter = if include_completed {
         None
@@ -2249,8 +2280,18 @@ fn cmd_signals(
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
-    std::fs::create_dir_all(&coord_dir)?;
-    let store = SignalStore::open(&coord_dir.join("signals.db"))?;
+    std::fs::create_dir_all(&coord_dir).with_context(|| {
+        format!(
+            "Could not create coordination directory at {}. Run 'mpr init' first.",
+            coord_dir.display()
+        )
+    })?;
+    let store = SignalStore::open(&coord_dir.join("signals.db")).with_context(|| {
+        format!(
+            "Could not open signal store at {}. Run 'mpr init' to initialize the palace first.",
+            coord_dir.join("signals.db").display()
+        )
+    })?;
 
     match operation {
         "send" => {
@@ -2319,9 +2360,11 @@ fn cmd_context(palace_arg: Option<&str>, levels: usize) -> Result<()> {
     let token_budget = 8000 * levels.max(1);
     let builder = ContextBuilder::new(token_budget);
 
-    let xml = builder
-        .build_xml()
-        .context("Failed to build context XML")?;
+    let xml = builder.build_xml().with_context(|| {
+        format!(
+            "Could not build context XML from the palace at {}. Ensure the palace is initialized with 'mpr init' and contains mined data."
+        )
+    })?;
     println!("{}", xml);
     Ok(())
 }
@@ -2337,13 +2380,23 @@ fn cmd_snapshot(
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let snapshot_dir = palace_path.join("snapshots");
-    let store = SnapshotStore::new(&snapshot_dir)?;
+    let store = SnapshotStore::new(&snapshot_dir).with_context(|| {
+        format!(
+            "Could not open snapshot store at {}. Run 'mpr init' to initialize the palace first.",
+            snapshot_dir.display()
+        )
+    })?;
 
     let _ = with_embeddings;
 
     if let Some(snapshot_name) = name {
         // Save a snapshot: gather palace state
-        let db = PalaceDb::open(&palace_path)?;
+        let db = PalaceDb::open(&palace_path).with_context(|| {
+            format!(
+                "Could not open palace database at {}. Run 'mpr init' first.",
+                palace_path.display()
+            )
+        })?;
         let all_docs = db.get_all(None, None, usize::MAX);
         let state_json = serde_json::to_string_pretty(&serde_json::json!({
             "drawer_count": db.count(),
@@ -2364,7 +2417,12 @@ fn cmd_snapshot(
         );
     } else {
         // List snapshots
-        let entries = store.list_snapshots()?;
+        let entries = store.list_snapshots().with_context(|| {
+            format!(
+                "Could not list snapshots in {}. The snapshot store may be corrupted. Run 'mpr repair scan'.",
+                snapshot_dir.display()
+            )
+        })?;
         if entries.is_empty() {
             println!("  No snapshots found.");
         } else {
@@ -2388,18 +2446,36 @@ fn cmd_import(
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
-    std::fs::create_dir_all(&coord_dir)?;
+    std::fs::create_dir_all(&coord_dir).with_context(|| {
+        format!(
+            "Could not create coordination directory at {}. Run 'mpr init' first.",
+            coord_dir.display()
+        )
+    })?;
 
     let data_str = std::fs::read_to_string(input)
-        .with_context(|| format!("Failed to read input file: {}", input.display()))?;
+        .with_context(|| format!("Could not read import file '{}'. Check that the file exists and is readable.", input.display()))?;
 
     let data: crate::export::export_import::ExportData = match format {
-        "json" | "jsonl" => serde_json::from_str(&data_str)?,
-        other => anyhow::bail!("Unsupported import format '{}': use 'json' or 'jsonl'", other),
+        "json" | "jsonl" => serde_json::from_str(&data_str).with_context(|| {
+            format!(
+                "Could not parse '{}' as {} format. Make sure the file contains valid {} data exported from MemPalace.",
+                input.display(), format, format
+            )
+        })?,
+        other => anyhow::bail!(
+            "Unsupported import format '{}'. Use 'json' or 'jsonl'.",
+            other
+        ),
     };
 
     // Open a separate connection to the coordination DB for import
-    let conn = rusqlite::Connection::open(&coord_dir.join("coordination.db"))?;
+    let conn = rusqlite::Connection::open(&coord_dir.join("coordination.db")).with_context(|| {
+        format!(
+            "Could not open coordination database at {}. Run 'mpr init' to initialize the palace first.",
+            coord_dir.join("coordination.db").display()
+        )
+    })?;
     let import_store = ExportImportStore::new(conn)?;
     let result = import_store.import(&data, "merge")?;
 
@@ -2409,8 +2485,8 @@ fn cmd_import(
             result.stats.sessions, result.stats.observations, result.stats.memories
         );
     } else {
-        println!(
-            "  Import failed: {}",
+        eprintln!(
+            "  Import failed: {}. Check that the input file matches the export format and retry.",
             result.error.as_deref().unwrap_or("unknown error")
         );
     }
@@ -2427,6 +2503,12 @@ fn cmd_profile(
     refresh: bool,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
+    if !palace_path.join(format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME)).exists() {
+        anyhow::bail!(
+            "Palace not found at {}. Run 'mpr init' to set up a new palace.",
+            palace_path.display()
+        );
+    }
     let project_name = wing.unwrap_or("default");
     let profile_store = ProfileStore::new(project_name);
 
@@ -2443,7 +2525,12 @@ fn cmd_profile(
     }
 
     // Compute from palace data
-    let db = PalaceDb::open(&palace_path)?;
+    let db = PalaceDb::open(&palace_path).with_context(|| {
+        format!(
+            "Could not open palace database at {}. Run 'mpr init' first.",
+            palace_path.display()
+        )
+    })?;
     let wing_filter = if wing.is_some() { wing } else { None };
     let results = db.get_all(wing_filter, None, 5000);
 
@@ -2456,7 +2543,12 @@ fn cmd_profile(
         }
     }
 
-    let session_store = SessionStore::open(palace_path.join("sessions"))?;
+    let session_store = SessionStore::open(palace_path.join("sessions")).with_context(|| {
+        format!(
+            "Could not open session store at {}. Run 'mpr init' first.",
+            palace_path.join("sessions").display()
+        )
+    })?;
     let sessions = session_store.list_sessions(wing_filter)?;
     let session_count = sessions.len();
 
@@ -2477,14 +2569,20 @@ fn cmd_profile(
 fn cmd_diagnose(palace_arg: Option<&str>, deep: bool) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
-    let report = if deep {
-        run_doctor(&palace_path)?
-    } else {
-        run_doctor(&palace_path)?
-    };
+    if !palace_path.exists() {
+        anyhow::bail!(
+            "Palace path does not exist at {}. Run 'mpr init <dir>' to set up a palace first.",
+            palace_path.display()
+        );
+    }
+
+    let report = run_doctor(&palace_path)?;
 
     println!("  Palace diagnosis for {}:", palace_path.display());
-    println!("  Overall health: {}", if report.healthy { "HEALTHY" } else { "ISSUES FOUND" });
+    println!("  Overall health: {}", if report.healthy { "HEALTHY" } else { "ISSUES FOUND — see details below" });
+    if !report.healthy {
+        println!("  Run 'mpr repair scan' to scan for corruption or 'mpr init' to re-initialize.");
+    }
     println!();
     for check in &report.checks {
         let icon = match check.status {
@@ -2496,7 +2594,7 @@ fn cmd_diagnose(palace_arg: Option<&str>, deep: bool) -> Result<()> {
     }
     if !deep {
         println!();
-        println!("  Tip: Run with --deep for more thorough diagnostics");
+        println!("  Tip: Run with --deep for more thorough diagnostics.");
     }
     Ok(())
 }
@@ -2512,7 +2610,12 @@ fn cmd_forget(
     dry_run: bool,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    let db = PalaceDb::open(&palace_path)?;
+    let db = PalaceDb::open(&palace_path).with_context(|| {
+        format!(
+            "Could not open palace database at {}. Run 'mpr init' first.",
+            palace_path.display()
+        )
+    })?;
 
     let all_memories = db.get_memories(None, usize::MAX);
 
@@ -2557,6 +2660,10 @@ fn cmd_forget(
 
     if forgettable.is_empty() {
         println!("  No memories to forget.");
+        if older_than_days.is_some() || memory_type.is_some() {
+            println!("  Try adjusting your filters (--older-than-days or --memory-type) to target different memories.");
+        }
+        println!("  Use 'mpr status' to see total memory count.");
         return Ok(());
     }
 
@@ -2567,7 +2674,7 @@ fn cmd_forget(
 
     if dry_run {
         println!();
-        println!("  [dry-run mode - no changes made]");
+        println!("  [dry-run mode - no changes made. Pass --dry-run=false to apply forgetting.]");
     } else {
         let _forgotten = apply_forgetting(
             &evaluations,
@@ -2590,12 +2697,22 @@ fn cmd_evolve(
     count: usize,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    let db = PalaceDb::open(&palace_path)?;
+    let db = PalaceDb::open(&palace_path).with_context(|| {
+        format!(
+            "Could not open palace database at {}. Run 'mpr init' first.",
+            palace_path.display()
+        )
+    })?;
 
     let memories = db.get_memories(wing, count.max(1));
 
     if memories.is_empty() {
         println!("  No memories found to evolve.");
+        if let Some(w) = wing {
+            println!("  No memories in wing '{}'. Use 'mpr mine <dir>' to add memories first, or omit --wing to target all wings.", w);
+        } else {
+            println!("  Use 'mpr mine <dir>' to add memories to this palace first.");
+        }
         return Ok(());
     }
 
