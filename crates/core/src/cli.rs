@@ -2362,7 +2362,8 @@ fn cmd_context(palace_arg: Option<&str>, levels: usize) -> Result<()> {
 
     let xml = builder.build_xml().with_context(|| {
         format!(
-            "Could not build context XML from the palace at {}. Ensure the palace is initialized with 'mpr init' and contains mined data."
+            "Could not build context XML from the palace at {}. Ensure the palace is initialized with 'mpr init' and contains mined data.",
+            palace_path.display(),
         )
     })?;
     println!("{}", xml);
