@@ -1524,10 +1524,9 @@ fn cmd_compress(
     }
     let Ok(palace_db) = PalaceDb::open(&palace_path) else {
         println!(
-            "\n  Palace at {} could not be opened.",
-            palace_path.display()
+            "\n  Palace could not be opened."
         );
-        println!("  Try: mpr repair status <dir>");
+        println!("  Try: mpr repair status");
         return Ok(());
     };
 
@@ -2412,9 +2411,7 @@ fn cmd_import(
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
     std::fs::create_dir_all(&coord_dir).with_context(|| {
-        format!(
-            "Could not create coordination directory. Run 'mpr init' first."
-        )
+        "Could not create coordination directory. Run 'mpr init' first.".to_string()
     })?;
 
     let data_str = std::fs::read_to_string(input)
@@ -2466,8 +2463,7 @@ fn cmd_profile(
     let palace_path = resolve_palace_path(palace_arg)?;
     if !palace_path.join(format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME)).exists() {
         anyhow::bail!(
-            "Palace not found at {}. Run 'mpr init' to set up a new palace.",
-            palace_path.display()
+            "Palace not found. Run 'mpr init' to set up a new palace."
         );
     }
     let project_name = wing.unwrap_or("default");
@@ -2526,14 +2522,13 @@ pub fn cmd_diagnose(palace_arg: Option<&str>, deep: bool) -> Result<()> {
 
     if !palace_path.exists() {
         anyhow::bail!(
-            "Palace path does not exist at {}. Run 'mpr init <dir>' to set up a palace first.",
-            palace_path.display()
+            "Palace path does not exist. Run 'mpr init <dir>' to set up a palace first."
         );
     }
 
     let report = run_doctor(&palace_path)?;
 
-    println!("  Palace diagnosis for {}:", palace_path.display());
+    println!("  Palace diagnosis for configured palace:");
     println!("  Overall health: {}", if report.healthy { "HEALTHY" } else { "ISSUES FOUND ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ see details below" });
     if !report.healthy {
         println!("  Run 'mpr repair scan' to scan for corruption or 'mpr init' to re-initialize.");
@@ -3104,10 +3099,7 @@ fn cmd_remove(force: bool, palace_only: bool, palace_arg: Option<&str>) -> Resul
     let data_dir = resolve_palace_path(palace_arg)?;
 
     if !data_dir.exists() {
-        println!(
-            "No data found at {}. Nothing to remove.",
-            data_dir.display()
-        );
+        println!("No data found. Nothing to remove.");
         return Ok(());
     }
 
@@ -3234,10 +3226,7 @@ fn cmd_stop(pid_file: Option<&str>, kill: bool) -> Result<()> {
     };
 
     if !pid_path.exists() {
-        println!(
-            "No PID file found at {}. Server may not be running.",
-            pid_path.display()
-        );
+        println!("No PID file found. Server may not be running.");
         return Ok(());
     }
 
@@ -3246,7 +3235,7 @@ fn cmd_stop(pid_file: Option<&str>, kill: bool) -> Result<()> {
     let pid_str = pid_str.trim();
 
     if pid_str.is_empty() {
-        anyhow::bail!("PID file is empty: {}", pid_path.display());
+        anyhow::bail!("PID file is empty. The server may not be running correctly.");
     }
 
     let pid: u32 = pid_str
