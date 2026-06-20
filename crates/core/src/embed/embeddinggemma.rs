@@ -126,7 +126,9 @@ impl Embedder for EmbeddingGemmaEmbedder {
 
     async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
         let mut out = self.embed_batch(&[text]).await?;
-        Ok(out.pop().unwrap_or_default())
+        out.pop()
+            .ok_or_else(|| anyhow::anyhow!("embed: empty batch returned from embedder"))
+    
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {

@@ -134,8 +134,25 @@ pub struct ThreadSummary {
 
 impl SignalStore {
     fn row_to_signal(&self, row: &rusqlite::Row) -> rusqlite::Result<Signal> {
-        let signal_type_str: String = row.get("signal_type")?;
-        let signal_type = signal_type_str.parse().unwrap_or(SignalType::Info);
+        let signal_type: crate::types::SignalType = row
+            .get::<_, String>("signal_type")?
+            .parse()
+            .map_err(|e: String| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e,
+                )))
+            })?;
+        let metadata: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&row.get::<_, String>("metadata")?).map_err(|e| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            })?;
+        let created_at_str: String = row.get("created_at")?;
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(|e| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            })?;
         Ok(Signal {
             id: row.get("id")?,
             from: row.get("from_agent")?,
@@ -144,10 +161,8 @@ impl SignalStore {
             reply_to: row.get("reply_to")?,
             signal_type,
             content: row.get("content")?,
-            metadata: serde_json::from_str(&row.get::<_, String>("metadata")?).unwrap_or_default(),
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+            metadata,
+            created_at,
             read_at: row
                 .get::<_, Option<String>>("read_at")?
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())

@@ -3,7 +3,7 @@
 //! Provides exclusive and shared file-level locks with glob pattern matching,
 //! conflict detection, and TTL-based expiry.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -217,7 +217,7 @@ impl FileReservationStore {
             if mode == ReservationMode::Exclusive || other_mode == ReservationMode::Exclusive {
                 let expires_at = DateTime::parse_from_rfc3339(&other_expires)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
+                    .with_context(|| "invalid expires_at in check_conflict")?;
                 return Ok(ReservationConflict::ExclusiveConflict {
                     holder: other_agent,
                     expires_at,
@@ -243,18 +243,24 @@ impl FileReservationStore {
         )?;
 
         let rows = stmt.query_map(params![now], |row| {
+            let acquired_at: String = row.get(5)?;
+            let expires_at: String = row.get(6)?;
             Ok(FileReservation {
                 id: row.get(0)?,
                 path_pattern: row.get(1)?,
                 agent_id: row.get(2)?,
                 mode: ReservationMode::from_str(&row.get::<_, String>(3)?),
                 reason: row.get(4)?,
-                acquired_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
+                acquired_at: DateTime::parse_from_rfc3339(&acquired_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                expires_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
+                    .map_err(|e| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                    })?,
+                expires_at: DateTime::parse_from_rfc3339(&expires_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                    })?,
                 released_at: None,
             })
         })?;
@@ -274,18 +280,24 @@ impl FileReservationStore {
         )?;
 
         let rows = stmt.query_map(params![agent_id, now], |row| {
+            let acquired_at: String = row.get(5)?;
+            let expires_at: String = row.get(6)?;
             Ok(FileReservation {
                 id: row.get(0)?,
                 path_pattern: row.get(1)?,
                 agent_id: row.get(2)?,
                 mode: ReservationMode::from_str(&row.get::<_, String>(3)?),
                 reason: row.get(4)?,
-                acquired_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
+                acquired_at: DateTime::parse_from_rfc3339(&acquired_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                expires_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
+                    .map_err(|e| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                    })?,
+                expires_at: DateTime::parse_from_rfc3339(&expires_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                    .map_err(|e| {
+                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+                    })?,
                 released_at: None,
             })
         })?;
