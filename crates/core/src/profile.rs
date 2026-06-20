@@ -108,7 +108,10 @@ impl ProfileStore {
             updated_at: now,
         };
 
-        let mut cache = self.cache.lock().map_err(|e| anyhow::anyhow!("cache lock poisoned: {}", e))?;
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|e| anyhow::anyhow!("cache lock poisoned: {}", e))?;
         cache.profile = Some(profile.clone());
         cache.cached_at = Some(now);
 

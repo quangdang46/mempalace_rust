@@ -247,27 +247,23 @@ impl ActionStore {
     }
 
     fn row_to_action(&self, row: &rusqlite::Row) -> rusqlite::Result<Action> {
-        let status: ActionStatus = row
-            .get::<_, String>("status")?
-            .parse()
-            .map_err(|e: String| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    e,
-                )))
-            })?;
+        let status: ActionStatus =
+            row.get::<_, String>("status")?
+                .parse()
+                .map_err(|e: String| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        e,
+                    )))
+                })?;
         let created_at_str: String = row.get("created_at")?;
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?;
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let updated_at_str: String = row.get("updated_at")?;
         let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
             .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?;
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let tags_str: String = row.get("tags")?;
         let source_obs_str: String = row.get("source_observation_ids")?;
         let source_mem_str: String = row.get("source_memory_ids")?;
@@ -283,20 +279,16 @@ impl ActionStore {
             created_by: row.get("created_by")?,
             assigned_to: row.get("assigned_to")?,
             project: row.get("project")?,
-            tags: serde_json::from_str(&tags_str).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?,
-            source_observation_ids: serde_json::from_str(&source_obs_str).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?,
-            source_memory_ids: serde_json::from_str(&source_mem_str).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?,
+            tags: serde_json::from_str(&tags_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+            source_observation_ids: serde_json::from_str(&source_obs_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+            source_memory_ids: serde_json::from_str(&source_mem_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             result: row.get("result")?,
             parent_id: row.get("parent_id")?,
-            metadata: serde_json::from_str(&metadata_str).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?,
+            metadata: serde_json::from_str(&metadata_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             sketch_id: row.get("sketch_id")?,
             crystallized_into: row.get("crystallized_into")?,
         })

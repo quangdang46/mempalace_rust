@@ -32,9 +32,7 @@ impl SearchStrategy for Fts5Strategy {
     fn search(&self, query: &str, db: &PalaceDb, n: usize) -> Result<Vec<SearchHit>> {
         match fts5_search(db, query, n) {
             Ok(hits) if !hits.is_empty() => Ok(hits),
-            Ok(_) | Err(_) => {
-                NaiveJaccardStrategy::new().search(query, db, n)
-            }
+            Ok(_) | Err(_) => NaiveJaccardStrategy::new().search(query, db, n),
         }
     }
 }

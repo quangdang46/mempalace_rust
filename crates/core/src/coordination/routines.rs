@@ -149,9 +149,10 @@ impl RoutineStore {
             .map(|dt| dt.with_timezone(&Utc));
         let status: String = row.get("status")?;
         let step_results_str: String = row.get("step_results")?;
-        let step_results: HashMap<String, String> =
-            serde_json::from_str(&step_results_str)
-                .with_context(|| format!("get_run_status: invalid step_results JSON '{step_results_str}'"))?;
+        let step_results: HashMap<String, String> = serde_json::from_str(&step_results_str)
+            .with_context(|| {
+                format!("get_run_status: invalid step_results JSON '{step_results_str}'")
+            })?;
 
         Ok(RoutineRun {
             id: run_id.to_string(),
@@ -185,26 +186,19 @@ impl RoutineStore {
             id: row.get("id")?,
             name: row.get("name")?,
             description: row.get("description")?,
-            steps: serde_json::from_str(&steps_str).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?,
+            steps: serde_json::from_str(&steps_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                })?,
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                })?,
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             frozen: row.get::<_, i64>("frozen")? != 0,
-            tags: serde_json::from_str(&tags_str).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?,
-            source_procedural_ids: serde_json::from_str(&proc_ids_str).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?,
+            tags: serde_json::from_str(&tags_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+            source_procedural_ids: serde_json::from_str(&proc_ids_str)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
         })
     }
 }

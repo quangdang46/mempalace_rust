@@ -154,8 +154,11 @@ impl KnowledgeGraph {
     }
 
     fn init_db(&self) -> anyhow::Result<()> {
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute_batch(
-            "
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS entities (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -213,7 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 updated_at TEXT
             );
             ",
-        )?;
+            )?;
         self.migrate_schema()?;
         Ok(())
     }
@@ -227,7 +230,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// introspect the schema and only issue the ALTER when the column is
     /// missing.
     fn migrate_schema(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = conn.prepare("PRAGMA table_info(triples)")?;
         let names: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(1))?
@@ -429,14 +435,20 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let obj_id = Self::entity_id(object);
         let pred = predicate.to_lowercase().replace(' ', "_");
 
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
-            params![sub_id, subject],
-        )?;
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
-            params![obj_id, object],
-        )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
+                params![sub_id, subject],
+            )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
+                params![obj_id, object],
+            )?;
 
         let check_exists: Result<String, _> = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.query_row(
             "SELECT id FROM triples WHERE subject=?1 AND predicate=?2 AND object=?3 AND valid_to IS NULL",
@@ -462,10 +474,13 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             let conflict_end = valid_from
                 .clone()
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-            self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-                "UPDATE triples SET valid_to=?1 WHERE id=?2",
-                params![conflict_end, conflict_id],
-            )?;
+            self.conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+                .execute(
+                    "UPDATE triples SET valid_to=?1 WHERE id=?2",
+                    params![conflict_end, conflict_id],
+                )?;
             // Log conflict resolution - triple_id not yet assigned, use format
             tracing::info!(
                 "Auto-resolved conflict: invalidated {} for subject={} predicate={}",
@@ -556,7 +571,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(date) = as_of {
             if let Some(tt) = tt_as_of {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_created IS NULL OR t.t_created <= ?4) AND (t.t_expired IS NULL OR t.t_expired >= ?5)"
                 )?;
@@ -565,7 +583,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result(row, "outgoing", eid)?);
                 }
             } else {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_expired IS NULL OR t.t_expired > ?4)"
                 )?;
@@ -576,7 +597,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             }
         } else {
             if let Some(tt) = tt_as_of {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
@@ -585,7 +609,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result(row, "outgoing", eid)?);
                 }
             } else {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as obj_name FROM triples t JOIN entities e ON t.object = e.id WHERE t.subject = ?1"
                 )?;
@@ -611,7 +638,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(date) = as_of {
             if let Some(tt) = tt_as_of {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_created IS NULL OR t.t_created <= ?4) AND (t.t_expired IS NULL OR t.t_expired >= ?5)"
                 )?;
@@ -620,7 +650,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result_incoming(row, "incoming", eid)?);
                 }
             } else {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_expired IS NULL OR t.t_expired > ?4)"
                 )?;
@@ -631,7 +664,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             }
         } else {
             if let Some(tt) = tt_as_of {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
@@ -640,7 +676,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(self.row_to_entity_result_incoming(row, "incoming", eid)?);
                 }
             } else {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, e.name as sub_name FROM triples t JOIN entities e ON t.subject = e.id WHERE t.object = ?1"
                 )?;
@@ -719,7 +758,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(date) = as_of {
             if let Some(tt) = tt_as_of {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3) AND (t.t_created IS NULL OR t.t_created <= ?4) AND (t.t_expired IS NULL OR t.t_expired >= ?5)"
                 )?;
@@ -730,7 +772,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(row?);
                 }
             } else {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1 AND (t.valid_from IS NULL OR t.valid_from <= ?2) AND (t.valid_to IS NULL OR t.valid_to >= ?3)"
                 )?;
@@ -743,7 +788,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             }
         } else {
             if let Some(tt) = tt_as_of {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1 AND (t.t_created IS NULL OR t.t_created <= ?2) AND (t.t_expired IS NULL OR t.t_expired >= ?3)"
                 )?;
@@ -753,7 +801,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                     results.push(row?);
                 }
             } else {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.predicate = ?1"
                 )?;
@@ -793,7 +844,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         if let Some(name) = entity_name {
             let eid = Self::entity_id(name);
-            let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+            let _c = self
+                .conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
             let mut stmt = _c.prepare(
                 "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id WHERE t.subject = ?1 OR t.object = ?1 ORDER BY t.valid_from ASC LIMIT 100"
             )?;
@@ -820,7 +874,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 results.push(row?);
             }
         } else {
-            let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+            let _c = self
+                .conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
             let mut stmt = _c.prepare(
                 "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t JOIN entities s ON t.subject = s.id JOIN entities o ON t.object = o.id ORDER BY t.valid_from ASC LIMIT 100"
             )?;
@@ -863,7 +920,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         if let Some(name) = entity_name {
             let eid = Self::entity_id(name);
             if let Some(tt) = tt_as_of {
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
                      JOIN entities s ON t.subject = s.id \
@@ -898,7 +958,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
             } else {
                 let now = chrono::Utc::now().to_rfc3339();
                 let eid = Self::entity_id(name);
-                let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+                let _c = self
+                    .conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
                 let mut stmt = _c.prepare(
                     "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
                      JOIN entities s ON t.subject = s.id \
@@ -942,19 +1005,26 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         &self,
         id: &str,
     ) -> anyhow::Result<(Option<String>, Option<String>)> {
-        let result = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.query_row(
-            "SELECT t_created, t_expired FROM triples WHERE id = ?1",
-            params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        );
+        let result = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .query_row(
+                "SELECT t_created, t_expired FROM triples WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            );
         Ok(result?)
     }
 
     pub fn set_t_expired(&self, id: &str, value: Option<&str>) -> anyhow::Result<()> {
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "UPDATE triples SET t_expired = ?1 WHERE id = ?2",
-            params![value, id],
-        )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "UPDATE triples SET t_expired = ?1 WHERE id = ?2",
+                params![value, id],
+            )?;
         Ok(())
     }
 
@@ -971,15 +1041,22 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 .unwrap()
                 .query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
 
-        let current_facts: usize = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.query_row(
-            "SELECT COUNT(*) FROM triples WHERE valid_to IS NULL",
-            [],
-            |row| row.get(0),
-        )?;
+        let current_facts: usize = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .query_row(
+                "SELECT COUNT(*) FROM triples WHERE valid_to IS NULL",
+                [],
+                |row| row.get(0),
+            )?;
 
         let expired_facts = total_triples - current_facts;
 
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare("SELECT DISTINCT predicate FROM triples ORDER BY predicate")?;
         let relationship_types: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
@@ -1025,14 +1102,20 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let obj_id = Self::entity_id(to);
 
         // Ensure both endpoints exist in the entities table.
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
-            params![sub_id, from],
-        )?;
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
-            params![obj_id, to],
-        )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
+                params![sub_id, from],
+            )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
+                params![obj_id, to],
+            )?;
 
         // Deterministic triple ID: same (from, kind, to) always produces the
         // same ID, making add_memory_edge idempotent (matching jcode's
@@ -1052,21 +1135,24 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         let now = chrono::Utc::now().to_rfc3339();
 
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "INSERT INTO triples \
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "INSERT INTO triples \
              (id, subject, predicate, object, valid_from, valid_to, confidence, \
               source_closet, source_file, source_drawer_id, adapter_name, \
               t_created, t_expired, edge_kind, weight) \
              VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, NULL, NULL, NULL, NULL, \
                      ?6, NULL, ?7, ?8)",
-            params![
-                triple_id, sub_id, kind_str, obj_id,
-                // confidence is independent of traversal weight; default to 1.0
-                // because the typed-edge API is the source of truth for
-                // weights.
-                1.0_f64, now, kind_str, weight,
-            ],
-        )?;
+                params![
+                    triple_id, sub_id, kind_str, obj_id,
+                    // confidence is independent of traversal weight; default to 1.0
+                    // because the typed-edge API is the source of truth for
+                    // weights.
+                    1.0_f64, now, kind_str, weight,
+                ],
+            )?;
 
         Ok(triple_id)
     }
@@ -1078,7 +1164,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         kind: &crate::types::MemoryEdgeKind,
     ) -> anyhow::Result<Vec<Triple>> {
         let kind_str = kind.as_str();
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
              JOIN entities s ON t.subject = s.id \
@@ -1103,7 +1192,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     ) -> anyhow::Result<Vec<Triple>> {
         let eid = Self::entity_id(subject);
         let kind_str = kind.as_str();
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
              JOIN entities s ON t.subject = s.id \
@@ -1125,7 +1217,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     ) -> anyhow::Result<Vec<Triple>> {
         let eid = Self::entity_id(object);
         let kind_str = kind.as_str();
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT t.*, s.name as sub_name, o.name as obj_name FROM triples t \
              JOIN entities s ON t.subject = s.id \
@@ -1146,26 +1241,37 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         query: &str,
         outcome: &str,
     ) -> anyhow::Result<()> {
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "INSERT INTO episodes (drawer_id, query, outcome) VALUES (?1, ?2, ?3)",
-            params![drawer_id, query, outcome],
-        )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "INSERT INTO episodes (drawer_id, query, outcome) VALUES (?1, ?2, ?3)",
+                params![drawer_id, query, outcome],
+            )?;
         Ok(())
     }
 
     /// Get helpfulness score for a drawer based on historical feedback.
     /// Returns a multiplier between 0.5 (unhelpful) and 1.5 (helpful).
     pub fn helpfulness_score(&self, drawer_id: &str) -> anyhow::Result<f64> {
-        let helpful: usize = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.query_row(
-            "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'helpful'",
-            params![drawer_id],
-            |row| row.get(0),
-        )?;
-        let unhelpful: usize = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.query_row(
-            "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'unhelpful'",
-            params![drawer_id],
-            |row| row.get(0),
-        )?;
+        let helpful: usize = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .query_row(
+                "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'helpful'",
+                params![drawer_id],
+                |row| row.get(0),
+            )?;
+        let unhelpful: usize = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .query_row(
+                "SELECT COUNT(*) FROM episodes WHERE drawer_id = ?1 AND outcome = 'unhelpful'",
+                params![drawer_id],
+                |row| row.get(0),
+            )?;
         let total = helpful + unhelpful;
         if total == 0 {
             return Ok(1.0); // No feedback = neutral
@@ -1177,7 +1283,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     /// Get feedback history for a drawer.
     pub fn get_feedback(&self, drawer_id: &str) -> anyhow::Result<Vec<(String, String)>> {
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT query, outcome FROM episodes WHERE drawer_id = ?1 ORDER BY feedback_at DESC LIMIT 50",
         )?;
@@ -1232,10 +1341,13 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
         // Ensure the cluster itself exists as an entity so InCluster edges
         // have valid foreign keys.
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
-            rusqlite::params![id, name.unwrap_or(id)],
-        )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "INSERT OR IGNORE INTO entities (id, name) VALUES (?1, ?2)",
+                rusqlite::params![id, name.unwrap_or(id)],
+            )?;
 
         // Add InCluster edges from each member to the cluster.
         // Skip members that already have an InCluster edge to this cluster
@@ -1244,12 +1356,16 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let kind_str = kind.as_str();
         for member_id in members {
             let sub_id = Self::entity_id(member_id);
-            let existing: bool = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.query_row(
-                "SELECT COUNT(*) > 0 FROM triples \
+            let existing: bool = self
+                .conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM triples \
                  WHERE subject = ?1 AND object = ?2 AND edge_kind = ?3 AND valid_to IS NULL",
-                rusqlite::params![sub_id, id, kind_str],
-                |row| row.get(0),
-            )?;
+                    rusqlite::params![sub_id, id, kind_str],
+                    |row| row.get(0),
+                )?;
             if !existing {
                 self.add_memory_edge(member_id, id, &kind)?;
             }
@@ -1260,7 +1376,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     /// Retrieve a cluster by ID.
     pub fn get_cluster(&self, id: &str) -> anyhow::Result<Option<ClusterEntry>> {
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT id, name, centroid, member_count, created_at, updated_at \
              FROM clusters WHERE id = ?1",
@@ -1286,7 +1405,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// given cluster.
     pub fn get_cluster_members(&self, cluster_id: &str) -> anyhow::Result<Vec<String>> {
         let kind_str = crate::types::MemoryEdgeKind::InCluster.as_str();
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT s.name FROM triples t \
              JOIN entities s ON t.subject = s.id \
@@ -1301,24 +1423,34 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Update the human-readable name of a cluster.
     pub fn update_cluster_name(&self, id: &str, name: &str) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
-        let changed = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "UPDATE clusters SET name = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![name, now, id],
-        )?;
+        let changed = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "UPDATE clusters SET name = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![name, now, id],
+            )?;
         if changed == 0 {
             anyhow::bail!("cluster not found: {}", id);
         }
         // Also update the entity name so it appears correctly in the KG.
-        self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.execute(
-            "UPDATE entities SET name = ?1 WHERE id = ?2",
-            rusqlite::params![name, id],
-        )?;
+        self.conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .execute(
+                "UPDATE entities SET name = ?1 WHERE id = ?2",
+                rusqlite::params![name, id],
+            )?;
         Ok(())
     }
 
     /// List all clusters, ordered by creation time.
     pub fn list_clusters(&self) -> anyhow::Result<Vec<ClusterEntry>> {
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT id, name, centroid, member_count, created_at, updated_at \
              FROM clusters ORDER BY created_at ASC",
@@ -1370,7 +1502,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
                 .unwrap()
                 .query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
         let mut top_degrees = std::collections::HashMap::new();
-        let _c = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
+        let _c = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?;
         let mut stmt = _c.prepare(
             "SELECT e.name, COUNT(*) as degree FROM entities e \
              JOIN triples t ON t.subject = e.id OR t.object = e.id \
@@ -1407,24 +1542,28 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     /// Read the current graph snapshot, if any.
     pub fn get_snapshot(&self) -> anyhow::Result<Option<GraphSnapshot>> {
-        let result = self.conn.lock().map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?.query_row(
-            "SELECT snapshot_id, total_nodes, total_edges, top_degrees, created_at, reset_at \
+        let result = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("KG lock poisoned: {}", e))?
+            .query_row(
+                "SELECT snapshot_id, total_nodes, total_edges, top_degrees, created_at, reset_at \
              FROM graph_snapshots LIMIT 1",
-            [],
-            |row| {
-                let top_json: String = row.get(3)?;
-                let top_degrees: std::collections::HashMap<String, usize> =
-                    serde_json::from_str(&top_json).unwrap_or_default();
-                Ok(GraphSnapshot {
-                    snapshot_id: row.get(0)?,
-                    total_nodes: row.get(1)?,
-                    total_edges: row.get(2)?,
-                    top_degrees,
-                    created_at: row.get(4)?,
-                    reset_at: row.get(5)?,
-                })
-            },
-        );
+                [],
+                |row| {
+                    let top_json: String = row.get(3)?;
+                    let top_degrees: std::collections::HashMap<String, usize> =
+                        serde_json::from_str(&top_json).unwrap_or_default();
+                    Ok(GraphSnapshot {
+                        snapshot_id: row.get(0)?,
+                        total_nodes: row.get(1)?,
+                        total_edges: row.get(2)?,
+                        top_degrees,
+                        created_at: row.get(4)?,
+                        reset_at: row.get(5)?,
+                    })
+                },
+            );
         match result {
             Ok(s) => Ok(Some(s)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),

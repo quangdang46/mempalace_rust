@@ -732,7 +732,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_consolidation_skips_without_llm() {
-        let _lock = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // SAFETY: env mutation serialized under test_env_lock.
         unsafe {
             std::env::remove_var("OPENAI_API_KEY");

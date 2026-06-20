@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.6.1 (2026-06-21)
+
+### Critical: Data Loss & Corruption Fixes
+
+- **Config field drop**: Config::load() now uses serde::Deserialize — all 30 fields preserved (was manually reading only 9)
+- **JSON corruption data loss**: palace_db.rs now propagates errors instead of silently returning empty HashMap on corrupted collection files
+- **Embedder silent failures**: All 4 local embedder `pop().unwrap_or_default()` replaced with `ok_or_else()` error propagation
+- **MCP agent config truncation**: `serde_json::to_vec_pretty().unwrap_or_default()` now returns `wrote:false` with error note
+- **Coordination DB corruption**: 5 coordination modules now propagate DB parse errors instead of silently substituting defaults
+
+### Safety: HTTP Timeouts, Model Caching, UTF-8 Protection
+
+- **HTTP timeouts**: All 6 HTTP clients (5 remote embedders + tract download) now use 30s request / 10s connect timeouts
+- **ONNX model caching**: tract.rs caches model bytes + tokenizer in memory (was reloading from disk on every call)
+- **FTS5**: Now uses PalaceDb in-memory documents instead of opening a separate SQLite connection to a file that doesn't exist
+- **UTF-8 char boundaries**: 8 `&str[..N]` slice panics fixed via `safe_truncate()` helper in normalize, convo_miner, context_inject, diary_ingest, entity_detector, compression
+
+### Robustness: Mutex Poisoning (136 fixes)
+
+- **Zero `.lock().unwrap()` / `.write().unwrap()` remaining in production code** — all 136 sites across 16 files replaced with error propagation or descriptive `expect()`
+- Mutex poison recovery for 12 test `test_env_lock()` calls via `into_inner()`
+
+### Code Quality
+
+- **ReservationMode::from_str** converted to proper `FromStr` returning `Result` (was silently defaulting to Exclusive)
+- **15 regression tests** added covering config round-trip, UTF-8 truncation, ReservationMode parsing, coordination error propagation
+- **Formatting**: Full `cargo fmt` pass across 28 files
+
 ## v0.6.0 (2026-06-18)
 
 ### Major: FTS5 Search Strategy (Default, 0MB)

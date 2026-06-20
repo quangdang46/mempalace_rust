@@ -141,10 +141,10 @@ impl TractEmbedder {
         let fp = format!("tract:{}:{}", model_name_owned, dim);
 
         // Read both files into memory once — eliminates disk I/O on every embed call.
-        let model_bytes = std::fs::read(&model_path)
-            .context("tract: read model file for caching")?;
-        let tokenizer_bytes = std::fs::read(&tokenizer_path)
-            .context("tract: read tokenizer file for caching")?;
+        let model_bytes =
+            std::fs::read(&model_path).context("tract: read model file for caching")?;
+        let tokenizer_bytes =
+            std::fs::read(&tokenizer_path).context("tract: read tokenizer file for caching")?;
 
         Ok(Self {
             model_bytes,
@@ -168,7 +168,6 @@ impl Embedder for TractEmbedder {
         let mut out = self.embed_batch(&[text]).await?;
         out.pop()
             .ok_or_else(|| anyhow::anyhow!("embed: empty batch returned from embedder"))
-    
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {

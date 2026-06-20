@@ -305,7 +305,9 @@ impl GraphCache {
 
 pub fn invalidate_cache(palace_path: &std::path::Path) {
     let key = palace_path.to_path_buf();
-    let mut cache = _GRAPH_CACHE.write().expect("GRAPH_CACHE write lock poisoned");
+    let mut cache = _GRAPH_CACHE
+        .write()
+        .expect("GRAPH_CACHE write lock poisoned");
     if let Some(entry) = cache.get_mut(&key) {
         entry.nodes = None;
         entry.edges = None;
@@ -341,7 +343,9 @@ pub fn cached_graph(palace_path: &std::path::Path) -> PalaceGraph {
 
     let graph = build_graph_from_db_path(palace_path);
     {
-        let mut cache = _GRAPH_CACHE.write().expect("GRAPH_CACHE write lock poisoned");
+        let mut cache = _GRAPH_CACHE
+            .write()
+            .expect("GRAPH_CACHE write lock poisoned");
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1131,7 +1135,9 @@ mod tests {
 
     #[test]
     fn test_tunnel_file_follows_palace_path_config() {
-        let _guard = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let temp_dir = tempfile::tempdir().unwrap();
         let xdg = temp_dir.path().join("xdg");
         let palace_path = temp_dir.path().join("palace_root").join("custom_palace");
@@ -1171,7 +1177,9 @@ mod tests {
 
     #[test]
     fn test_load_tunnels_returns_empty_when_configured_file_missing() {
-        let _guard = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let temp_dir = tempfile::tempdir().unwrap();
         let xdg = temp_dir.path().join("xdg");
         let palace_path = temp_dir.path().join("palace_root").join("empty_palace");

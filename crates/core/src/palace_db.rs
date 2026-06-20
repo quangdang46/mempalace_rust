@@ -88,7 +88,11 @@ pub fn classify_palace_for_collection(
     let docs: HashMap<String, DocumentEntry> = match serde_json::from_str(&content) {
         Ok(docs) => docs,
         Err(e) => {
-            warn!("corrupted collection file at {}: {}", docs_path.display(), e);
+            warn!(
+                "corrupted collection file at {}: {}",
+                docs_path.display(),
+                e
+            );
             HashMap::new()
         }
     };
@@ -1247,11 +1251,16 @@ impl PalaceDb {
     }
 
     pub fn coordination(&self) -> std::sync::MutexGuard<'_, CoordinationDb> {
-        self.coordination.lock().expect("coordination lock poisoned")
+        self.coordination
+            .lock()
+            .expect("coordination lock poisoned")
     }
 
     pub fn slot_list(&self, project: Option<&str>) -> Result<Vec<MemorySlot>, DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let query = if project.is_some() {
             "SELECT id, label, content, size_limit, description, pinned, scope, project, created_at, updated_at FROM slots WHERE scope = 'global' OR project = ?1 ORDER BY pinned DESC, label ASC"
         } else {
@@ -1283,7 +1292,10 @@ impl PalaceDb {
     }
 
     pub fn slot_get(&self, label: &str) -> Result<Option<MemorySlot>, DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, label, content, size_limit, description, pinned, scope, project, created_at, updated_at FROM slots WHERE label = ?1",
         )?;
@@ -1307,7 +1319,10 @@ impl PalaceDb {
     }
 
     pub fn slot_create(&mut self, slot: &MemorySlot) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute(
             "INSERT INTO slots (id, label, content, size_limit, description, pinned, scope, project, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -1328,7 +1343,10 @@ impl PalaceDb {
     }
 
     pub fn slot_append(&mut self, label: &str, text: &str) -> Result<i32, DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut stmt = conn.prepare("SELECT content, size_limit FROM slots WHERE label = ?1")?;
         let mut rows = stmt.query(params![label])?;
         let (current_content, size_limit): (String, i32) = match rows.next()? {
@@ -1348,7 +1366,10 @@ impl PalaceDb {
     }
 
     pub fn slot_replace(&mut self, label: &str, content: &str) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut stmt = conn.prepare("SELECT size_limit FROM slots WHERE label = ?1")?;
         let mut rows = stmt.query(params![label])?;
         let size_limit: i32 = match rows.next()? {
@@ -1367,13 +1388,19 @@ impl PalaceDb {
     }
 
     pub fn slot_delete(&mut self, label: &str) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute("DELETE FROM slots WHERE label = ?1", params![label])?;
         Ok(())
     }
 
     pub fn sketch_create(&mut self, sketch: &SketchRecord) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute(
             "INSERT INTO sketches (id, title, description, steps, project, expires_at, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1391,7 +1418,10 @@ impl PalaceDb {
     }
 
     pub fn sketch_get(&self, id: &str) -> Result<Option<SketchRecord>, DbErr> {
-        let conn = self.coordination.lock().expect("coordination lock poisoned");
+        let conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, title, description, steps, project, expires_at, created_at
              FROM sketches WHERE id = ?1",
@@ -1413,7 +1443,10 @@ impl PalaceDb {
     }
 
     pub fn sketch_list(&self, project: Option<&str>) -> Result<Vec<SketchRecord>, DbErr> {
-        let conn = self.coordination.lock().expect("coordination lock poisoned");
+        let conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut sketches = Vec::new();
         match project {
             Some(p) => {
@@ -1461,20 +1494,29 @@ impl PalaceDb {
     }
 
     pub fn sketch_delete(&mut self, id: &str) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute("DELETE FROM sketches WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn sketch_cleanup_expired(&mut self) -> Result<usize, DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let now = chrono::Utc::now().to_rfc3339();
         let count = conn.execute("DELETE FROM sketches WHERE expires_at < ?1", params![now])?;
         Ok(count)
     }
 
     pub fn crystal_create(&mut self, crystal: &CrystalRecord) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute(
             "INSERT INTO crystals (id, action_ids, summary, narrative, outcomes, files_affected, lessons, project, session_id, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -1495,7 +1537,10 @@ impl PalaceDb {
     }
 
     pub fn crystal_list(&self, project: Option<&str>) -> Result<Vec<CrystalRecord>, DbErr> {
-        let conn = self.coordination.lock().expect("coordination lock poisoned");
+        let conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut crystals = Vec::new();
         match project {
             Some(p) => {
@@ -1549,7 +1594,10 @@ impl PalaceDb {
     }
 
     pub fn facet_create(&mut self, facet: &FacetRecord) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute(
             "INSERT INTO facets (id, target_id, target_type, dimension, value, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1570,7 +1618,10 @@ impl PalaceDb {
         target_id: Option<&str>,
         dimension: Option<&str>,
     ) -> Result<Vec<FacetRecord>, DbErr> {
-        let conn = self.coordination.lock().expect("coordination lock poisoned");
+        let conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut facets = Vec::new();
         match (target_id, dimension) {
             (Some(tid), Some(dim)) => {
@@ -1654,13 +1705,19 @@ impl PalaceDb {
     }
 
     pub fn facet_delete(&mut self, id: &str) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute("DELETE FROM facets WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn lesson_create(&mut self, lesson: &LessonRecord) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute(
             "INSERT INTO lessons (id, content, context, confidence, project, tags, reinforced_at, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -1683,7 +1740,10 @@ impl PalaceDb {
         project: Option<&str>,
         min_confidence: Option<f64>,
     ) -> Result<Vec<LessonRecord>, DbErr> {
-        let conn = self.coordination.lock().expect("coordination lock poisoned");
+        let conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut lessons = Vec::new();
         match (project, min_confidence) {
             (Some(p), Some(conf)) => {
@@ -1775,7 +1835,10 @@ impl PalaceDb {
     }
 
     pub fn lesson_reinforce(&mut self, id: &str) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE lessons SET reinforced_at = ?1 WHERE id = ?2",
@@ -1787,7 +1850,10 @@ impl PalaceDb {
     /// Set a lesson's confidence to an explicit value (e.g. after Ebbinghaus decay).
     /// Returns the number of rows updated.
     pub fn lesson_set_confidence(&mut self, id: &str, confidence: f64) -> Result<usize, DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let n = conn.execute(
             "UPDATE lessons SET confidence = ?1 WHERE id = ?2",
             params![confidence, id],
@@ -1796,7 +1862,10 @@ impl PalaceDb {
     }
 
     pub fn insight_create(&mut self, insight: &InsightRecord) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute(
             "INSERT INTO insights (id, content, confidence, project, cluster_id, reinforced_count, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1818,7 +1887,10 @@ impl PalaceDb {
         project: Option<&str>,
         min_confidence: Option<f64>,
     ) -> Result<Vec<InsightRecord>, DbErr> {
-        let conn = self.coordination.lock().expect("coordination lock poisoned");
+        let conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         let mut insights = Vec::new();
         let sql = match (project, min_confidence) {
             (Some(_), Some(_)) => "SELECT id, content, confidence, project, cluster_id, reinforced_count, created_at FROM insights WHERE project = ?1 AND confidence >= ?2 ORDER BY confidence DESC, created_at DESC",
@@ -1848,7 +1920,10 @@ impl PalaceDb {
     }
 
     pub fn insight_reinforce(&mut self, id: &str) -> Result<(), DbErr> {
-        let mut conn = self.coordination.lock().expect("coordination lock poisoned");
+        let mut conn = self
+            .coordination
+            .lock()
+            .expect("coordination lock poisoned");
         conn.execute(
             "UPDATE insights SET reinforced_count = reinforced_count + 1 WHERE id = ?1",
             params![id],
@@ -3264,7 +3339,9 @@ mod tests {
     /// the env-mutex so we don't race with them.
     #[test]
     fn test_open_with_embedder_env_override_skips_validation() {
-        let _guard = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // SAFETY: serialised via test_env_lock; no concurrent env access.
         unsafe { std::env::remove_var(SKIP_MANIFEST_CHECK_ENV) };
 

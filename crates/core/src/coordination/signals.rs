@@ -144,15 +144,12 @@ impl SignalStore {
                 )))
             })?;
         let metadata: HashMap<String, serde_json::Value> =
-            serde_json::from_str(&row.get::<_, String>("metadata")?).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?;
+            serde_json::from_str(&row.get::<_, String>("metadata")?)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let created_at_str: String = row.get("created_at")?;
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?;
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         Ok(Signal {
             id: row.get("id")?,
             from: row.get("from_agent")?,

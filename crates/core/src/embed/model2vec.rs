@@ -120,7 +120,6 @@ impl Embedder for Model2VecEmbedder {
         let mut out = self.embed_batch(&[text]).await?;
         out.pop()
             .ok_or_else(|| anyhow::anyhow!("embed: empty batch returned from embedder"))
-    
     }
 
     async fn embed_batch(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {

@@ -4636,7 +4636,12 @@ fn tool_mesh_sync(state: &AppState, args: JsonObject) -> Result<CallToolResult, 
     };
 
     let registered_peer = if let (Some(url), Some(name)) = (&input.peer_url, &input.peer_name) {
-        match state.mesh.write().expect("mesh write lock poisoned").register(url, name, None, None) {
+        match state
+            .mesh
+            .write()
+            .expect("mesh write lock poisoned")
+            .register(url, name, None, None)
+        {
             Ok(p) => Some(serde_json::json!({
                 "id": p.id,
                 "url": p.url,

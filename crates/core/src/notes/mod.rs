@@ -107,10 +107,15 @@ impl Notes {
     /// Read both files. Counts entries as bullet lines (AGENT.md) and
     /// key:value lines (USER.md) past the header.
     pub fn recall(&self) -> Result<NotesContent> {
-        let agent = fs::read_to_string(&self.agent_path)
-            .with_context(|| format!("failed to read agent notes at {}", self.agent_path.display()))?;
-        let user = fs::read_to_string(&self.user_path)
-            .with_context(|| format!("failed to read user notes at {}", self.user_path.display()))?;
+        let agent = fs::read_to_string(&self.agent_path).with_context(|| {
+            format!(
+                "failed to read agent notes at {}",
+                self.agent_path.display()
+            )
+        })?;
+        let user = fs::read_to_string(&self.user_path).with_context(|| {
+            format!("failed to read user notes at {}", self.user_path.display())
+        })?;
         let agent_entries = agent
             .lines()
             .filter(|l| l.trim_start().starts_with("- `"))

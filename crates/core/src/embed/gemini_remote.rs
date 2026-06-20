@@ -172,7 +172,9 @@ mod tests {
 
     #[test]
     fn from_env_requires_api_key() {
-        let _lock = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // SAFETY: single-threaded under test_env_lock.
         unsafe {
             std::env::remove_var("GEMINI_API_KEY");
@@ -183,7 +185,9 @@ mod tests {
 
     #[test]
     fn from_env_accepts_google_api_key() {
-        let _lock = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // SAFETY: single-threaded under test_env_lock.
         unsafe {
             std::env::remove_var("GEMINI_API_KEY");

@@ -76,7 +76,10 @@ impl LiveDelivery {
             status: DeliveryStatus::Queued,
         };
 
-        let mut pending = self.pending.write().map_err(|e| anyhow::anyhow!("live_delivery pending lock poisoned: {}", e))?;
+        let mut pending = self
+            .pending
+            .write()
+            .map_err(|e| anyhow::anyhow!("live_delivery pending lock poisoned: {}", e))?;
         pending
             .entry(signal.to.clone())
             .or_insert_with(Vec::new)
@@ -88,7 +91,10 @@ impl LiveDelivery {
     /// Poll for pending deliveries for an agent.
     /// Returns pending messages and marks them as Injected.
     pub fn poll(&self, agent_id: &str) -> Vec<PendingDelivery> {
-        let mut pending = self.pending.write().expect("live_delivery pending lock poisoned");
+        let mut pending = self
+            .pending
+            .write()
+            .expect("live_delivery pending lock poisoned");
         if let Some(deliveries) = pending.get_mut(agent_id) {
             let injectable: Vec<PendingDelivery> = deliveries
                 .iter()
@@ -104,7 +110,10 @@ impl LiveDelivery {
             }
 
             // Record in history
-            let mut history = self.history.write().expect("live_delivery history lock poisoned");
+            let mut history = self
+                .history
+                .write()
+                .expect("live_delivery history lock poisoned");
             for delivery in &injectable {
                 history.push(DeliveryRecord {
                     signal_id: delivery.signal_id.clone(),
@@ -125,7 +134,10 @@ impl LiveDelivery {
     /// Acknowledge delivery of a signal.
     pub fn ack(&self, signal_id: &str) -> Result<()> {
         // Update pending status
-        let mut pending = self.pending.write().map_err(|e| anyhow::anyhow!("live_delivery pending lock poisoned: {}", e))?;
+        let mut pending = self
+            .pending
+            .write()
+            .map_err(|e| anyhow::anyhow!("live_delivery pending lock poisoned: {}", e))?;
         for (_, deliveries) in pending.iter_mut() {
             for delivery in deliveries.iter_mut() {
                 if delivery.signal_id == signal_id {
@@ -135,7 +147,10 @@ impl LiveDelivery {
         }
 
         // Update history
-        let mut history = self.history.write().map_err(|e| anyhow::anyhow!("live_delivery history lock poisoned: {}", e))?;
+        let mut history = self
+            .history
+            .write()
+            .map_err(|e| anyhow::anyhow!("live_delivery history lock poisoned: {}", e))?;
         for record in history.iter_mut() {
             if record.signal_id == signal_id && record.acknowledged_at.is_none() {
                 record.acknowledged_at = Some(Utc::now());
@@ -147,7 +162,10 @@ impl LiveDelivery {
 
     /// Requeue a failed delivery for retry.
     pub fn requeue(&self, signal_id: &str) -> Result<()> {
-        let mut pending = self.pending.write().map_err(|e| anyhow::anyhow!("live_delivery pending lock poisoned: {}", e))?;
+        let mut pending = self
+            .pending
+            .write()
+            .map_err(|e| anyhow::anyhow!("live_delivery pending lock poisoned: {}", e))?;
         for (_, deliveries) in pending.iter_mut() {
             for delivery in deliveries.iter_mut() {
                 if delivery.signal_id == signal_id
@@ -163,7 +181,10 @@ impl LiveDelivery {
 
     /// Mark a delivery as failed.
     pub fn mark_failed(&self, signal_id: &str, reason: &str) {
-        let mut pending = self.pending.write().expect("live_delivery pending lock poisoned");
+        let mut pending = self
+            .pending
+            .write()
+            .expect("live_delivery pending lock poisoned");
         for (_, deliveries) in pending.iter_mut() {
             for delivery in deliveries.iter_mut() {
                 if delivery.signal_id == signal_id {
@@ -175,7 +196,10 @@ impl LiveDelivery {
 
     /// Get count of pending deliveries for an agent.
     pub fn pending_count(&self, agent_id: &str) -> usize {
-        let pending = self.pending.read().expect("live_delivery pending read lock poisoned");
+        let pending = self
+            .pending
+            .read()
+            .expect("live_delivery pending read lock poisoned");
         pending
             .get(agent_id)
             .map(|d| {
@@ -188,13 +212,19 @@ impl LiveDelivery {
 
     /// Get delivery history.
     pub fn history(&self) -> Vec<DeliveryRecord> {
-        let history = self.history.read().expect("live_delivery history read lock poisoned");
+        let history = self
+            .history
+            .read()
+            .expect("live_delivery history read lock poisoned");
         history.clone()
     }
 
     /// Cleanup acknowledged deliveries from pending.
     pub fn cleanup(&self) {
-        let mut pending = self.pending.write().expect("live_delivery pending lock poisoned");
+        let mut pending = self
+            .pending
+            .write()
+            .expect("live_delivery pending lock poisoned");
         for (_, deliveries) in pending.iter_mut() {
             deliveries.retain(|d| d.status != DeliveryStatus::Acknowledged);
         }
@@ -334,7 +364,10 @@ mod tests {
         delivery.cleanup();
 
         // Pending should be empty after cleanup
-        let pending = delivery.pending.read().expect("test pending read lock poisoned");
+        let pending = delivery
+            .pending
+            .read()
+            .expect("test pending read lock poisoned");
         assert!(pending.get("agent-b").map_or(true, |d| d.is_empty()));
     }
 }

@@ -270,7 +270,9 @@ mod tests {
     /// the HTTP client is touched.
     #[test]
     fn test_complete_consent_required_when_env_key_without_consent() {
-        let _guard = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // No env override, force a clean (no XDG_CONFIG_HOME) Config::load().
         std::env::remove_var("MEMPALACE_LLM_CONSENT");
         let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
@@ -308,7 +310,9 @@ mod tests {
     /// consent is recorded. This is the CI escape hatch.
     #[test]
     fn test_complete_consent_env_override_unblocks() {
-        let _guard = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("MEMPALACE_LLM_CONSENT", "true");
         let prev_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         std::env::remove_var("XDG_CONFIG_HOME");

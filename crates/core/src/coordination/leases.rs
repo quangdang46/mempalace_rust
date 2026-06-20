@@ -179,14 +179,10 @@ impl LeaseStore {
             agent_id: row.get("agent_id")?,
             acquired_at: chrono::DateTime::parse_from_rfc3339(&acquired_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                })?,
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                })?,
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             result: row.get("result")?,
         })
     }

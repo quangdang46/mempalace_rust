@@ -289,14 +289,10 @@ impl FileReservationStore {
                 reason: row.get(4)?,
                 acquired_at: DateTime::parse_from_rfc3339(&acquired_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|e| {
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                    })?,
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
                 expires_at: DateTime::parse_from_rfc3339(&expires_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|e| {
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                    })?,
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
                 released_at: None,
             })
         })?;
@@ -326,14 +322,10 @@ impl FileReservationStore {
                 reason: row.get(4)?,
                 acquired_at: DateTime::parse_from_rfc3339(&acquired_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|e| {
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                    })?,
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
                 expires_at: DateTime::parse_from_rfc3339(&expires_at)
                     .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|e| {
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-                    })?,
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
                 released_at: None,
             })
         })?;

@@ -141,14 +141,17 @@ fn test_config_load_default_when_no_file() {
 
 #[test]
 fn test_safe_truncate_ascii() {
-    assert_eq!(mempalace_core::normalize::safe_truncate("hello world", 5), "hello");
+    assert_eq!(
+        mempalace_core::normalize::safe_truncate("hello world", 5),
+        "hello"
+    );
 }
 
 #[test]
 fn test_safe_truncate_cjk() {
     // Each CJK character is 3 bytes in UTF-8
     let s = "你好世界"; // 12 bytes
-    // Truncate to 6 bytes => should give "你好" (6 bytes, 2 chars)
+                        // Truncate to 6 bytes => should give "你好" (6 bytes, 2 chars)
     assert_eq!(mempalace_core::normalize::safe_truncate(s, 6), "你好");
     // Truncate to 7 bytes => 你好 + partial of third char → must back up to char boundary
     let truncated = mempalace_core::normalize::safe_truncate(s, 7);
@@ -178,7 +181,10 @@ fn test_safe_truncate_zero_max_bytes() {
 
 #[test]
 fn test_safe_truncate_max_bytes_exceeds_len() {
-    assert_eq!(mempalace_core::normalize::safe_truncate("hello", 100), "hello");
+    assert_eq!(
+        mempalace_core::normalize::safe_truncate("hello", 100),
+        "hello"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -258,9 +264,9 @@ fn corrupt_and_verify(
 
     // Open the store, create a routine, then close
     {
+        use chrono::Utc;
         use mempalace_core::coordination::routines::RoutineStore;
         use mempalace_core::types::Routine;
-        use chrono::Utc;
 
         let store = RoutineStore::open(&db_path).unwrap();
         let routine = Routine {

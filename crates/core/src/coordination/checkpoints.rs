@@ -133,27 +133,28 @@ impl CheckpointStore {
 
 impl CheckpointStore {
     fn row_to_checkpoint(&self, row: &rusqlite::Row) -> rusqlite::Result<Checkpoint> {
-        let cp_type: CheckpointType = row
-            .get::<_, String>("checkpoint_type")?
-            .parse()
-            .map_err(|e: String| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    e,
-                )))
-            })?;
-        let status: CheckpointStatus = row.get::<_, String>("status")?.parse().map_err(|e: String| {
-            rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e,
-            )))
-        })?;
+        let cp_type: CheckpointType =
+            row.get::<_, String>("checkpoint_type")?
+                .parse()
+                .map_err(|e: String| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e,
+                    )))
+                })?;
+        let status: CheckpointStatus =
+            row.get::<_, String>("status")?
+                .parse()
+                .map_err(|e: String| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e,
+                    )))
+                })?;
         let created_at_str: String = row.get("created_at")?;
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
-            .map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            })?;
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         Ok(Checkpoint {
             id: row.get("id")?,
