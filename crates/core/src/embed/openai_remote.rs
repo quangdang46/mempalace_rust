@@ -13,6 +13,7 @@
 
 use super::Embedder;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// Known `(model, dim)` pairs so callers don't need `OPENAI_EMBEDDING_DIMENSIONS`.
 fn known_dim(model: &str) -> Option<usize> {
@@ -59,7 +60,11 @@ impl OpenAIRemoteEmbedder {
             })?,
         };
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
             model: model.to_string(),

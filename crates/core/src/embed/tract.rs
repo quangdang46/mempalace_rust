@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -53,7 +54,11 @@ fn download_from_huggingface(repo: &str, path: &str, dest: &PathBuf) -> anyhow::
         std::fs::create_dir_all(parent)
             .with_context(|| format!("tract: create cache dir for {}", path))?;
     }
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
     let response = client
         .get(&url)
         .header("User-Agent", "mempalace/1.0")

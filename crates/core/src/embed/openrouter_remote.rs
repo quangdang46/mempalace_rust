@@ -22,6 +22,7 @@
 
 use super::Embedder;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// Known `(model, dim)` pairs so callers don't need to pass a
 /// dimension override. OpenRouter proxies many upstream models; the
@@ -73,7 +74,11 @@ impl OpenRouterRemoteEmbedder {
             )
         })?;
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap(),
             api_key,
             model: model.to_string(),
             dim,

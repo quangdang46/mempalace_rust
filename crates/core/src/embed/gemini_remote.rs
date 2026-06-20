@@ -17,6 +17,7 @@
 
 use super::Embedder;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// Base URL for the Gemini batch-embed endpoint (the model name and
 /// `:batchEmbedContents` action are appended below).
@@ -58,7 +59,11 @@ impl GeminiRemoteEmbedder {
             None => known_dim(model)?,
         };
         Some(Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap(),
             api_key,
             model: model.to_string(),
             dim,

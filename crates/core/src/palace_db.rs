@@ -1203,6 +1203,11 @@ impl PalaceDb {
         &self.palace_path
     }
 
+    /// Access the in-memory documents HashMap (used by search strategies).
+    pub(crate) fn documents(&self) -> &HashMap<String, DocumentEntry> {
+        &self.documents
+    }
+
     pub fn open_collection(
         palace_path: &std::path::Path,
         collection_name: &str,
