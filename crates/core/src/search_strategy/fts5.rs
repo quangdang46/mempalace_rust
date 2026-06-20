@@ -28,12 +28,7 @@ impl SearchStrategy for Fts5Strategy {
         "fts5"
     }
 
-    fn search(
-        &self,
-        query: &str,
-        db: &PalaceDb,
-        n: usize,
-    ) -> Result<Vec<SearchHit>> {
+    fn search(&self, query: &str, db: &PalaceDb, n: usize) -> Result<Vec<SearchHit>> {
         // Try FTS5 first; fall back to naive on error
         match fts5_search(db, query, n) {
             Ok(hits) if !hits.is_empty() => Ok(hits),

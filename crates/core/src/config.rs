@@ -187,8 +187,16 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "architecture".to_string(),
         vec![
-            "pattern", "architecture", "design", "module", "component", "service", "microservice",
-            "dependency", "layer", "abstraction",
+            "pattern",
+            "architecture",
+            "design",
+            "module",
+            "component",
+            "service",
+            "microservice",
+            "dependency",
+            "layer",
+            "abstraction",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -197,8 +205,15 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "backend".to_string(),
         vec![
-            "server", "backend", "api", "route", "endpoint", "middleware", "handler",
-            "controller", "service",
+            "server",
+            "backend",
+            "api",
+            "route",
+            "endpoint",
+            "middleware",
+            "handler",
+            "controller",
+            "service",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -207,8 +222,16 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "frontend".to_string(),
         vec![
-            "ui", "frontend", "component", "react", "vue", "css", "html", "template",
-            "render", "view",
+            "ui",
+            "frontend",
+            "component",
+            "react",
+            "vue",
+            "css",
+            "html",
+            "template",
+            "render",
+            "view",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -217,8 +240,16 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "api".to_string(),
         vec![
-            "api", "rest", "graphql", "endpoint", "rpc", "http", "request", "response",
-            "serialize", "json",
+            "api",
+            "rest",
+            "graphql",
+            "endpoint",
+            "rpc",
+            "http",
+            "request",
+            "response",
+            "serialize",
+            "json",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -227,8 +258,16 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "database".to_string(),
         vec![
-            "database", "sql", "query", "schema", "migration", "model", "orm", "index",
-            "transaction", "cache",
+            "database",
+            "sql",
+            "query",
+            "schema",
+            "migration",
+            "model",
+            "orm",
+            "index",
+            "transaction",
+            "cache",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -237,8 +276,16 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "devops".to_string(),
         vec![
-            "deploy", "ci", "cd", "docker", "kubernetes", "pipeline", "monitor", "config",
-            "infrastructure", "terraform",
+            "deploy",
+            "ci",
+            "cd",
+            "docker",
+            "kubernetes",
+            "pipeline",
+            "monitor",
+            "config",
+            "infrastructure",
+            "terraform",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -247,8 +294,16 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "testing".to_string(),
         vec![
-            "test", "assert", "mock", "coverage", "integration", "unit", "e2e", "benchmark",
-            "qa", "quality",
+            "test",
+            "assert",
+            "mock",
+            "coverage",
+            "integration",
+            "unit",
+            "e2e",
+            "benchmark",
+            "qa",
+            "quality",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -257,8 +312,16 @@ pub fn default_code_hall_keywords() -> HashMap<String, Vec<String>> {
     m.insert(
         "security".to_string(),
         vec![
-            "auth", "oauth", "jwt", "password", "encrypt", "token", "permission", "role",
-            "secure", "vulnerability",
+            "auth",
+            "oauth",
+            "jwt",
+            "password",
+            "encrypt",
+            "token",
+            "permission",
+            "role",
+            "secure",
+            "vulnerability",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -646,8 +709,12 @@ impl Config {
     pub fn deinit() -> anyhow::Result<PathBuf> {
         let config_dir = Self::config_dir()?;
         if config_dir.exists() {
-            std::fs::remove_dir_all(&config_dir)
-                .with_context(|| format!("Failed to remove config directory: {}", config_dir.display()))?;
+            std::fs::remove_dir_all(&config_dir).with_context(|| {
+                format!(
+                    "Failed to remove config directory: {}",
+                    config_dir.display()
+                )
+            })?;
         }
         Ok(config_dir)
     }

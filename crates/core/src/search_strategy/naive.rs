@@ -27,12 +27,7 @@ impl SearchStrategy for NaiveJaccardStrategy {
         "naive"
     }
 
-    fn search(
-        &self,
-        query: &str,
-        db: &PalaceDb,
-        n: usize,
-    ) -> Result<Vec<SearchHit>> {
+    fn search(&self, query: &str, db: &PalaceDb, n: usize) -> Result<Vec<SearchHit>> {
         let q_tokens: HashSet<String> = query
             .to_lowercase()
             .split_whitespace()

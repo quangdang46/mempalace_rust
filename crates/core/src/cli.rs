@@ -21,35 +21,35 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io, sync::LazyLock};
 
+use crate::auto_forget::{apply_forgetting, evaluate_batch, AutoForgetConfig, ForgetReason};
 use crate::config::Config;
 use crate::consolidation;
+use crate::context::ContextBuilder;
 use crate::convo_miner::{mine_conversations, ConvoMiningResult};
-use crate::coordination::mesh::Mesh;
-use crate::dialect;
-use crate::entity_registry::EntityRegistry;
-use crate::layers::MemoryStack;
-use crate::llm::create_llm_provider_from_env;
-use crate::mine_palace_lock::{self, MineAlreadyRunning};
-use crate::miner::{self, MiningResult};
-use crate::palace_db::{self, PalaceDb};
-use crate::room_detector_local::{detect_rooms_from_folders, RoomMapping};
-use crate::searcher;
 use crate::coordination::actions::ActionStore;
 use crate::coordination::frontier::{compute_frontier, FrontierEntry};
 use crate::coordination::leases::LeaseStore;
+use crate::coordination::mesh::Mesh;
 use crate::coordination::signals::{SignalStore, ThreadSummary};
-use crate::context::ContextBuilder;
+use crate::dialect;
+use crate::doctor::{run_doctor, CheckStatus};
+use crate::entity_registry::EntityRegistry;
 use crate::export::export_import::ExportImportStore;
 use crate::export::snapshot::SnapshotStore;
-use crate::doctor::{run_doctor, CheckStatus};
+use crate::layers::MemoryStack;
+use crate::llm::create_llm_provider_from_env;
+use crate::memory_lifecycle::{apply_decay, evolve_memory};
+use crate::mine_palace_lock::{self, MineAlreadyRunning};
+use crate::miner::{self, MiningResult};
+use crate::palace_db::{self, PalaceDb};
 use crate::profile::ProfileStore;
+use crate::retention;
+use crate::room_detector_local::{detect_rooms_from_folders, RoomMapping};
+use crate::searcher;
 use crate::session::SessionStore;
 use crate::split_mega_files::split_file_with_options;
 use crate::sweeper::{sweep, sweep_directory};
 use crate::types::{ActionStatus, DecayConfig, Memory, MemoryType, Signal, SignalType};
-use crate::auto_forget::{evaluate_batch, apply_forgetting, AutoForgetConfig, ForgetReason};
-use crate::memory_lifecycle::{evolve_memory, apply_decay};
-use crate::retention;
 
 // ---------------------------------------------------------------------------
 // Environment Variables
@@ -1352,8 +1352,8 @@ fn cmd_search(
     // If user passed --strategy, dispatch via new SearchStrategy trait.
     // Otherwise use legacy searcher with fusion mode.
     if let Some(strategy_name) = strategy_override {
-        let sname = crate::search_strategy::StrategyName::from_str_opt(strategy_name)
-            .ok_or_else(|| {
+        let sname =
+            crate::search_strategy::StrategyName::from_str_opt(strategy_name).ok_or_else(|| {
                 anyhow::anyhow!(
                     "unknown strategy '{}'. Use fts5, naive, bm25, or embedding.",
                     strategy_name
@@ -1659,9 +1659,7 @@ fn cmd_compress(
         return Ok(());
     }
     let Ok(palace_db) = PalaceDb::open(&palace_path) else {
-        println!(
-            "\n  Palace could not be opened."
-        );
+        println!("\n  Palace could not be opened.");
         println!("  Try: mpr repair status");
         return Ok(());
     };
@@ -2294,14 +2292,12 @@ pub fn cmd_actions(
     })?;
 
     let parsed_status = match status_filter {
-        Some(s) => Some(
-            s.parse::<ActionStatus>().map_err(|e: String| {
-                anyhow::anyhow!(
-                    "Invalid action status '{}'. Valid statuses: pending, running, completed, failed.",
-                    s
-                )
-            })?,
-        ),
+        Some(s) => Some(s.parse::<ActionStatus>().map_err(|e: String| {
+            anyhow::anyhow!(
+                "Invalid action status '{}'. Valid statuses: pending, running, completed, failed.",
+                s
+            )
+        })?),
         None => None,
     };
 
@@ -2432,7 +2428,11 @@ pub fn cmd_signals(
             } else {
                 println!("  Signals for '{}' ({}):", agent_id, signals.len());
                 for sig in &signals {
-                    let read_status = if sig.read_at.is_some() { "read" } else { "unread" };
+                    let read_status = if sig.read_at.is_some() {
+                        "read"
+                    } else {
+                        "unread"
+                    };
                     println!(
                         "    [{}] from={} type={} {} | {}",
                         read_status, sig.from, sig.signal_type, sig.id, sig.content
@@ -2457,7 +2457,10 @@ pub fn cmd_signals(
                 }
             }
         }
-        other => anyhow::bail!("Unknown signal operation '{}': use send, read, or list", other),
+        other => anyhow::bail!(
+            "Unknown signal operation '{}': use send, read, or list",
+            other
+        ),
     }
     Ok(())
 }
@@ -2482,11 +2485,7 @@ pub fn cmd_context(palace_arg: Option<&str>, levels: usize) -> Result<()> {
 // Snapshot Command
 // ---------------------------------------------------------------------------
 
-fn cmd_snapshot(
-    palace_arg: Option<&str>,
-    name: Option<&str>,
-    with_embeddings: bool,
-) -> Result<()> {
+fn cmd_snapshot(palace_arg: Option<&str>, name: Option<&str>, with_embeddings: bool) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let snapshot_dir = palace_path.join("snapshots");
     let store = SnapshotStore::new(&snapshot_dir).with_context(|| {
@@ -2497,9 +2496,8 @@ fn cmd_snapshot(
 
     if let Some(snapshot_name) = name {
         // Save a snapshot: gather palace state
-        let db = PalaceDb::open(&palace_path).with_context(|| {
-            "Could not open palace database. Run 'mpr init' first.".to_string()
-        })?;
+        let db = PalaceDb::open(&palace_path)
+            .with_context(|| "Could not open palace database. Run 'mpr init' first.".to_string())?;
         let all_docs = db.get_all(None, None, usize::MAX);
         let state_json = serde_json::to_string_pretty(&serde_json::json!({
             "drawer_count": db.count(),
@@ -2514,10 +2512,7 @@ fn cmd_snapshot(
             }).collect::<Vec<_>>(),
         }))?;
         let meta = store.save_state(&state_json, snapshot_name)?;
-        println!(
-            "  Snapshot saved: {} (message: {})",
-            meta.id, meta.message
-        );
+        println!("  Snapshot saved: {} (message: {})", meta.id, meta.message);
     } else {
         // List snapshots
         let entries = store.list_snapshots().with_context(|| {
@@ -2539,19 +2534,16 @@ fn cmd_snapshot(
 // Import Command
 // ---------------------------------------------------------------------------
 
-fn cmd_import(
-    palace_arg: Option<&str>,
-    format: &str,
-    input: &Path,
-) -> Result<()> {
+fn cmd_import(palace_arg: Option<&str>, format: &str, input: &Path) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
     let coord_dir = palace_path.join("coordination");
     std::fs::create_dir_all(&coord_dir).with_context(|| {
         "Could not create coordination directory. Run 'mpr init' first.".to_string()
     })?;
 
-    let data_str = std::fs::read_to_string(input)
-        .with_context(|| "Could not read import file. Check that the file exists and is readable.".to_string())?;
+    let data_str = std::fs::read_to_string(input).with_context(|| {
+        "Could not read import file. Check that the file exists and is readable.".to_string()
+    })?;
 
     let data: crate::export::export_import::ExportData = match format {
         "json" | "jsonl" => serde_json::from_str(&data_str).with_context(|| {
@@ -2567,9 +2559,11 @@ fn cmd_import(
     };
 
     // Open a separate connection to the coordination DB for import
-    let conn = rusqlite::Connection::open(&coord_dir.join("coordination.db")).with_context(|| {
-        "Could not open coordination database. Run 'mpr init' to initialize the palace first.".to_string()
-    })?;
+    let conn =
+        rusqlite::Connection::open(&coord_dir.join("coordination.db")).with_context(|| {
+            "Could not open coordination database. Run 'mpr init' to initialize the palace first."
+                .to_string()
+        })?;
     let import_store = ExportImportStore::new(conn)?;
     let result = import_store.import(&data, "merge")?;
 
@@ -2591,16 +2585,16 @@ fn cmd_import(
 // Profile Command
 // ---------------------------------------------------------------------------
 
-fn cmd_profile(
-    palace_arg: Option<&str>,
-    wing: Option<&str>,
-    refresh: bool,
-) -> Result<()> {
+fn cmd_profile(palace_arg: Option<&str>, wing: Option<&str>, refresh: bool) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    if !palace_path.join(format!("{}.json", crate::palace_db::DEFAULT_COLLECTION_NAME)).exists() {
-        anyhow::bail!(
-            "Palace not found. Run 'mpr init' to set up a new palace."
-        );
+    if !palace_path
+        .join(format!(
+            "{}.json",
+            crate::palace_db::DEFAULT_COLLECTION_NAME
+        ))
+        .exists()
+    {
+        anyhow::bail!("Palace not found. Run 'mpr init' to set up a new palace.");
     }
     let project_name = wing.unwrap_or("default");
     let profile_store = ProfileStore::new(project_name);
@@ -2611,16 +2605,19 @@ fn cmd_profile(
             println!("  Profile for '{}' (cached):", project_name);
             println!("    Sessions: {}", profile.session_count);
             println!("    Observations: {}", profile.total_observations);
-            let concepts: Vec<&str> = profile.top_concepts.iter().map(|c| c.key.as_str()).collect();
+            let concepts: Vec<&str> = profile
+                .top_concepts
+                .iter()
+                .map(|c| c.key.as_str())
+                .collect();
             println!("    Top concepts: {}", concepts.join(", "));
             return Ok(());
         }
     }
 
     // Compute from palace data
-    let db = PalaceDb::open(&palace_path).with_context(|| {
-        "Could not open palace database. Run 'mpr init' first.".to_string()
-    })?;
+    let db = PalaceDb::open(&palace_path)
+        .with_context(|| "Could not open palace database. Run 'mpr init' first.".to_string())?;
     let wing_filter = if wing.is_some() { wing } else { None };
     let results = db.get_all(wing_filter, None, 5000);
 
@@ -2633,9 +2630,8 @@ fn cmd_profile(
         }
     }
 
-    let session_store = SessionStore::open(palace_path.join("sessions")).with_context(|| {
-        "Could not open session store. Run 'mpr init' first.".to_string()
-    })?;
+    let session_store = SessionStore::open(palace_path.join("sessions"))
+        .with_context(|| "Could not open session store. Run 'mpr init' first.".to_string())?;
     let sessions = session_store.list_sessions(wing_filter)?;
     let session_count = sessions.len();
 
@@ -2643,7 +2639,11 @@ fn cmd_profile(
     println!("  Profile for '{}':", project_name);
     println!("    Sessions: {}", profile.session_count);
     println!("    Observations: {}", profile.total_observations);
-    let concepts: Vec<&str> = profile.top_concepts.iter().map(|c| c.key.as_str()).collect();
+    let concepts: Vec<&str> = profile
+        .top_concepts
+        .iter()
+        .map(|c| c.key.as_str())
+        .collect();
     println!("    Top concepts: {}", concepts.join(", "));
 
     Ok(())
@@ -2657,15 +2657,20 @@ pub fn cmd_diagnose(palace_arg: Option<&str>, deep: bool) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
 
     if !palace_path.exists() {
-        anyhow::bail!(
-            "Palace path does not exist. Run 'mpr init <dir>' to set up a palace first."
-        );
+        anyhow::bail!("Palace path does not exist. Run 'mpr init <dir>' to set up a palace first.");
     }
 
     let report = run_doctor(&palace_path)?;
 
     println!("  Palace diagnosis for configured palace:");
-    println!("  Overall health: {}", if report.healthy { "HEALTHY" } else { "ISSUES FOUND ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ see details below" });
+    println!(
+        "  Overall health: {}",
+        if report.healthy {
+            "HEALTHY"
+        } else {
+            "ISSUES FOUND ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ see details below"
+        }
+    );
     if !report.healthy {
         println!("  Run 'mpr repair scan' to scan for corruption or 'mpr init' to re-initialize.");
     }
@@ -2696,9 +2701,8 @@ fn cmd_forget(
     dry_run: bool,
 ) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    let db = PalaceDb::open(&palace_path).with_context(|| {
-        "Could not open palace database. Run 'mpr init' first.".to_string()
-    })?;
+    let db = PalaceDb::open(&palace_path)
+        .with_context(|| "Could not open palace database. Run 'mpr init' first.".to_string())?;
 
     let all_memories = db.get_memories(None, usize::MAX);
 
@@ -2716,28 +2720,35 @@ fn cmd_forget(
         let mtype: MemoryType = mtype_str
             .parse()
             .map_err(|e: String| anyhow::anyhow!("Invalid memory type '{}': {}", mtype_str, e))?;
-        filtered.into_iter().filter(|m| m.memory_type == mtype).collect()
+        filtered
+            .into_iter()
+            .filter(|m| m.memory_type == mtype)
+            .collect()
     } else {
         filtered
     };
 
     let retention_scores: Vec<crate::types::RetentionScore> = filtered
         .iter()
-        .map(|m| {
-            crate::types::RetentionScore {
-                memory_id: m.id.clone(),
-                retention_strength: apply_decay(m, &retention::default_decay_config()),
-                last_accessed: m.updated_at,
-                access_count: 0,
-                decay_rate: retention::decay_rate_for_type(&m.memory_type),
-            }
+        .map(|m| crate::types::RetentionScore {
+            memory_id: m.id.clone(),
+            retention_strength: apply_decay(m, &retention::default_decay_config()),
+            last_accessed: m.updated_at,
+            access_count: 0,
+            decay_rate: retention::decay_rate_for_type(&m.memory_type),
         })
         .collect();
 
     let decay_config = retention::default_decay_config();
     let auto_config = AutoForgetConfig::default();
 
-    let evaluations = evaluate_batch(&filtered, &retention_scores, &decay_config, &auto_config, None);
+    let evaluations = evaluate_batch(
+        &filtered,
+        &retention_scores,
+        &decay_config,
+        &auto_config,
+        None,
+    );
 
     let forgettable: Vec<_> = evaluations.iter().filter(|e| e.should_forget).collect();
 
@@ -2752,17 +2763,17 @@ fn cmd_forget(
 
     println!("  Memories to forget ({}):", forgettable.len());
     for eval in &forgettable {
-        println!("    {} | retention={:.2} | reason={:?}", eval.memory_id, eval.current_retention, eval.reason);
+        println!(
+            "    {} | retention={:.2} | reason={:?}",
+            eval.memory_id, eval.current_retention, eval.reason
+        );
     }
 
     if dry_run {
         println!();
         println!("  [dry-run mode - no changes made. Pass --dry-run=false to apply forgetting.]");
     } else {
-        let _forgotten = apply_forgetting(
-            &evaluations,
-            &filtered,
-        );
+        let _forgotten = apply_forgetting(&evaluations, &filtered);
         println!();
         println!("  Forget applied to {} memories.", forgettable.len());
     }
@@ -2774,15 +2785,10 @@ fn cmd_forget(
 // Evolve Command
 // ---------------------------------------------------------------------------
 
-fn cmd_evolve(
-    palace_arg: Option<&str>,
-    wing: Option<&str>,
-    count: usize,
-) -> Result<()> {
+fn cmd_evolve(palace_arg: Option<&str>, wing: Option<&str>, count: usize) -> Result<()> {
     let palace_path = resolve_palace_path(palace_arg)?;
-    let db = PalaceDb::open(&palace_path).with_context(|| {
-        "Could not open palace database. Run 'mpr init' first.".to_string()
-    })?;
+    let db = PalaceDb::open(&palace_path)
+        .with_context(|| "Could not open palace database. Run 'mpr init' first.".to_string())?;
 
     let memories = db.get_memories(wing, count.max(1));
 
@@ -3118,7 +3124,12 @@ pub fn run() -> Result<()> {
             memory_type,
             dry_run,
         } => {
-            cmd_forget(palace_arg, *older_than_days, memory_type.as_deref(), *dry_run)?;
+            cmd_forget(
+                palace_arg,
+                *older_than_days,
+                memory_type.as_deref(),
+                *dry_run,
+            )?;
         }
         Commands::Evolve { wing, count } => {
             cmd_evolve(palace_arg, wing.as_deref(), *count)?;
@@ -3133,23 +3144,23 @@ pub fn run() -> Result<()> {
         Commands::Connect { adapter, dry_run } => {
             crate::connect::run(adapter.as_deref(), *dry_run)?;
         }
-        Commands::Remove { force, palace_only, all } => {
+        Commands::Remove {
+            force,
+            palace_only,
+            all,
+        } => {
             cmd_remove(*force, *palace_only, *all, palace_arg)?;
         }
-        Commands::Config(ref cmd) => {
-            match cmd {
-                ConfigCommands::Show => {
-                    let config = Config::load()?;
-                    println!("{:#?}", config);
-                }
-                ConfigCommands::Path => {
-                    match Config::config_file_path() {
-                        Ok(p) => println!("{}", p.display()),
-                        Err(e) => eprintln!("Error: {}", e),
-                    }
-                }
+        Commands::Config(ref cmd) => match cmd {
+            ConfigCommands::Show => {
+                let config = Config::load()?;
+                println!("{:#?}", config);
             }
-        }
+            ConfigCommands::Path => match Config::config_file_path() {
+                Ok(p) => println!("{}", p.display()),
+                Err(e) => eprintln!("Error: {}", e),
+            },
+        },
         Commands::Deinit { force } => {
             cmd_deinit(*force)?;
         }
@@ -3319,7 +3330,10 @@ fn cmd_deinit(force: bool) -> Result<()> {
     let config_dir = crate::config::Config::config_dir()?;
 
     if !config_dir.exists() {
-        println!("No MemPalace configuration found at {}", config_dir.display());
+        println!(
+            "No MemPalace configuration found at {}",
+            config_dir.display()
+        );
         println!("Nothing to de-initialize.");
         return Ok(());
     }
@@ -3384,8 +3398,7 @@ fn cmd_demo(custom_dir: Option<&Path>, force: bool, palace_arg: Option<&str>) ->
 
     for (filename, content) in demo_files {
         let path = target.join(filename);
-        std::fs::write(&path, content)
-            .with_context(|| "Failed to write demo file.".to_string())?;
+        std::fs::write(&path, content).with_context(|| "Failed to write demo file.".to_string())?;
     }
 
     println!(

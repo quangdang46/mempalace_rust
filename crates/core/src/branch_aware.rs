@@ -245,7 +245,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("detect_wt_repo_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         Command::new("git")
-            .args(["init"])
+            .args(["init", "--initial-branch=main"])
             .current_dir(&dir)
             .output()
             .unwrap();
@@ -259,7 +259,6 @@ mod tests {
             .current_dir(&dir)
             .output()
             .unwrap();
-
         let result = detect_worktree(&dir).unwrap();
         assert!(result.is_some());
         let wt = result.unwrap();
@@ -272,7 +271,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("detect_wt_branch_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         Command::new("git")
-            .args(["init"])
+            .args(["init", "--initial-branch=main"])
             .current_dir(&dir)
             .output()
             .unwrap();

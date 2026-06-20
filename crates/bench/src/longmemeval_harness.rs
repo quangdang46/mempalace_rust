@@ -314,8 +314,7 @@ pub async fn run<W: std::io::Write>(
             None,
             SEARCH_LIMIT,
             Some(&embed_model),
-        )
-        {
+        ) {
             Ok(r) => r,
             Err(e) => {
                 let rec = QuestionRecord {

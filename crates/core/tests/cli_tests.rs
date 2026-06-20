@@ -17,9 +17,14 @@ use mempalace_core::cli::Cli;
 fn test_cli_no_args_renders_help() {
     let mut cmd = Cli::command();
     let help = cmd.render_help().to_string();
-    assert!(help.contains("MemPalace"), "help should contain 'MemPalace'");
+    assert!(
+        help.contains("MemPalace"),
+        "help should contain 'MemPalace'"
+    );
     // Should list representative subcommands
-    for sub in &["init", "search", "status", "actions", "diagnose", "serve", "mcp"] {
+    for sub in &[
+        "init", "search", "status", "actions", "diagnose", "serve", "mcp",
+    ] {
         assert!(help.contains(sub), "help should contain '{sub}'");
     }
 }
@@ -47,9 +52,16 @@ fn test_cli_init_parses_dir_arg() {
 #[test]
 fn test_cli_init_parses_optional_flags() {
     assert!(Cli::try_parse_from([
-        "mpr", "init", "/tmp/test_palace",
-        "--yes", "--no-llm", "--auto-mine", "--lang", "en",
-    ]).is_ok());
+        "mpr",
+        "init",
+        "/tmp/test_palace",
+        "--yes",
+        "--no-llm",
+        "--auto-mine",
+        "--lang",
+        "en",
+    ])
+    .is_ok());
 }
 
 #[test]
@@ -60,13 +72,20 @@ fn test_cli_search_parses_query() {
 #[test]
 fn test_cli_search_parses_optional_flags() {
     assert!(Cli::try_parse_from([
-        "mpr", "search", "query",
-        "--wing", "my_project",
-        "--room", "dev",
-        "--results", "10",
-        "--fusion-mode", "hybrid",
+        "mpr",
+        "search",
+        "query",
+        "--wing",
+        "my_project",
+        "--room",
+        "dev",
+        "--results",
+        "10",
+        "--fusion-mode",
+        "hybrid",
         "--json",
-    ]).is_ok());
+    ])
+    .is_ok());
 }
 
 #[test]
@@ -77,13 +96,21 @@ fn test_cli_mine_parses_dir() {
 #[test]
 fn test_cli_mine_parses_optional_flags() {
     assert!(Cli::try_parse_from([
-        "mpr", "mine", "/tmp/project",
-        "--mode", "convos",
-        "--wing", "chat",
-        "--agent", "test-bot",
-        "--limit", "100",
-        "--dry-run", "--no-gitignore",
-    ]).is_ok());
+        "mpr",
+        "mine",
+        "/tmp/project",
+        "--mode",
+        "convos",
+        "--wing",
+        "chat",
+        "--agent",
+        "test-bot",
+        "--limit",
+        "100",
+        "--dry-run",
+        "--no-gitignore",
+    ])
+    .is_ok());
 }
 
 #[test]
@@ -98,9 +125,9 @@ fn test_cli_serve_parses() {
 
 #[test]
 fn test_cli_serve_parses_flags() {
-    assert!(Cli::try_parse_from([
-        "mpr", "serve", "--read-only", "--http", "--no-background",
-    ]).is_ok());
+    assert!(
+        Cli::try_parse_from(["mpr", "serve", "--read-only", "--http", "--no-background",]).is_ok()
+    );
 }
 
 #[test]
@@ -120,7 +147,9 @@ fn test_cli_actions_parses() {
 
 #[test]
 fn test_cli_actions_status_filter() {
-    assert!(Cli::try_parse_from(["mpr", "actions", "--status", "running", "--limit", "10"]).is_ok());
+    assert!(
+        Cli::try_parse_from(["mpr", "actions", "--status", "running", "--limit", "10"]).is_ok()
+    );
 }
 
 #[test]
@@ -226,9 +255,14 @@ fn test_cli_stop_parses() {
 #[test]
 fn test_cli_hook_parses() {
     assert!(Cli::try_parse_from([
-        "mpr", "hook", "--hook", "session_end",
-        "--data", r#"{"key": "value"}"#,
-    ]).is_ok());
+        "mpr",
+        "hook",
+        "--hook",
+        "session_end",
+        "--data",
+        r#"{"key": "value"}"#,
+    ])
+    .is_ok());
 }
 
 #[test]
@@ -355,9 +389,7 @@ fn test_cli_import_missing_args_fails() {
 
 #[test]
 fn test_cli_fusion_mode_accepts_any_string() {
-    assert!(Cli::try_parse_from([
-        "mpr", "search", "test", "--fusion-mode", "floob",
-    ]).is_ok());
+    assert!(Cli::try_parse_from(["mpr", "search", "test", "--fusion-mode", "floob",]).is_ok());
 }
 
 // ---------------------------------------------------------------------------
@@ -422,12 +454,20 @@ fn test_cmd_actions_with_fresh_palace() {
     let (dir, palace_path) = crate::common::create_temp_palace_dir("test_actions");
     // Should produce output without panicking even on fresh palace
     let result = mempalace_core::cli::cmd_actions(Some(palace_path.to_str().unwrap()), None, 10);
-    assert!(result.is_ok(), "cmd_actions should not error on fresh palace: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "cmd_actions should not error on fresh palace: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_cmd_diagnose_with_fresh_palace() {
     let (dir, palace_path) = crate::common::create_temp_palace_dir("test_diagnose");
     let result = mempalace_core::cli::cmd_diagnose(Some(palace_path.to_str().unwrap()), false);
-    assert!(result.is_ok(), "cmd_diagnose should not error on fresh palace: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "cmd_diagnose should not error on fresh palace: {:?}",
+        result.err()
+    );
 }

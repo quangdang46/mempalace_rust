@@ -26,13 +26,13 @@ pub mod mcp;
 pub mod mcp_server;
 pub mod memory_lifecycle;
 pub mod miner;
+pub mod notes;
 pub mod onboarding;
 pub mod prompts;
 pub mod retention;
 pub mod search;
 pub mod search_strategy;
 pub mod searcher;
-pub mod notes;
 pub mod session;
 pub mod sync;
 pub mod types;
@@ -114,6 +114,7 @@ pub mod llm_refine;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod migrate;
+pub mod migrate_vector_index;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod mine_lock;
@@ -145,7 +146,6 @@ pub mod project_scanner;
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod query_sanitizer;
 pub mod recent_searches_sweep;
-pub mod migrate_vector_index;
 pub mod reflect;
 pub mod relations;
 #[doc(hidden)]

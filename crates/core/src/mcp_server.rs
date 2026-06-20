@@ -1722,11 +1722,21 @@ fn tool_health(state: &AppState, _args: JsonObject) -> Result<CallToolResult, Er
     let embedder = &state.config.embedding_model;
 
     let (status, message) = if drawer_count == 0 {
-        ("okay", "Palace is open but has no memories yet. Run `mpr mine <dir>` to load data.".to_string())
+        (
+            "okay",
+            "Palace is open but has no memories yet. Run `mpr mine <dir>` to load data."
+                .to_string(),
+        )
     } else if !coordination_ok {
-        ("warning", "Palace is open with memories but coordination subsystem is unavailable.".to_string())
+        (
+            "warning",
+            "Palace is open with memories but coordination subsystem is unavailable.".to_string(),
+        )
     } else {
-        ("okay", format!("Palace is healthy with {} memories", drawer_count))
+        (
+            "okay",
+            format!("Palace is healthy with {} memories", drawer_count),
+        )
     };
 
     ok_json(serde_json::json!({

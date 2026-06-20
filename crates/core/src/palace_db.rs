@@ -192,7 +192,6 @@ impl std::ops::Deref for CoordinationDb {
     }
 }
 
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Action {
     pub id: String,

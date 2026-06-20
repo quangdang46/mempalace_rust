@@ -88,11 +88,7 @@ pub fn sweep_search_history(conn: &Connection, ttl_days: u64) -> Result<usize> {
 
 /// Count total search entries in the database.
 pub fn count_search_entries(conn: &Connection) -> Result<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM search_history",
-        [],
-        |row| row.get(0),
-    )?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM search_history", [], |row| row.get(0))?;
     Ok(count as usize)
 }
 

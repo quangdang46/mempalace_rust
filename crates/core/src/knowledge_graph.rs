@@ -960,10 +960,16 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
 
     pub fn stats(&self) -> anyhow::Result<KgStats> {
         let total_entities: usize =
-            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+            self.conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
 
         let total_triples: usize =
-            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
+            self.conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
 
         let current_facts: usize = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM triples WHERE valid_to IS NULL",
@@ -1338,7 +1344,11 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Compute the degree (number of incident triples) of a single entity.
     pub fn get_entity_degree(&self, name: &str) -> anyhow::Result<usize> {
         let eid = Self::entity_id(name);
-        let degree: usize = self.conn.lock().unwrap().query_row(
+        let degree: usize = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
                 "SELECT COUNT(*) FROM triples WHERE subject = ?1 OR object = ?1",
                 rusqlite::params![eid],
                 |row| row.get(0),
@@ -1350,9 +1360,15 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Build and persist a new graph snapshot from the current KG state.
     pub fn create_snapshot(&self) -> anyhow::Result<GraphSnapshot> {
         let total_nodes: usize =
-            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+            self.conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
         let total_edges: usize =
-            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
+            self.conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM triples", [], |row| row.get(0))?;
         let mut top_degrees = std::collections::HashMap::new();
         let _c = self.conn.lock().unwrap();
         let mut stmt = _c.prepare(
@@ -1370,7 +1386,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
         let snapshot_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let top_json = serde_json::to_string(&top_degrees)?;
-        self.conn.lock().unwrap().execute("DELETE FROM graph_snapshots", [])?;
+        self.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM graph_snapshots", [])?;
         self.conn.lock().unwrap().execute(
             "INSERT INTO graph_snapshots (snapshot_id, total_nodes, total_edges, top_degrees, created_at, reset_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
@@ -1417,7 +1436,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     pub fn reset_snapshot(&self) -> anyhow::Result<GraphSnapshot> {
         let snapshot_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        self.conn.lock().unwrap().execute("DELETE FROM graph_snapshots", [])?;
+        self.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM graph_snapshots", [])?;
         self.conn.lock().unwrap().execute(
             "INSERT INTO graph_snapshots (snapshot_id, total_nodes, total_edges, top_degrees, created_at, reset_at) \
              VALUES (?1, 0, 0, '{}', ?2, ?3)",
@@ -1436,7 +1458,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject);
     /// Pre-flight check: returns node count and whether a prior snapshot exists.
     pub fn snapshot_preflight(&self) -> anyhow::Result<SnapshotPreflight> {
         let total_nodes: usize =
-            self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+            self.conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
         let existing = self.get_snapshot()?;
         Ok(SnapshotPreflight {
             total_nodes,
@@ -1929,7 +1954,11 @@ mod tests {
             Option<String>,
             Option<String>,
             Option<String>,
-        ) = kg.conn.lock().unwrap().query_row(
+        ) = kg
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
                 "SELECT source_closet, source_file, source_drawer_id, adapter_name \
                  FROM triples WHERE id = ?1",
                 params![triple_id],
@@ -2043,7 +2072,11 @@ mod tests {
                 Some("legacy-adapter"),
             )
             .unwrap();
-        let (drawer, adapter): (Option<String>, Option<String>) = kg.conn.lock().unwrap().query_row(
+        let (drawer, adapter): (Option<String>, Option<String>) = kg
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
                 "SELECT source_drawer_id, adapter_name FROM triples WHERE id = ?1",
                 params![triple_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2154,7 +2187,11 @@ mod tests {
         kg.add_memory_edge("a", "b", &MemoryEdgeKind::RelatesTo { weight: 0.42 })
             .unwrap();
 
-        let (confidence, weight): (f64, f64) = kg.conn.lock().unwrap().query_row(
+        let (confidence, weight): (f64, f64) = kg
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
                 "SELECT confidence, weight FROM triples WHERE edge_kind = 'relates_to'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2244,7 +2281,8 @@ mod tests {
 
         let kg = KnowledgeGraph::open(&db_path).unwrap();
         let conn_lock = kg.conn.lock().unwrap();
-        let mut stmt = conn_lock.prepare("SELECT id, edge_kind, weight FROM triples ORDER BY id")
+        let mut stmt = conn_lock
+            .prepare("SELECT id, edge_kind, weight FROM triples ORDER BY id")
             .unwrap();
         let rows: Vec<(String, Option<String>, Option<f64>)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
@@ -2357,12 +2395,16 @@ mod bitemporal_tests {
 
         // Row 1: valid_from = "2020-01-15" is more recent than extracted_at = "2019-06-01"
         // COALESCE(valid_from, extracted_at) = "2020-01-15"
-        let (t_created, t_expired): (String, Option<String>) = kg.conn.lock().unwrap().query_row(
-            "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_1'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
+        let (t_created, t_expired): (String, Option<String>) = kg
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(
             t_created, "2020-01-15",
             "t_created should backfill from valid_from"
@@ -2373,12 +2415,16 @@ mod bitemporal_tests {
         );
 
         // Row 2: valid_from IS NULL → falls back to extracted_at = "2021-03-10"
-        let (t_created, t_expired): (String, Option<String>) = kg.conn.lock().unwrap().query_row(
-            "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_2'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
+        let (t_created, t_expired): (String, Option<String>) = kg
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_2'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(
             t_created, "2021-03-10",
             "t_created should fall back to extracted_at"
@@ -2389,7 +2435,11 @@ mod bitemporal_tests {
         );
 
         // Row 3: valid_from = "2022-07-01" is more recent than extracted_at = "2022-06-15"
-        let (t_created, t_expired): (String, Option<String>) = kg.conn.lock().unwrap().query_row(
+        let (t_created, t_expired): (String, Option<String>) = kg
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
                 "SELECT t_created, t_expired FROM triples WHERE id = 'legacy_3'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2426,7 +2476,11 @@ mod bitemporal_tests {
             )
             .unwrap();
 
-        let (t_created, t_expired): (Option<String>, Option<String>) = kg.conn.lock().unwrap().query_row(
+        let (t_created, t_expired): (Option<String>, Option<String>) = kg
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
                 "SELECT t_created, t_expired FROM triples WHERE id = ?1",
                 params![id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2594,7 +2648,10 @@ mod bitemporal_tests {
             .unwrap();
 
         // Manually set t_expired to a date in the future
-        kg.conn.lock().unwrap().execute(
+        kg.conn
+            .lock()
+            .unwrap()
+            .execute(
                 "UPDATE triples SET t_expired = ?1 WHERE id = ?2",
                 params!["2050-01-01", id],
             )

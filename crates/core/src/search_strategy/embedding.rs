@@ -26,12 +26,7 @@ impl SearchStrategy for EmbeddingStrategy {
         "embedding"
     }
 
-    fn search(
-        &self,
-        query: &str,
-        db: &PalaceDb,
-        n: usize,
-    ) -> Result<Vec<SearchHit>> {
+    fn search(&self, query: &str, db: &PalaceDb, n: usize) -> Result<Vec<SearchHit>> {
         // Delegate to existing searcher.
         let response = crate::searcher::search_memories_with_rerank(
             query,

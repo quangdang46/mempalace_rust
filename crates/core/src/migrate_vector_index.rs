@@ -111,7 +111,10 @@ pub fn migrate_index(palace_path: &Path) -> Result<MigrateIndexResult> {
             let dim = embedder.dim();
             let meta = VectorIndexMeta::new("auto", &fp, dim);
             write_index_meta(palace_path, &meta)?;
-            eprintln!("  No drawers to re-index; updated manifest to v{}", CURRENT_INDEX_VERSION);
+            eprintln!(
+                "  No drawers to re-index; updated manifest to v{}",
+                CURRENT_INDEX_VERSION
+            );
         }
         return Ok(MigrateIndexResult {
             drawers_reindexed: 0,
@@ -157,13 +160,16 @@ pub fn migrate_index(palace_path: &Path) -> Result<MigrateIndexResult> {
             .cloned()
             .collect();
 
-        let upserts: Vec<(String, String, std::collections::HashMap<String, serde_json::Value>)> =
-            id_chunk
-                .into_iter()
-                .zip(chunk.iter().cloned())
-                .zip(meta_chunk.into_iter())
-                .map(|((id, doc), meta)| (id, doc, meta))
-                .collect();
+        let upserts: Vec<(
+            String,
+            String,
+            std::collections::HashMap<String, serde_json::Value>,
+        )> = id_chunk
+            .into_iter()
+            .zip(chunk.iter().cloned())
+            .zip(meta_chunk.into_iter())
+            .map(|((id, doc), meta)| (id, doc, meta))
+            .collect();
 
         if let Err(e) = db.upsert_documents(&upserts) {
             eprintln!("    Error re-indexing batch: {}", e);
@@ -218,8 +224,7 @@ mod tests {
         let meta = VectorIndexMeta::new("test-model", "fp-abc", 384);
         write_index_meta(dir.path(), &meta).expect("write");
 
-        let (version, model, fingerprint, dim) =
-            detect_index_version(dir.path()).expect("detect");
+        let (version, model, fingerprint, dim) = detect_index_version(dir.path()).expect("detect");
         assert_eq!(version, CURRENT_INDEX_VERSION);
         assert_eq!(model, "test-model");
         assert_eq!(fingerprint, "fp-abc");

@@ -308,35 +308,35 @@ pub fn search(
     n_results: usize,
     embedding_model: Option<&str>,
 ) -> anyhow::Result<i32> {
-    let response =
-        match search_memories(query, palace_path, wing, room, n_results, embedding_model) {
-            Ok(response) => response,
-            Err(error) => {
-                if let Some(search_error) = error.downcast_ref::<SearchError>() {
-                    match search_error {
-                        SearchError::NoPalace(path) => {
-                            println!("\n  No palace found at {}", path);
-                            println!("  Run: mpr init <dir>");
-                        }
-                        SearchError::NotInitialized(path) => {
-                            println!(
-                                "\n  Palace directory exists at {} but no data has been mined yet.",
-                                path
-                            );
-                            println!("  Run: mpr mine <dir>");
-                        }
-                        SearchError::Empty(path) => {
-                            println!("\n  Palace at {} has no drawers yet.", path);
-                            println!("  Run: mpr mine <dir> to ingest content.");
-                        }
-                        SearchError::Query(message) => {
-                            println!("\n  Search error: {}", message);
-                        }
+    let response = match search_memories(query, palace_path, wing, room, n_results, embedding_model)
+    {
+        Ok(response) => response,
+        Err(error) => {
+            if let Some(search_error) = error.downcast_ref::<SearchError>() {
+                match search_error {
+                    SearchError::NoPalace(path) => {
+                        println!("\n  No palace found at {}", path);
+                        println!("  Run: mpr init <dir>");
+                    }
+                    SearchError::NotInitialized(path) => {
+                        println!(
+                            "\n  Palace directory exists at {} but no data has been mined yet.",
+                            path
+                        );
+                        println!("  Run: mpr mine <dir>");
+                    }
+                    SearchError::Empty(path) => {
+                        println!("\n  Palace at {} has no drawers yet.", path);
+                        println!("  Run: mpr mine <dir> to ingest content.");
+                    }
+                    SearchError::Query(message) => {
+                        println!("\n  Search error: {}", message);
                     }
                 }
-                return Err(error);
             }
-        };
+            return Err(error);
+        }
+    };
 
     Ok(print_search_response(&response))
 }
@@ -635,8 +635,7 @@ mod tests {
         .unwrap();
         db.flush().unwrap();
 
-        let response = search_memories("code", &palace_path, None, None, 2, None)
-            .unwrap();
+        let response = search_memories("code", &palace_path, None, None, 2, None).unwrap();
         assert_eq!(response.results.len(), 2);
     }
 
@@ -644,8 +643,8 @@ mod tests {
     fn test_search_memories_no_palace_errors() {
         let temp = tempfile::tempdir().unwrap();
         let missing = temp.path().join("missing");
-        let error = search_memories("anything", &missing, None, None, DEFAULT_N_RESULTS, None)
-            .unwrap_err();
+        let error =
+            search_memories("anything", &missing, None, None, DEFAULT_N_RESULTS, None).unwrap_err();
         let downcast = error.downcast_ref::<SearchError>().unwrap();
         assert!(matches!(downcast, SearchError::NoPalace(_)));
         assert!(error.to_string().contains("No palace found"));
@@ -717,8 +716,8 @@ mod tests {
         .unwrap();
         db.flush().unwrap();
 
-        let duplicate = check_duplicate("JWT authentication uses bearer tokens", &palace_path, 0.9)
-            .unwrap();
+        let duplicate =
+            check_duplicate("JWT authentication uses bearer tokens", &palace_path, 0.9).unwrap();
         assert_eq!(duplicate.as_deref(), Some("dup1"));
     }
 
@@ -739,8 +738,7 @@ mod tests {
         .unwrap();
         db.flush().unwrap();
 
-        let duplicate = check_duplicate("JWT authentication", &palace_path, 0.95)
-            .unwrap();
+        let duplicate = check_duplicate("JWT authentication", &palace_path, 0.95).unwrap();
         assert!(duplicate.is_none());
     }
 }

@@ -30,12 +30,7 @@ impl SearchStrategy for Bm25Strategy {
         "bm25"
     }
 
-    fn search(
-        &self,
-        query: &str,
-        db: &PalaceDb,
-        n: usize,
-    ) -> Result<Vec<SearchHit>> {
+    fn search(&self, query: &str, db: &PalaceDb, n: usize) -> Result<Vec<SearchHit>> {
         let q_tokens: Vec<String> = query
             .to_lowercase()
             .split_whitespace()
@@ -101,8 +96,8 @@ impl SearchStrategy for Bm25Strategy {
                     continue;
                 }
                 let idf = ((n_docs - df + 0.5) / (df + 0.5) + 1.0).ln();
-                let tf_norm = (tf * (self.k1 + 1.0))
-                    / (tf + self.k1 * (1.0 - self.b + self.b * dl / avg_dl));
+                let tf_norm =
+                    (tf * (self.k1 + 1.0)) / (tf + self.k1 * (1.0 - self.b + self.b * dl / avg_dl));
                 score += idf * tf_norm;
             }
             if score > 0.0 {

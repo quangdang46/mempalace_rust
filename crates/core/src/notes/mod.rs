@@ -55,7 +55,10 @@ impl Notes {
             fs::write(&user_path, USER_HEADER)
                 .with_context(|| format!("write {}", user_path.display()))?;
         }
-        Ok(Self { agent_path, user_path })
+        Ok(Self {
+            agent_path,
+            user_path,
+        })
     }
 
     /// Path to the notes directory (for `Notes::new`).
@@ -90,10 +93,7 @@ impl Notes {
         let content = fs::read_to_string(&self.user_path)
             .with_context(|| format!("read {}", self.user_path.display()))?;
         let prefix = format!("{}:", key);
-        let mut lines: Vec<String> = content
-            .lines()
-            .map(|s| s.to_string())
-            .collect();
+        let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
         // Remove existing key
         lines.retain(|l| !l.trim_start().starts_with(&prefix));
         // Append new key
@@ -109,7 +109,10 @@ impl Notes {
     pub fn recall(&self) -> Result<NotesContent> {
         let agent = fs::read_to_string(&self.agent_path).unwrap_or_default();
         let user = fs::read_to_string(&self.user_path).unwrap_or_default();
-        let agent_entries = agent.lines().filter(|l| l.trim_start().starts_with("- `")).count();
+        let agent_entries = agent
+            .lines()
+            .filter(|l| l.trim_start().starts_with("- `"))
+            .count();
         let user_entries = user
             .lines()
             .filter(|l| {

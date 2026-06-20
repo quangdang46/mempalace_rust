@@ -60,7 +60,6 @@ fn bench_search(c: &mut Criterion) {
             async move {
                 let resp =
                     search_memories(black_box(q), palace_path.as_path(), None, None, 10, None)
-                        .await
                         .expect("search_memories should succeed against the fixture");
                 black_box(resp.results.len())
             }
@@ -81,7 +80,6 @@ fn bench_search(c: &mut Criterion) {
                     10,
                     None,
                 )
-                .await
                 .expect("search_memories should succeed against the fixture");
                 black_box(resp.results.len())
             }

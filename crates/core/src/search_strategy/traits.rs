@@ -20,12 +20,7 @@ pub trait SearchStrategy: Send + Sync {
     fn name(&self) -> &str;
 
     /// Run a search against the given PalaceDb.
-    fn search(
-        &self,
-        query: &str,
-        db: &PalaceDb,
-        n: usize,
-    ) -> Result<Vec<SearchHit>>;
+    fn search(&self, query: &str, db: &PalaceDb, n: usize) -> Result<Vec<SearchHit>>;
 
     /// Does this strategy require downloading a model? (embedding only)
     fn requires_model(&self) -> bool {
