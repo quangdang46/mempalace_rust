@@ -14,21 +14,29 @@ use std::sync::Arc;
 /// with a real vector embedder so the hybrid RRF (BM25 + vector + graph)
 /// stream uses embeddings. Falls back to the naive open on any error.
 fn open_for_search(palace_path: &Path, embedding_model: Option<&str>) -> anyhow::Result<PalaceDb> {
-    // "naive" means Jaccard word-overlap — skip the vector path entirely.
-    match embedding_model {
-        Some("naive") | Some("jaccard") => return PalaceDb::open(palace_path),
-        _ => {}
-    }
-    let resolved = match embedding_model {
-        Some(name) => crate::embed::resolve_embedder(name),
-        None => crate::embed::embedder_from_env(),
+    // Resolve the effective embedding model: CLI flag > config file > env > default.
+    // When the parameter is None, read the palace config so a user who ran
+    // `mpr init --search-strategy fts5 --no-llm` (which writes
+    // embedding_model: "naive") doesn't silently trigger an ONNX model download.
+    let resolved: anyhow::Result<Box<dyn crate::embed::Embedder>> = match embedding_model {
+        Some(v) => match v {
+            "naive" | "jaccard" => return PalaceDb::open(palace_path),
+            name => crate::embed::resolve_embedder(name),
+        },
+        None => {
+            // Check config first before falling back to env/default.
+            match crate::config::Config::load().ok().map(|c| c.embedding_model) {
+                Some(ref model) if model == "naive" || model == "jaccard" => {
+                    return PalaceDb::open(palace_path);
+                }
+                Some(model) => crate::embed::resolve_embedder(&model),
+                None => crate::embed::embedder_from_env(),
+            }
+        }
     };
     match resolved {
         Ok(boxed) => {
-            let model_name = embedding_model
-                .map(String::from)
-                .or_else(|| std::env::var("MEMPALACE_EMBED_MODEL").ok())
-                .unwrap_or_else(|| crate::embed::DEFAULT_EMBED_MODEL.to_string());
+            let model_name = crate::embed::DEFAULT_EMBED_MODEL.to_string();
             let embedder: Arc<dyn crate::embed::Embedder> = Arc::from(boxed);
             match PalaceDb::open_with_embedder(palace_path, embedder, &model_name) {
                 Ok(db) => Ok(db),
