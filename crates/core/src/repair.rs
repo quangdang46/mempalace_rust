@@ -238,6 +238,18 @@ pub fn rebuild_via_staging(palace_path: &Path) -> anyhow::Result<()> {
     let mut to_upsert: Vec<(String, String, HashMap<String, serde_json::Value>)> =
         Vec::with_capacity(all.len());
     for entry in &all {
+        if entry.ids.len() != entry.documents.len()
+            || entry.ids.len() != entry.metadatas.len()
+        {
+            eprintln!(
+                "  warn: repair: misaligned document entry (ids={}, docs={}, meta={}) — skipping entry",
+                entry.ids.len(),
+                entry.documents.len(),
+                entry.metadatas.len()
+            );
+            continue;
+        }
+
         for (i, doc) in entry.documents.iter().enumerate() {
             let id = entry.ids.get(i).cloned().unwrap_or_default();
             if id.is_empty() {

@@ -94,7 +94,18 @@ pub fn write_mcp_config(path: &Path, server_name: &str, wrapper_key: &str) -> Co
 
     // Atomic write: tmp file then rename
     let tmp_path = format!("{}.tmp-{}", path.display(), std::process::id());
-    let json_bytes = serde_json::to_vec_pretty(&obj).unwrap_or_default();
+    let json_bytes = match serde_json::to_vec_pretty(&obj) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            warn!("connect: JSON serialization failed: {}", e);
+            return ConnectResult {
+                adapter,
+                config_path,
+                wrote: false,
+                note: Some(format!("JSON serialization failed: {}", e)),
+            };
+        }
+    };
     match fs::File::create(&tmp_path) {
         Ok(mut f) => {
             if let Err(e) = f.write_all(&json_bytes) {

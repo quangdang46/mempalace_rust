@@ -446,6 +446,7 @@ pub(crate) fn default_hall_keywords() -> HashMap<String, Vec<String>> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
+#[serde(default)]
 pub struct Config {
     pub palace_path: PathBuf,
     pub collection_name: String,
@@ -634,64 +635,16 @@ impl Config {
         let config_path = Self::config_file_path()?;
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
-            let file_config: serde_json::Value = serde_json::from_str(&content)?;
+            let mut config: Config = serde_json::from_str(&content)?;
 
-            let palace_path = if let Some(env_val) = std::env::var_os("MEMPALACE_PALACE_PATH")
+            // env override for palace_path takes priority over config file value
+            if let Some(env_val) = std::env::var_os("MEMPALACE_PALACE_PATH")
                 .or_else(|| std::env::var_os("MEMPAL_PALACE_PATH"))
             {
-                normalize_pathbuf(expand_path(&env_val.to_string_lossy()))
-            } else {
-                file_config
-                    .get("palace_path")
-                    .and_then(|v| v.as_str())
-                    .map(expand_path)
-                    .unwrap_or_else(default_palace_path)
-            };
+                config.palace_path = normalize_pathbuf(expand_path(&env_val.to_string_lossy()));
+            }
 
-            let collection_name = file_config
-                .get("collection_name")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(default_collection_name);
-
-            let topic_wings = file_config
-                .get("topic_wings")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_else(default_topic_wings);
-
-            let hall_keywords = file_config
-                .get("hall_keywords")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_else(default_hall_keywords);
-
-            Ok(Self {
-                palace_path,
-                collection_name,
-                people_map: file_config
-                    .get("people_map")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default(),
-                topic_wings,
-                hall_keywords,
-                embedding_model: file_config
-                    .get("embedding_model")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
-                    .unwrap_or_else(default_embedding_model),
-                languages: file_config
-                    .get("languages")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default(),
-                llm_consent_given: file_config
-                    .get("llm_consent_given")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                llm_external_warn: file_config
-                    .get("llm_external_warn")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
-                ..Default::default()
-            })
+            Ok(config)
         } else {
             Ok(Config::default())
         }

@@ -8,6 +8,9 @@ use bm25::SearchEngine;
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
 
+use anyhow::Context;
+use tracing::warn;
+
 use crate::dedup_window::{DedupVerdict, WindowedDedup};
 
 pub type DbErr = rusqlite::Error;
@@ -82,7 +85,13 @@ pub fn classify_palace_for_collection(
         Ok(c) => c,
         Err(_) => return PalaceState::NotInitialized,
     };
-    let docs: HashMap<String, DocumentEntry> = serde_json::from_str(&content).unwrap_or_default();
+    let docs: HashMap<String, DocumentEntry> = match serde_json::from_str(&content) {
+        Ok(docs) => docs,
+        Err(e) => {
+            warn!("corrupted collection file at {}: {}", docs_path.display(), e);
+            HashMap::new()
+        }
+    };
     if docs.is_empty() {
         PalaceState::Empty
     } else {
@@ -1203,7 +1212,8 @@ impl PalaceDb {
 
         let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
             let content = std::fs::read_to_string(&docs_path)?;
-            serde_json::from_str(&content).unwrap_or_default()
+            serde_json::from_str(&content)
+                .with_context(|| format!("failed to parse collection at {}", docs_path.display()))?
         } else {
             HashMap::new()
         };
@@ -1894,7 +1904,8 @@ impl PalaceDb {
 
         let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
             let content = std::fs::read_to_string(&docs_path)?;
-            serde_json::from_str(&content).unwrap_or_default()
+            serde_json::from_str(&content)
+                .with_context(|| format!("failed to parse collection at {}", docs_path.display()))?
         } else {
             HashMap::new()
         };
