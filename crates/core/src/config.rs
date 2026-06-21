@@ -581,10 +581,14 @@ fn write_atomic_file(path: &std::path::Path, content: &str) -> anyhow::Result<()
 
     std::fs::rename(&temp_path, path)?;
 
-    // fsync parent directory to ensure rename is durable
+    // fsync parent directory to ensure rename is durable.
+    // This is best-effort: on Windows, std::fs::File::open on a directory
+    // fails with "Access is denied" because CreateFileW requires
+    // FILE_FLAG_BACKUP_SEMANTICS which std::fs::Options doesn't set.
     if let Some(parent) = path.parent() {
-        let dir_fd = std::fs::File::open(parent)?;
-        dir_fd.sync_all()?;
+        if let Ok(dir_fd) = std::fs::File::open(parent) {
+            let _ = dir_fd.sync_all();
+        }
     }
 
     Ok(())
