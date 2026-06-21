@@ -566,18 +566,27 @@ fn write_atomic_file(path: &std::path::Path, content: &str) -> anyhow::Result<()
         std::fs::create_dir_all(parent)?;
     }
 
+    // Unique temp filename to prevent symlink races
     let temp_path = path.with_extension(format!(
-        "{}.tmp",
-        path.extension().and_then(|s| s.to_str()).unwrap_or("new")
+        "{}.tmp.{}",
+        path.extension().and_then(|s| s.to_str()).unwrap_or("new"),
+        std::process::id()
     ));
 
     {
-        let mut file = secure_open_options(false).open(&temp_path)?;
+        let mut file = secure_open_options(true).open(&temp_path)?; // create_new = true (O_EXCL)
         file.write_all(content.as_bytes())?;
-        file.flush()?;
+        file.sync_all()?; // fsync before rename (kernel: flush page cache)
     }
 
     std::fs::rename(&temp_path, path)?;
+
+    // fsync parent directory to ensure rename is durable
+    if let Some(parent) = path.parent() {
+        let dir_fd = std::fs::File::open(parent)?;
+        dir_fd.sync_all()?;
+    }
+
     Ok(())
 }
 
@@ -588,7 +597,7 @@ fn write_create_new_file(path: &std::path::Path, content: &str) -> anyhow::Resul
 
     let mut file = secure_open_options(true).open(path)?;
     file.write_all(content.as_bytes())?;
-    file.flush()?;
+    file.sync_all()?;
     Ok(())
 }
 

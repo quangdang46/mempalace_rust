@@ -517,10 +517,15 @@ impl MemoryStack {
 
 fn truncate_snippet(text: &str, max_len: usize) -> String {
     let snippet = text.trim().replace('\n', " ");
+    let max = max_len.saturating_sub(3);
     if snippet.len() <= max_len {
         snippet
     } else {
-        format!("{}...", &snippet[..max_len.saturating_sub(3)])
+        let mut end = max;
+        while !snippet.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &snippet[..end])
     }
 }
 

@@ -249,7 +249,7 @@ async fn get_memory_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "id": id }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_recall", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -265,7 +265,10 @@ async fn save_memory_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_save", args).await;
     Ok(tool_result_to_response(result))
@@ -276,7 +279,7 @@ async fn delete_memory_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "id": id }).as_object().expect("json! always produces object").clone();
     let _result = invoke_tool(&state_guard, "mempalace_governance_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
@@ -296,7 +299,10 @@ async fn search_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_recall", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -314,7 +320,10 @@ async fn smart_search_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_smart_search", args).await?;
     let json_response = text_content_to_json(result.clone());
@@ -397,7 +406,10 @@ async fn observe_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_observe", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -418,7 +430,10 @@ async fn enrich_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_enrich", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -439,7 +454,10 @@ async fn consolidate_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_consolidate", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -460,7 +478,10 @@ async fn kg_query_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_query", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -477,7 +498,10 @@ async fn kg_add_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_add", args).await;
     Ok(tool_result_to_response(result))
@@ -494,7 +518,10 @@ async fn kg_invalidate_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_invalidate", args).await;
     Ok(tool_result_to_response(result))
@@ -504,7 +531,7 @@ async fn kg_stats_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_stats", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -520,7 +547,10 @@ async fn kg_timeline_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_timeline", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -537,7 +567,10 @@ async fn kg_traverse_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_traverse", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -547,7 +580,7 @@ async fn graph_stats_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_graph_stats", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -563,7 +596,10 @@ async fn graph_snapshot_rebuild_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_snapshot_rebuild", args).await;
     Ok(tool_result_to_response(result))
@@ -573,7 +609,7 @@ async fn graph_reset_handler(
     State(state): State<SharedState>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_reset", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -589,7 +625,10 @@ async fn graph_search_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_graph_search", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -606,7 +645,10 @@ async fn graph_expand_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_graph_expand", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -627,7 +669,10 @@ async fn diary_read_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_diary_read", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -644,7 +689,10 @@ async fn diary_write_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_diary_write", args).await;
     Ok(tool_result_to_response(result))
@@ -665,7 +713,10 @@ async fn slots_list_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_slot_list", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -676,7 +727,7 @@ async fn slot_get_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "slot_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "slot_id": id }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_slot_get", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -692,7 +743,10 @@ async fn slot_create_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_slot_create", args).await;
     Ok(tool_result_to_response(result))
@@ -710,7 +764,10 @@ async fn slot_append_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     args.insert("slot_id".to_string(), serde_json::Value::String(id));
     let result = invoke_tool(&state_guard, "mempalace_slot_append", args).await;
@@ -729,7 +786,10 @@ async fn slot_replace_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     args.insert("slot_id".to_string(), serde_json::Value::String(id));
     let result = invoke_tool(&state_guard, "mempalace_slot_replace", args).await;
@@ -741,7 +801,7 @@ async fn slot_delete_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "slot_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "slot_id": id }).as_object().expect("json! always produces object").clone();
     let _result = invoke_tool(&state_guard, "mempalace_slot_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
@@ -761,7 +821,10 @@ async fn actions_list_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_frontier", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -778,7 +841,10 @@ async fn action_create_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_action_create", args).await;
     Ok(tool_result_to_response(result))
@@ -796,7 +862,10 @@ async fn action_update_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     args.insert("action_id".to_string(), serde_json::Value::String(id));
     let result = invoke_tool(&state_guard, "mempalace_action_update", args).await;
@@ -811,7 +880,7 @@ async fn sentinels_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_sentinel_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -827,7 +896,10 @@ async fn sentinel_create_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_sentinel_create", args).await;
     Ok(tool_result_to_response(result))
@@ -838,7 +910,7 @@ async fn sentinel_trigger_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "sentinel_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "sentinel_id": id }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_sentinel_trigger", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -848,7 +920,7 @@ async fn sentinel_delete_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "sentinel_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "sentinel_id": id }).as_object().expect("json! always produces object").clone();
     let _result = invoke_tool(&state_guard, "mempalace_sentinel_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
@@ -861,7 +933,7 @@ async fn checkpoints_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_checkpoint_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -871,7 +943,7 @@ async fn checkpoint_resolve_handler(
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "checkpoint_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "checkpoint_id": id }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_checkpoint_resolve", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -887,7 +959,10 @@ async fn checkpoint_create_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_checkpoint", args).await;
     Ok(tool_result_to_response(result))
@@ -908,7 +983,10 @@ async fn sessions_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_sessions", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -929,7 +1007,10 @@ async fn commits_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_commits", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -940,7 +1021,7 @@ async fn commit_lookup_handler(
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "commit_hash": hash }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "commit_hash": hash }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_commit_lookup", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -960,7 +1041,10 @@ async fn team_share_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_team_share", args).await;
     Ok(tool_result_to_response(result))
@@ -977,7 +1061,10 @@ async fn team_feed_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_team_feed", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -998,7 +1085,10 @@ async fn reflect_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_reflect", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1019,7 +1109,10 @@ async fn migrate_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_migrate", args).await;
     Ok(tool_result_to_response(result))
@@ -1033,7 +1126,7 @@ async fn status_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_status", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1077,7 +1170,10 @@ async fn context_build_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_context_build", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1094,7 +1190,10 @@ async fn timeline_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_timeline", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1111,7 +1210,10 @@ async fn patterns_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_patterns", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1128,7 +1230,10 @@ async fn audit_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_audit", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1145,7 +1250,10 @@ async fn relations_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_relations", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1162,7 +1270,10 @@ async fn profile_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_profile", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1179,7 +1290,10 @@ async fn skill_extract_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_skill_extract", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1196,7 +1310,10 @@ async fn retention_score_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_retention_score", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1213,7 +1330,10 @@ async fn access_stats_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_access_stats", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1230,7 +1350,10 @@ async fn vision_search_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_vision_search", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1247,7 +1370,10 @@ async fn sketch_create_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_sketch_create", args).await;
     Ok(tool_result_to_response(result))
@@ -1265,7 +1391,10 @@ async fn sketch_promote_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     args.insert("sketch_id".to_string(), serde_json::Value::String(id));
     let result = invoke_tool(&state_guard, "mempalace_sketch_promote", args).await;
@@ -1283,7 +1412,10 @@ async fn crystallize_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_crystallize", args).await;
     Ok(tool_result_to_response(result))
@@ -1300,7 +1432,10 @@ async fn diagnose_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_diagnose", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1317,7 +1452,10 @@ async fn facet_tag_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_facet_tag", args).await;
     Ok(tool_result_to_response(result))
@@ -1334,7 +1472,10 @@ async fn facet_query_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_facet_query", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1351,7 +1492,10 @@ async fn lesson_save_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_lesson_save", args).await;
     Ok(tool_result_to_response(result))
@@ -1368,7 +1512,10 @@ async fn lesson_recall_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_lesson_recall", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1385,7 +1532,10 @@ async fn insight_list_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_insight_list", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1395,7 +1545,7 @@ async fn working_memory_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_working_memory", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1411,7 +1561,10 @@ async fn file_index_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_file_index", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1428,7 +1581,10 @@ async fn file_history_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_file_history", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1445,7 +1601,10 @@ async fn snapshot_create_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_snapshot_create", args).await;
     Ok(tool_result_to_response(result))
@@ -1462,7 +1621,10 @@ async fn heal_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_heal", args).await;
     Ok(tool_result_to_response(result))
@@ -1479,7 +1641,10 @@ async fn verify_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_verify", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1496,7 +1661,10 @@ async fn mesh_sync_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_mesh_sync", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1517,7 +1685,10 @@ async fn session_start_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_session_start", args).await;
     Ok(tool_result_to_response(result))
@@ -1534,7 +1705,10 @@ async fn session_end_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_session_end", args).await;
     Ok(tool_result_to_response(result))
@@ -1551,7 +1725,10 @@ async fn summarize_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_summarize", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1568,7 +1745,10 @@ async fn forget_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_governance_delete", args).await;
     Ok(tool_result_to_response(result))
@@ -1585,7 +1765,10 @@ async fn remember_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_save", args).await;
     Ok(tool_result_to_response(result))
@@ -1602,7 +1785,7 @@ async fn config_flags_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_config_flags", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1623,7 +1806,10 @@ async fn semantic_list_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_semantic_list", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1640,7 +1826,10 @@ async fn semantic_list_post_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_semantic_list", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1657,7 +1846,10 @@ async fn procedural_list_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_procedural_list", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1674,7 +1866,10 @@ async fn procedural_list_post_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_procedural_list", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1691,7 +1886,10 @@ async fn auto_forget_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_auto_forget", args).await;
     Ok(tool_result_to_response(result))
@@ -1708,7 +1906,10 @@ async fn auto_crystallize_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_auto_crystallize", args).await;
     Ok(tool_result_to_response(result))
@@ -1725,7 +1926,10 @@ async fn flow_compress_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_flow_compress", args).await;
     Ok(tool_result_to_response(result))
@@ -1742,7 +1946,10 @@ async fn replay_sessions_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_replay_sessions", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1759,7 +1966,10 @@ async fn replay_load_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_replay_load", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1769,7 +1979,7 @@ async fn snapshots_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_snapshot_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1785,7 +1995,10 @@ async fn snapshot_restore_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_snapshot_restore", args).await;
     Ok(tool_result_to_response(result))
@@ -1802,7 +2015,10 @@ async fn governance_bulk_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_governance_bulk", args).await;
     Ok(tool_result_to_response(result))
@@ -1819,7 +2035,10 @@ async fn sentinel_cancel_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_sentinel_cancel", args).await;
     Ok(tool_result_to_response(result))
@@ -1836,7 +2055,10 @@ async fn sentinel_check_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_sentinel_check", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1853,7 +2075,10 @@ async fn insight_search_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_insight_search", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1870,7 +2095,10 @@ async fn lesson_search_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_lesson_search", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -1880,7 +2108,7 @@ async fn lesson_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_lesson_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1896,7 +2124,10 @@ async fn lesson_strengthen_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_lesson_strengthen", args).await;
     Ok(tool_result_to_response(result))
@@ -1913,7 +2144,10 @@ async fn action_edge_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_action_edge", args).await;
     Ok(tool_result_to_response(result))
@@ -1930,7 +2164,10 @@ async fn lease_acquire_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     args.insert(
         "operation".to_string(),
@@ -1951,7 +2188,10 @@ async fn lease_release_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     args.insert(
         "operation".to_string(),
@@ -1972,7 +2212,10 @@ async fn lease_renew_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     args.insert(
         "operation".to_string(),
@@ -1993,7 +2236,10 @@ async fn routine_create_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_routine_create", args).await;
     Ok(tool_result_to_response(result))
@@ -2003,7 +2249,7 @@ async fn routine_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_routine_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2013,7 +2259,7 @@ async fn routine_status_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "routine_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "routine_id": id }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_routine_status", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2027,7 +2273,7 @@ async fn team_profile_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_team_profile", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2043,7 +2289,10 @@ async fn mesh_register_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_mesh_register", args).await;
     Ok(tool_result_to_response(result))
@@ -2053,7 +2302,7 @@ async fn mesh_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_mesh_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2062,7 +2311,7 @@ async fn mesh_export_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_mesh_export", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2078,7 +2327,10 @@ async fn mesh_receive_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_mesh_receive", args).await;
     Ok(tool_result_to_response(result))
@@ -2095,7 +2347,10 @@ async fn action_list_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_frontier", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -2106,7 +2361,7 @@ async fn action_get_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "action_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "action_id": id }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_action_get", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2122,7 +2377,10 @@ async fn cascade_update_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_cascade_update", args).await;
     Ok(tool_result_to_response(result))
@@ -2139,7 +2397,10 @@ async fn generate_rules_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_generate_rules", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -2156,7 +2417,10 @@ async fn evolve_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_evolve", args).await;
     Ok(tool_result_to_response(result))
@@ -2186,7 +2450,10 @@ async fn sketch_add_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_sketch_add", args).await;
     Ok(tool_result_to_response(result))
@@ -2197,7 +2464,7 @@ async fn sketch_discard_handler(
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "sketch_id": id }).as_object().unwrap().clone();
+    let args: JsonObject = json!({ "sketch_id": id }).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_sketch_discard", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -2206,7 +2473,7 @@ async fn sketch_gc_handler(
     State(state): State<SharedState>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_sketch_gc", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -2215,7 +2482,7 @@ async fn crystal_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_crystal_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2231,7 +2498,10 @@ async fn facet_get_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_facet_get", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -2241,7 +2511,7 @@ async fn facet_stats_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_facet_stats", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2257,7 +2527,10 @@ async fn facet_untag_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_facet_untag", args).await;
     Ok(tool_result_to_response(result))
@@ -2274,7 +2547,10 @@ async fn branch_detect_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_branch_detect", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -2291,7 +2567,10 @@ async fn branch_sessions_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_branch_sessions", args).await?;
     Ok(Json(text_content_to_json(result)))
@@ -2301,7 +2580,7 @@ async fn branch_worktrees_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().unwrap().clone();
+    let args = json!({}).as_object().expect("json! always produces object").clone();
     let result = invoke_tool(&state_guard, "mempalace_branch_worktrees", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2317,7 +2596,10 @@ async fn vision_embed_handler(
             message: e.to_string(),
         })?
         .as_object()
-        .unwrap()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: String::from("Expected JSON object in request body"),
+        })?
         .clone();
     let result = invoke_tool(&state_guard, "mempalace_vision_embed", args).await?;
     Ok(Json(text_content_to_json(result)))

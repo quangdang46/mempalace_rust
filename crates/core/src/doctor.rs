@@ -16,6 +16,7 @@
 
 use crate::embed::{Embedder, EmbeddingManifest};
 use crate::knowledge_graph::KnowledgeGraph;
+use crate::normalize::safe_truncate;
 use crate::palace_db::PalaceDb;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -250,7 +251,7 @@ fn check_duplicate_drawers(palace_path: &Path) -> anyhow::Result<CheckResult> {
     for r in &results {
         let content = r.documents.first().cloned().unwrap_or_default();
         let short = if content.len() > 100 {
-            &content[..100]
+            safe_truncate(&content, 100)
         } else {
             &content
         };
