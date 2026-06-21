@@ -159,7 +159,7 @@ pub struct PalaceDb {
     palace_path: PathBuf,
     collection_name: String,
     coordination: Arc<Mutex<CoordinationDb>>,
-    bm25: SearchEngine<String>,
+    bm25: Mutex<Option<SearchEngine<String>>>,
     embedder: Arc<dyn crate::embed::Embedder>,
     /// Optional HNSW vector index. `None` when opened without a real embedder
     /// (the "naive" Jaccard path). Populated lazily when first vector search
@@ -1230,21 +1230,12 @@ impl PalaceDb {
         let embedder: Arc<dyn crate::embed::Embedder> =
             Arc::new(crate::embed::NullEmbedder::new(384));
 
-        // Rebuild BM25 index from loaded documents so hybrid_search has data.
-        let mut bm25 = bm25::SearchEngineBuilder::with_avgdl(100.0)
-            .b(0.3)
-            .k1(1.5)
-            .build();
-        for (id, entry) in &documents {
-            bm25.upsert(bm25::Document::new(id.clone(), entry.content.clone()));
-        }
-
         Ok(Self {
             documents,
             palace_path: palace_path.to_path_buf(),
             collection_name,
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
-            bm25,
+            bm25: Mutex::new(None),
             embedder,
             embedding_db: None,
         })
@@ -1998,10 +1989,7 @@ impl PalaceDb {
             palace_path: palace_path.to_path_buf(),
             collection_name,
             coordination: Arc::new(Mutex::new(CoordinationDb::open(palace_path)?)),
-            bm25: bm25::SearchEngineBuilder::with_avgdl(100.0)
-                .b(0.3)
-                .k1(1.5)
-                .build(),
+            bm25: Mutex::new(None),
             embedder,
             embedding_db: Some(embedding_db),
         };
@@ -2023,14 +2011,24 @@ impl PalaceDb {
             }
         }
 
-        // Rebuild BM25 index from loaded documents so hybrid_search
-        // has a populated BM25 stream alongside vector + graph.
-        for (id, entry) in &db.documents {
-            db.bm25
-                .upsert(bm25::Document::new(id.clone(), entry.content.clone()));
-        }
-
         Ok(db)
+    }
+
+    /// Ensure BM25 index is built. Call before any BM25-dependent operation.
+    /// Builds lazily from loaded documents on first call.
+    pub fn ensure_bm25(&self) {
+        let mut guard = self.bm25.lock().expect("bm25 lock poisoned");
+        if guard.is_some() {
+            return;
+        }
+        let mut engine = bm25::SearchEngineBuilder::with_avgdl(100.0)
+            .b(0.3)
+            .k1(1.5)
+            .build();
+        for (id, entry) in &self.documents {
+            engine.upsert(bm25::Document::new(id.clone(), entry.content.clone()));
+        }
+        *guard = Some(engine);
     }
 
     pub async fn query(
@@ -2194,8 +2192,15 @@ impl PalaceDb {
             true
         };
 
+        // Ensure BM25 index is lazily built before using it
+        self.ensure_bm25();
+
         let bm25_results: Vec<StreamResult> = self
             .bm25
+            .lock()
+            .expect("bm25 lock poisoned")
+            .as_ref()
+            .expect("bm25 should be initialized by ensure_bm25")
             .search(&expanded_query, over_fetch)
             .into_iter()
             .enumerate()
@@ -2346,7 +2351,12 @@ impl PalaceDb {
             );
 
             // Index document in BM25
+            self.ensure_bm25();
             self.bm25
+                .lock()
+                .expect("bm25 lock poisoned")
+                .as_mut()
+                .expect("bm25 should be initialized")
                 .upsert(bm25::Document::new(id.to_string(), redacted.clone()));
         }
 
@@ -2395,7 +2405,12 @@ impl PalaceDb {
                     metadata: metadata.clone(),
                 },
             );
+            self.ensure_bm25();
             self.bm25
+                .lock()
+                .expect("bm25 lock poisoned")
+                .as_mut()
+                .expect("bm25 should be initialized")
                 .upsert(bm25::Document::new(id.clone(), redacted.clone()));
         }
 

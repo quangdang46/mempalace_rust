@@ -1024,14 +1024,14 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "mempalace_enrich",
             "Enrich",
             "Enrich a file path with related memories, bug references, and patterns.",
-            serde_json::json!({ "type": "object", "properties": {     "filePath": { "type": "string", "description": "File path to enrich" }, "query": { "type": "string", "description": "Search query to find related memories (optional)" }, "search_limit": { "type": "integer", "description": "Max memories per search (default: 10)" } } }),
+                         serde_json::json!({ "type": "object", "properties": {     "file_path": { "type": "string", "description": "File path to enrich" }, "query": { "type": "string", "description": "Search query to find related memories (optional)" }, "search_limit": { "type": "integer", "description": "Max memories per search (default: 10)" } } }),
         ),
         tool(
             "mempalace_retention_score",
             "Retention Score",
             "Get the retention score and decay status for a memory. Returns Ebbinghaus-based retention strength, access count, and promotion tier recommendation.",
-            serde_json::json!({ "type": "object", "properties": {         "memoryId": { "type": "string", "description": "Memory ID to get retention score for" }
-    }, "required": ["memoryId"] }),
+             serde_json::json!({ "type": "object", "properties": {         "memory_id": { "type": "string", "description": "Memory ID to get retention score for" }
+    }, "required": ["memory_id"] }),
         ),
         tool(
             "mempalace_access_stats",
@@ -4996,7 +4996,6 @@ fn tool_cascade_update(state: &AppState, args: JsonObject) -> Result<CallToolRes
 
 fn tool_enrich(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
         file_path: String,
         query: Option<String>,
@@ -5064,7 +5063,6 @@ fn tool_enrich(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
 
 fn tool_retention_score(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
         memory_id: String,
     }
@@ -8261,6 +8259,28 @@ mod tests {
             json!({ "start_room": "unknown", "max_hops": 2.0 }),
         );
         assert!(result.is_ok(), "traverse failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_enrich_accepts_schema_file_path_param() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_enrich",
+            json!({ "file_path": "src/main.rs" }),
+        );
+        assert!(result.is_ok(), "enrich failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_retention_score_accepts_schema_memory_id_param() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_retention_score",
+            json!({ "memory_id": "mem-test" }),
+        );
+        assert!(result.is_ok(), "retention_score failed: {:?}", result);
     }
 
     // ---------------------------------------------------------------------
