@@ -3930,7 +3930,10 @@ mod tests {
 
         // Project config still lives in the project directory; only palace_path
         // in the global config should point at the custom palace location.
-        assert!(project_dir.join(".mempalace").join("mempalace.json").exists());
+        assert!(project_dir
+            .join(".mempalace")
+            .join("mempalace.json")
+            .exists());
     }
 
     /// Counterpart to `test_cmd_init_honours_explicit_palace_flag`: when no
