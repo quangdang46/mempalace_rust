@@ -73,6 +73,9 @@ pub mod dedup_window;
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod diary_ingest;
 #[doc(hidden)]
+#[doc(hidden)]
+pub mod drawer_store;
+#[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod entity_detector;
 #[doc(hidden)]
@@ -127,9 +130,6 @@ pub mod mine_pid_guard;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod normalize;
-#[doc(hidden)]
-#[doc(hidden)]
-pub mod drawer_store;
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "use palace:: or embed:: API instead")]
 pub mod palace_db;

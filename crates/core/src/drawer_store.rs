@@ -87,7 +87,9 @@ impl DrawerStore {
             END;",
         )?;
 
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Return the number of drawers in the store.
@@ -95,7 +97,9 @@ impl DrawerStore {
         self.conn
             .lock()
             .expect("conn")
-            .query_row("SELECT COUNT(*) FROM drawers", [], |row| row.get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM drawers", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap_or(0) as usize
     }
 
@@ -110,8 +114,7 @@ impl DrawerStore {
     /// Returns `id → DocumentEntry` mappings suitable for direct use.
     pub fn load_all_to_hashmap(&self) -> Result<HashMap<String, DocumentEntry>> {
         let guard = self.conn.lock().expect("conn");
-        let mut stmt = guard
-            .prepare("SELECT id, content, metadata, wing, room FROM drawers")?;
+        let mut stmt = guard.prepare("SELECT id, content, metadata, wing, room FROM drawers")?;
         let rows = stmt.query_map([], |row| {
             let id: String = row.get(0)?;
             let content: String = row.get(1)?;
@@ -149,9 +152,8 @@ impl DrawerStore {
         room: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(String, String, HashMap<String, Value>)>> {
-        let mut sql = String::from(
-            "SELECT id, content, metadata, wing, room FROM drawers WHERE 1=1",
-        );
+        let mut sql =
+            String::from("SELECT id, content, metadata, wing, room FROM drawers WHERE 1=1");
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(w) = wing {
@@ -201,9 +203,8 @@ impl DrawerStore {
     /// Returns `Some((content, metadata))` if found, `None` otherwise.
     pub fn get_by_id(&self, id: &str) -> Result<Option<(String, HashMap<String, Value>)>> {
         let guard = self.conn.lock().expect("conn");
-        let mut stmt = guard.prepare(
-            "SELECT content, metadata, wing, room FROM drawers WHERE id = ?1",
-        )?;
+        let mut stmt =
+            guard.prepare("SELECT content, metadata, wing, room FROM drawers WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             let content: String = row.get(0)?;
@@ -229,11 +230,7 @@ impl DrawerStore {
     /// Search drawers using FTS5 MATCH.
     ///
     /// Returns `Vec<(id, content, score)>` ordered by descending BM25 score.
-    pub fn search(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(String, String, f64)>> {
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<(String, String, f64)>> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -363,13 +360,13 @@ impl DrawerStore {
     pub fn insert_batch(
         &self,
         items: &[(
-            &str,           // id
-            &str,           // content
+            &str,                    // id
+            &str,                    // content
             &HashMap<String, Value>, // metadata
-            &str,           // wing
-            &str,           // room
-            Option<&str>,   // source_file
-            Option<f64>,    // source_mtime
+            &str,                    // wing
+            &str,                    // room
+            Option<&str>,            // source_file
+            Option<f64>,             // source_mtime
         )],
     ) -> Result<()> {
         let guard_tx = self.conn.lock().expect("conn");
@@ -426,11 +423,7 @@ impl DrawerStore {
     ///
     /// `format` determines the output format. Currently supports
     /// `"basic-memory"` (Obsidian-compatible Markdown) and `"markdown"`.
-    pub fn export_stream(
-        &self,
-        output_dir: &Path,
-        format: &str,
-    ) -> Result<()> {
+    pub fn export_stream(&self, output_dir: &Path, format: &str) -> Result<()> {
         let guard = self.conn.lock().expect("conn");
         let mut stmt = guard.prepare(
             "SELECT id, content, metadata, wing, room, source_file, filed_at
@@ -444,15 +437,7 @@ impl DrawerStore {
             let room: String = row.get(4)?;
             let source_file: Option<String> = row.get(5)?;
             let filed_at: String = row.get(6)?;
-            Ok((
-                id,
-                content,
-                metadata_str,
-                wing,
-                room,
-                source_file,
-                filed_at,
-            ))
+            Ok((id, content, metadata_str, wing, room, source_file, filed_at))
         })?;
 
         let mut current_source: Option<String> = None;
@@ -533,7 +518,11 @@ impl DrawerStore {
         }
 
         let total = docs.len();
-        info!("migrating {} drawers from {} to SQLite", total, json_path.display());
+        info!(
+            "migrating {} drawers from {} to SQLite",
+            total,
+            json_path.display()
+        );
 
         // Prepare batch items
         let batch_size = 500;
@@ -550,14 +539,8 @@ impl DrawerStore {
                     .get("room")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let source_file = entry
-                    .metadata
-                    .get("source_file")
-                    .and_then(|v| v.as_str());
-                let source_mtime = entry
-                    .metadata
-                    .get("source_mtime")
-                    .and_then(|v| v.as_f64());
+                let source_file = entry.metadata.get("source_file").and_then(|v| v.as_str());
+                let source_mtime = entry.metadata.get("source_mtime").and_then(|v| v.as_f64());
 
                 (
                     id.as_str(),
@@ -609,15 +592,18 @@ impl DrawerStore {
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
 
-        let count: i64 = self.conn.lock().expect("conn").query_row(&sql, params_refs.as_slice(), |row| row.get(0))?;
+        let count: i64 =
+            self.conn
+                .lock()
+                .expect("conn")
+                .query_row(&sql, params_refs.as_slice(), |row| row.get(0))?;
         Ok(count as usize)
     }
 
     /// Get the source_file for a given drawer ID.
     pub fn get_source_file(&self, id: &str) -> Result<Option<String>> {
         let guard = self.conn.lock().expect("conn");
-        let mut stmt = guard
-            .prepare("SELECT source_file FROM drawers WHERE id = ?1")?;
+        let mut stmt = guard.prepare("SELECT source_file FROM drawers WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
             Ok(row.get(0)?)
@@ -662,22 +648,21 @@ mod tests {
         assert!(store.is_empty());
 
         // Verify schema exists
-        let has_drawers: bool = store
-            .conn
+        let guard = store.conn.lock().expect("conn");
+        let has_drawers: bool = guard
             .query_row(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='drawers'",
                 [],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
             .is_ok();
         assert!(has_drawers);
 
-        let has_fts: bool = store
-            .conn
+        let has_fts: bool = guard
             .query_row(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='drawers_fts'",
                 [],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
             .is_ok();
         assert!(has_fts);
@@ -709,13 +694,37 @@ mod tests {
         let store = DrawerStore::open(temp.path()).unwrap();
 
         store
-            .insert("d1", "the quick brown fox", &HashMap::new(), "animals", "mammals", None, None)
+            .insert(
+                "d1",
+                "the quick brown fox",
+                &HashMap::new(),
+                "animals",
+                "mammals",
+                None,
+                None,
+            )
             .unwrap();
         store
-            .insert("d2", "jumped over the lazy dog", &HashMap::new(), "animals", "mammals", None, None)
+            .insert(
+                "d2",
+                "jumped over the lazy dog",
+                &HashMap::new(),
+                "animals",
+                "mammals",
+                None,
+                None,
+            )
             .unwrap();
         store
-            .insert("d3", "Rust programming language", &HashMap::new(), "tech", "languages", None, None)
+            .insert(
+                "d3",
+                "Rust programming language",
+                &HashMap::new(),
+                "tech",
+                "languages",
+                None,
+                None,
+            )
             .unwrap();
 
         // Search for "fox" should find d1
@@ -748,7 +757,15 @@ mod tests {
         meta.insert("source".to_string(), Value::String("test.txt".to_string()));
 
         store
-            .insert("my-id", "some content", &meta, "w1", "r1", Some("src.txt"), Some(12345.0))
+            .insert(
+                "my-id",
+                "some content",
+                &meta,
+                "w1",
+                "r1",
+                Some("src.txt"),
+                Some(12345.0),
+            )
             .unwrap();
 
         let result = store.get_by_id("my-id").unwrap();
@@ -773,7 +790,15 @@ mod tests {
         let store = DrawerStore::open(temp.path()).unwrap();
 
         store
-            .insert("del-me", "to be deleted", &HashMap::new(), "", "", None, None)
+            .insert(
+                "del-me",
+                "to be deleted",
+                &HashMap::new(),
+                "",
+                "",
+                None,
+                None,
+            )
             .unwrap();
         assert_eq!(store.len(), 1);
 
@@ -790,13 +815,37 @@ mod tests {
         let store = DrawerStore::open(temp.path()).unwrap();
 
         store
-            .insert("a", "content a", &HashMap::new(), "", "", Some("src1"), None)
+            .insert(
+                "a",
+                "content a",
+                &HashMap::new(),
+                "",
+                "",
+                Some("src1"),
+                None,
+            )
             .unwrap();
         store
-            .insert("b", "content b", &HashMap::new(), "", "", Some("src1"), None)
+            .insert(
+                "b",
+                "content b",
+                &HashMap::new(),
+                "",
+                "",
+                Some("src1"),
+                None,
+            )
             .unwrap();
         store
-            .insert("c", "content c", &HashMap::new(), "", "", Some("src2"), None)
+            .insert(
+                "c",
+                "content c",
+                &HashMap::new(),
+                "",
+                "",
+                Some("src2"),
+                None,
+            )
             .unwrap();
         assert_eq!(store.len(), 3);
 
@@ -811,13 +860,37 @@ mod tests {
         let store = DrawerStore::open(temp.path()).unwrap();
 
         store
-            .insert("a", "content a", &HashMap::new(), "wing1", "room1", None, None)
+            .insert(
+                "a",
+                "content a",
+                &HashMap::new(),
+                "wing1",
+                "room1",
+                None,
+                None,
+            )
             .unwrap();
         store
-            .insert("b", "content b", &HashMap::new(), "wing1", "room2", None, None)
+            .insert(
+                "b",
+                "content b",
+                &HashMap::new(),
+                "wing1",
+                "room2",
+                None,
+                None,
+            )
             .unwrap();
         store
-            .insert("c", "content c", &HashMap::new(), "wing2", "room1", None, None)
+            .insert(
+                "c",
+                "content c",
+                &HashMap::new(),
+                "wing2",
+                "room1",
+                None,
+                None,
+            )
             .unwrap();
 
         // All
@@ -868,10 +941,19 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = DrawerStore::open(temp.path()).unwrap();
 
+        let empty_meta = HashMap::new();
         let items = vec![
-            ("a", "alpha", &HashMap::new(), "w1", "r1", None as Option<&str>, None as Option<f64>),
-            ("b", "beta", &HashMap::new(), "w1", "r1", None, None),
-            ("c", "gamma", &HashMap::new(), "w1", "r2", None, None),
+            (
+                "a",
+                "alpha",
+                &empty_meta,
+                "w1",
+                "r1",
+                None as Option<&str>,
+                None as Option<f64>,
+            ),
+            ("b", "beta", &empty_meta, "w1", "r1", None, None),
+            ("c", "gamma", &empty_meta, "w1", "r2", None, None),
         ];
 
         store.insert_batch(&items).unwrap();

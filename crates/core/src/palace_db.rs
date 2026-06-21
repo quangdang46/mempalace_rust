@@ -1249,11 +1249,9 @@ impl PalaceDb {
         // Try SQLite first — faster open, no JSON parsing
         let (drawer_store, documents) = match DrawerStore::open(palace_path) {
             Ok(store) if store.len() > 0 => {
-                info!(
-                    "opening palace from SQLite ({} drawers)",
-                    store.len()
-                );
-                let documents = store.load_all_to_hashmap()
+                info!("opening palace from SQLite ({} drawers)", store.len());
+                let documents = store
+                    .load_all_to_hashmap()
                     .with_context(|| "failed to load drawers from SQLite")?;
                 (Some(store), documents)
             }
@@ -1264,7 +1262,9 @@ impl PalaceDb {
                     let content = std::fs::read_to_string(&docs_path)
                         .with_context(|| format!("failed to read {}", docs_path.display()))?;
                     let docs: HashMap<String, DocumentEntry> = serde_json::from_str(&content)
-                        .with_context(|| format!("failed to parse collection at {}", docs_path.display()))?;
+                        .with_context(|| {
+                            format!("failed to parse collection at {}", docs_path.display())
+                        })?;
 
                     if !docs.is_empty() {
                         info!("migrating {} drawers from JSON to SQLite", docs.len());
@@ -1285,8 +1285,9 @@ impl PalaceDb {
                 warn!("SQLite drawer store not available, falling back to JSON");
                 let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
                     let content = std::fs::read_to_string(&docs_path)?;
-                    serde_json::from_str(&content)
-                        .with_context(|| format!("failed to parse collection at {}", docs_path.display()))?
+                    serde_json::from_str(&content).with_context(|| {
+                        format!("failed to parse collection at {}", docs_path.display())
+                    })?
                 } else {
                     HashMap::new()
                 };
@@ -2057,7 +2058,10 @@ impl PalaceDb {
             Ok(store) => {
                 if store.is_empty() && !documents.is_empty() {
                     // Auto-migrate from JSON to SQLite
-                    info!("auto-migrating {} drawers from JSON to SQLite", documents.len());
+                    info!(
+                        "auto-migrating {} drawers from JSON to SQLite",
+                        documents.len()
+                    );
                     let _ = store.migrate_from_json(&docs_path);
                 }
                 Some(store)

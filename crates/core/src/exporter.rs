@@ -165,62 +165,62 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
         .collect();
 
     for (doc_id, doc, meta) in &all_entries {
-            let wing = meta
-                .get("wing")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let room = meta
-                .get("room")
-                .and_then(|v| v.as_str())
-                .unwrap_or("general");
+        let wing = meta
+            .get("wing")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let room = meta
+            .get("room")
+            .and_then(|v| v.as_str())
+            .unwrap_or("general");
 
-            let safe_wing = safe_path_component(wing);
-            let wing_dir = output_dir.join(&safe_wing);
-            if !created_wing_dirs.contains_key(wing) {
-                reject_symlink(&wing_dir, &format!("wing directory '{}'", safe_wing))?;
-                std::fs::create_dir_all(&wing_dir)?;
-                created_wing_dirs.insert(wing.to_string(), true);
-            }
+        let safe_wing = safe_path_component(wing);
+        let wing_dir = output_dir.join(&safe_wing);
+        if !created_wing_dirs.contains_key(wing) {
+            reject_symlink(&wing_dir, &format!("wing directory '{}'", safe_wing))?;
+            std::fs::create_dir_all(&wing_dir)?;
+            created_wing_dirs.insert(wing.to_string(), true);
+        }
 
-            let room_file = wing_dir.join(format!("{}.md", safe_path_component(room)));
-            let key = format!("{}|{}", wing, room);
-            let is_new = !opened_rooms.contains_key(&key);
+        let room_file = wing_dir.join(format!("{}.md", safe_path_component(room)));
+        let key = format!("{}|{}", wing, room);
+        let is_new = !opened_rooms.contains_key(&key);
 
-            let mut file = safe_open_for_write(&room_file, true)?;
-            use std::io::Write;
-            if is_new {
-                writeln!(file, "# {} / {}\n", wing, room)?;
-                opened_rooms.insert(key, true);
-            }
+        let mut file = safe_open_for_write(&room_file, true)?;
+        use std::io::Write;
+        if is_new {
+            writeln!(file, "# {} / {}\n", wing, room)?;
+            opened_rooms.insert(key, true);
+        }
 
-            let source = meta
-                .get("source_file")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let filed = meta
-                .get("filed_at")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let added_by = meta
-                .get("added_by")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+        let source = meta
+            .get("source_file")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let filed = meta
+            .get("filed_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let added_by = meta
+            .get("added_by")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
-            writeln!(file, "## {}\n", doc_id)?;
-            writeln!(file, "> {}\n", doc)?;
-            writeln!(file, "| Field | Value |")?;
-            writeln!(file, "|-------|-------|")?;
-            writeln!(file, "| Source | {} |", source)?;
-            writeln!(file, "| Filed | {} |", filed)?;
-            writeln!(file, "| Added by | {} |\n", added_by)?;
-            writeln!(file, "---\n")?;
+        writeln!(file, "## {}\n", doc_id)?;
+        writeln!(file, "> {}\n", doc)?;
+        writeln!(file, "| Field | Value |")?;
+        writeln!(file, "|-------|-------|")?;
+        writeln!(file, "| Source | {} |", source)?;
+        writeln!(file, "| Filed | {} |", filed)?;
+        writeln!(file, "| Added by | {} |\n", added_by)?;
+        writeln!(file, "---\n")?;
 
-            *wing_room_counts
-                .entry(wing.to_string())
-                .or_default()
-                .entry(room.to_string())
-                .or_default() += 1;
-            total_drawers += 1;
+        *wing_room_counts
+            .entry(wing.to_string())
+            .or_default()
+            .entry(room.to_string())
+            .or_default() += 1;
+        total_drawers += 1;
     }
 
     // Write index
