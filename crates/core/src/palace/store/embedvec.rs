@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::embed::EmbeddingManifest;
-use crate::palace::{Drawer, DrawerId, PalaceStore, SearchHit, SearchScope, StoreTier};
+use crate::palace::{Drawer, DrawerId, DrawerKind, MemoryTier, PalaceStore, SearchHit, SearchScope, StoreTier};
 
 /// Wraps the existing `EmbeddingDb` (embedvec HNSW + VectorStorage) behind
 /// the `PalaceStore` trait.
@@ -171,10 +171,55 @@ impl PalaceStore for EmbedvecStore {
 
     async fn get_drawers(
         &self,
-        _scope: Option<&SearchScope>,
-        _limit: Option<usize>,
+        scope: Option<&SearchScope>,
+        limit: Option<usize>,
     ) -> anyhow::Result<Vec<Drawer>> {
-        Ok(vec![])
+        let Some(ref path) = self.palace_path else {
+            return Ok(vec![]);
+        };
+        let db = crate::palace_db::PalaceDb::open(path)?;
+        let wing = scope.and_then(|s| s.wing.as_deref());
+        let room = scope.and_then(|s| s.room.as_deref());
+        let limit = limit.unwrap_or(usize::MAX);
+        let results = db.get_all(wing, room, limit);
+        let mut drawers = Vec::new();
+        for r in results {
+            for (i, id) in r.ids.iter().enumerate() {
+                let content = r.documents.get(i).cloned().unwrap_or_default();
+                let metadata = r.metadatas.get(i).cloned().unwrap_or_default();
+                let mut drawer = Drawer {
+                    id: Some(DrawerId(id.clone())),
+                    content,
+                    kind: DrawerKind::default(),
+                    tier: MemoryTier::default(),
+                    wing: metadata
+                        .get("wing")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    room: metadata
+                        .get("room")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    metadata,
+                    derived_from: Vec::new(),
+                    tags: Vec::new(),
+                    trust: None,
+                    access_count: 0,
+                    last_accessed: None,
+                    reinforcements: Vec::new(),
+                    superseded_by: None,
+                    active: true,
+                    confidence: 1.0,
+                    consolidation_strength: 1,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                };
+                drawer.migrate_metadata();
+                drawers.push(drawer);
+            }
+        }
+        drawers.truncate(limit);
+        Ok(drawers)
     }
 }
 

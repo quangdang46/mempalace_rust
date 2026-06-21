@@ -13,7 +13,7 @@ name = "mpr"
 path = "src/main.rs"
 
 [features]
-default = ["embed-fastembed"]
+default = ["embed-fastembed", "http-server"]
 full = ["mempalace-core/full"]
 embed-fastembed = ["mempalace-core/embed-fastembed"]
 embed-model2vec = ["mempalace-core/embed-model2vec"]
