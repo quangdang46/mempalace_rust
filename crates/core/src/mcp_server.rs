@@ -1024,14 +1024,14 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "mempalace_enrich",
             "Enrich",
             "Enrich a file path with related memories, bug references, and patterns.",
-            serde_json::json!({ "type": "object", "properties": {     "filePath": { "type": "string", "description": "File path to enrich" }, "query": { "type": "string", "description": "Search query to find related memories (optional)" }, "search_limit": { "type": "integer", "description": "Max memories per search (default: 10)" } } }),
+                         serde_json::json!({ "type": "object", "properties": {     "file_path": { "type": "string", "description": "File path to enrich" }, "query": { "type": "string", "description": "Search query to find related memories (optional)" }, "search_limit": { "type": "integer", "description": "Max memories per search (default: 10)" } } }),
         ),
         tool(
             "mempalace_retention_score",
             "Retention Score",
             "Get the retention score and decay status for a memory. Returns Ebbinghaus-based retention strength, access count, and promotion tier recommendation.",
-            serde_json::json!({ "type": "object", "properties": {         "memoryId": { "type": "string", "description": "Memory ID to get retention score for" }
-    }, "required": ["memoryId"] }),
+             serde_json::json!({ "type": "object", "properties": {         "memory_id": { "type": "string", "description": "Memory ID to get retention score for" }
+    }, "required": ["memory_id"] }),
         ),
         tool(
             "mempalace_access_stats",
