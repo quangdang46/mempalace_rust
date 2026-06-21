@@ -102,8 +102,23 @@ pub struct ExportStats {
 pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::Result<ExportStats> {
     let config = crate::Config::load()?;
     let palace_path = palace_path.unwrap_or(config.palace_path.as_path());
-    let db = PalaceDb::open(palace_path)?;
 
+    // Try DrawerStore streaming export first (SQLite, fast, no hang)
+    if let Ok(store) = crate::drawer_store::DrawerStore::open(palace_path) {
+        if !store.is_empty() {
+            let total = store.len();
+            println!("  Streaming {} drawers from SQLite...", total);
+            store.export_stream(output_dir, "basic-memory")?;
+            return Ok(ExportStats {
+                wings: 1,
+                rooms: 1,
+                drawers: total,
+            });
+        }
+    }
+
+    // Fallback: legacy HashMap-based export
+    let db = PalaceDb::open(palace_path)?;
     let total = db.count();
     if total == 0 {
         println!("  Palace is empty -- nothing to export.");
@@ -131,24 +146,25 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
     let mut wing_room_counts: HashMap<String, HashMap<String, usize>> = HashMap::new();
     let mut total_drawers = 0usize;
 
-    println!("  Streaming {} drawers...", total);
+    println!("  Exporting {} drawers (legacy)...", total);
 
-    let mut offset = 0usize;
-    while offset < total {
-        let batch = db.get_all(None, None, 1000);
-        if batch.is_empty() || batch[0].ids.is_empty() {
-            break;
-        }
+    // Collect all entries once (avoids the infinite loop bug with offset)
+    let all_entries: Vec<(String, String, HashMap<String, serde_json::Value>)> = db
+        .get_all(None, None, usize::MAX)
+        .into_iter()
+        .flat_map(|qr| {
+            let ids = qr.ids;
+            let docs = qr.documents;
+            let metas = qr.metadatas;
+            ids.into_iter()
+                .zip(docs.into_iter())
+                .zip(metas.into_iter())
+                .map(|((id, doc), meta)| (id, doc, meta))
+                .collect::<Vec<_>>()
+        })
+        .collect();
 
-        let batch_data: Vec<_> = batch[0]
-            .documents
-            .iter()
-            .zip(batch[0].ids.iter())
-            .zip(batch[0].metadatas.iter())
-            .map(|((doc, id), meta)| (id.clone(), doc.clone(), meta.clone()))
-            .collect();
-
-        for (doc_id, doc, meta) in &batch_data {
+    for (doc_id, doc, meta) in &all_entries {
             let wing = meta
                 .get("wing")
                 .and_then(|v| v.as_str())
@@ -205,9 +221,6 @@ pub fn export_palace(palace_path: Option<&Path>, output_dir: &Path) -> anyhow::R
                 .entry(room.to_string())
                 .or_default() += 1;
             total_drawers += 1;
-        }
-
-        offset += batch_data.len();
     }
 
     // Write index

@@ -9,9 +9,10 @@ use rusqlite::{params, Connection};
 use std::sync::Mutex;
 
 use anyhow::Context;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::dedup_window::{DedupVerdict, WindowedDedup};
+use crate::drawer_store::DrawerStore;
 
 pub type DbErr = rusqlite::Error;
 
@@ -187,6 +188,10 @@ pub struct PalaceDb {
     /// Built eagerly in `open_collection()` and kept in sync by `add()`,
     /// `upsert_documents()`, and `delete_id()`.
     file_source_index: HashMap<String, HashSet<String>>,
+    /// Optional SQLite-backed drawer store with FTS5. When `Some`, all
+    /// writes go to SQLite incrementally and `save()` becomes a no-op.
+    /// `None` means we're using the legacy JSON file storage.
+    pub drawer_store: Option<DrawerStore>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1241,13 +1246,54 @@ impl PalaceDb {
         let collection_name = collection_name.to_string();
         let docs_path = palace_path.join(format!("{}.json", collection_name));
 
-        let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
-            let content = std::fs::read_to_string(&docs_path)?;
-            serde_json::from_str(&content)
-                .with_context(|| format!("failed to parse collection at {}", docs_path.display()))?
-        } else {
-            HashMap::new()
+        // Try SQLite first — faster open, no JSON parsing
+        let (drawer_store, documents) = match DrawerStore::open(palace_path) {
+            Ok(store) if store.len() > 0 => {
+                info!(
+                    "opening palace from SQLite ({} drawers)",
+                    store.len()
+                );
+                let documents = store.load_all_to_hashmap()
+                    .with_context(|| "failed to load drawers from SQLite")?;
+                (Some(store), documents)
+            }
+            Ok(store) => {
+                // SQLite is empty — check for JSON file to migrate
+                if docs_path.exists() {
+                    info!("SQLite store empty, attempting migration from JSON");
+                    let content = std::fs::read_to_string(&docs_path)
+                        .with_context(|| format!("failed to read {}", docs_path.display()))?;
+                    let docs: HashMap<String, DocumentEntry> = serde_json::from_str(&content)
+                        .with_context(|| format!("failed to parse collection at {}", docs_path.display()))?;
+
+                    if !docs.is_empty() {
+                        info!("migrating {} drawers from JSON to SQLite", docs.len());
+                        store.migrate_from_json(&docs_path)?;
+                        // Reload from SQLite to be consistent
+                        let documents = store.load_all_to_hashmap()?;
+                        (Some(store), documents)
+                    } else {
+                        (Some(store), HashMap::new())
+                    }
+                } else {
+                    // New palace — store SQLite for future use
+                    (Some(store), HashMap::new())
+                }
+            }
+            Err(_) => {
+                // SQLite not available — fall back to JSON
+                warn!("SQLite drawer store not available, falling back to JSON");
+                let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
+                    let content = std::fs::read_to_string(&docs_path)?;
+                    serde_json::from_str(&content)
+                        .with_context(|| format!("failed to parse collection at {}", docs_path.display()))?
+                } else {
+                    HashMap::new()
+                };
+                (None, documents)
+            }
         };
+
         let file_source_index = build_file_source_index(&documents);
 
         let embedder: Arc<dyn crate::embed::Embedder> =
@@ -1262,6 +1308,7 @@ impl PalaceDb {
             embedder,
             embedding_db: None,
             file_source_index,
+            drawer_store,
         })
     }
 
@@ -2005,6 +2052,22 @@ impl PalaceDb {
             HashMap::new()
         };
 
+        // Try opening SQLite drawer store
+        let drawer_store = match DrawerStore::open(palace_path) {
+            Ok(store) => {
+                if store.is_empty() && !documents.is_empty() {
+                    // Auto-migrate from JSON to SQLite
+                    info!("auto-migrating {} drawers from JSON to SQLite", documents.len());
+                    let _ = store.migrate_from_json(&docs_path);
+                }
+                Some(store)
+            }
+            Err(_) => {
+                warn!("SQLite drawer store not available");
+                None
+            }
+        };
+
         let embedding_db = EmbeddingDb::with_embedder(embedder.clone())?;
         validate_or_write_manifest(palace_path, embedder.as_ref(), model_name, documents.len())?;
         let file_source_index = build_file_source_index(&documents);
@@ -2018,6 +2081,7 @@ impl PalaceDb {
             embedder,
             embedding_db: Some(embedding_db),
             file_source_index,
+            drawer_store,
         };
 
         // Try loading cached embeddings first (fast), fall back to sync_embeddings (slow)
