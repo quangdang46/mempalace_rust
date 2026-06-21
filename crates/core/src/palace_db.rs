@@ -2513,7 +2513,15 @@ impl PalaceDb {
                 let room = meta_map.get("room").and_then(|v| v.as_str()).unwrap_or("");
                 let source_file = meta_map.get("source_file").and_then(|v| v.as_str());
                 let source_mtime = meta_map.get("source_mtime").and_then(|v| v.as_f64());
-                if let Err(e) = store.insert(&id_str, &redacted, &meta_map, wing, room, source_file, source_mtime) {
+                if let Err(e) = store.insert(
+                    &id_str,
+                    &redacted,
+                    &meta_map,
+                    wing,
+                    room,
+                    source_file,
+                    source_mtime,
+                ) {
                     tracing::warn!("Failed to persist drawer to SQLite: {}", e);
                 }
             }
