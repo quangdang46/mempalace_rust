@@ -27,7 +27,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::embed::EmbeddingManifest;
-use crate::palace::{Drawer, DrawerId, DrawerKind, MemoryTier, PalaceStore, SearchHit, SearchScope, StoreTier};
+use crate::palace::{
+    Drawer, DrawerId, DrawerKind, MemoryTier, PalaceStore, SearchHit, SearchScope, StoreTier,
+};
 
 /// Wraps the existing `EmbeddingDb` (embedvec HNSW + VectorStorage) behind
 /// the `PalaceStore` trait.
