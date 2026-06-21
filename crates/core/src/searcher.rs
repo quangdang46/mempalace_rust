@@ -25,7 +25,10 @@ fn open_for_search(palace_path: &Path, embedding_model: Option<&str>) -> anyhow:
         },
         None => {
             // Check config first before falling back to env/default.
-            match crate::config::Config::load().ok().map(|c| c.embedding_model) {
+            match crate::config::Config::load()
+                .ok()
+                .map(|c| c.embedding_model)
+            {
                 Some(ref model) if model == "naive" || model == "jaccard" => {
                     return PalaceDb::open(palace_path);
                 }
