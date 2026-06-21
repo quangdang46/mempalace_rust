@@ -165,11 +165,7 @@ fn build_file_source_index(
 ) -> HashMap<String, HashSet<String>> {
     let mut index: HashMap<String, HashSet<String>> = HashMap::new();
     for (id, entry) in documents {
-        if let Some(src) = entry
-            .metadata
-            .get("source_file")
-            .and_then(|v| v.as_str())
-        {
+        if let Some(src) = entry.metadata.get("source_file").and_then(|v| v.as_str()) {
             index.entry(src.to_string()).or_default().insert(id.clone());
         }
     }
