@@ -249,7 +249,10 @@ async fn get_memory_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_recall", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -279,7 +282,10 @@ async fn delete_memory_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let _result = invoke_tool(&state_guard, "mempalace_governance_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
@@ -531,7 +537,10 @@ async fn kg_stats_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_stats", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -580,7 +589,10 @@ async fn graph_stats_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_graph_stats", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -609,7 +621,10 @@ async fn graph_reset_handler(
     State(state): State<SharedState>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_kg_reset", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -727,7 +742,10 @@ async fn slot_get_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "slot_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "slot_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_slot_get", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -801,7 +819,10 @@ async fn slot_delete_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "slot_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "slot_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let _result = invoke_tool(&state_guard, "mempalace_slot_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
@@ -880,7 +901,10 @@ async fn sentinels_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_sentinel_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -910,7 +934,10 @@ async fn sentinel_trigger_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "sentinel_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "sentinel_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_sentinel_trigger", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -920,7 +947,10 @@ async fn sentinel_delete_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "sentinel_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "sentinel_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let _result = invoke_tool(&state_guard, "mempalace_sentinel_delete", args).await;
     Ok(Json(json!({ "deleted": id })))
 }
@@ -933,7 +963,10 @@ async fn checkpoints_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_checkpoint_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -943,7 +976,10 @@ async fn checkpoint_resolve_handler(
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "checkpoint_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "checkpoint_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_checkpoint_resolve", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -1021,7 +1057,10 @@ async fn commit_lookup_handler(
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "commit_hash": hash }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "commit_hash": hash })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_commit_lookup", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1126,7 +1165,10 @@ async fn status_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_status", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1545,7 +1587,10 @@ async fn working_memory_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_working_memory", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1785,7 +1830,10 @@ async fn config_flags_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_config_flags", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -1979,7 +2027,10 @@ async fn snapshots_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_snapshot_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2108,7 +2159,10 @@ async fn lesson_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_lesson_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2249,7 +2303,10 @@ async fn routine_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_routine_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2259,7 +2316,10 @@ async fn routine_status_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "routine_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "routine_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_routine_status", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2273,7 +2333,10 @@ async fn team_profile_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_team_profile", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2302,7 +2365,10 @@ async fn mesh_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_mesh_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2311,7 +2377,10 @@ async fn mesh_export_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_mesh_export", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2361,7 +2430,10 @@ async fn action_get_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "action_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "action_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_action_get", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2464,7 +2536,10 @@ async fn sketch_discard_handler(
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args: JsonObject = json!({ "sketch_id": id }).as_object().expect("json! always produces object").clone();
+    let args: JsonObject = json!({ "sketch_id": id })
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_sketch_discard", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -2473,7 +2548,10 @@ async fn sketch_gc_handler(
     State(state): State<SharedState>,
 ) -> Result<axum::response::Response, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_sketch_gc", args).await;
     Ok(tool_result_to_response(result))
 }
@@ -2482,7 +2560,10 @@ async fn crystal_list_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_crystal_list", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2511,7 +2592,10 @@ async fn facet_stats_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_facet_stats", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
@@ -2580,7 +2664,10 @@ async fn branch_worktrees_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let state_guard = state.lock().await;
-    let args = json!({}).as_object().expect("json! always produces object").clone();
+    let args = json!({})
+        .as_object()
+        .expect("json! always produces object")
+        .clone();
     let result = invoke_tool(&state_guard, "mempalace_branch_worktrees", args).await?;
     Ok(Json(text_content_to_json(result)))
 }
