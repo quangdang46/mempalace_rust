@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.2 (2026-06-21)
+
+### Fixes
+- **Collection isolation**: Non-default collections (e.g. compressed) now load from their own JSON file instead of the shared SQLite DrawerStore — prevents cross-collection data contamination
+- **FTS5 search alias**: Fixed "no such column" runtime error when searching FTS virtual tables — table alias `d.` replaced with `drawers.`
+- **DrawerStore test compilation**: Fixed 5 compilation errors in `drawer_store.rs` tests (Mutex lock, type annotation, temporary drop)
+
 ## v0.6.1 (2026-06-21)
 
 ### Critical: Data Loss & Corruption Fixes
