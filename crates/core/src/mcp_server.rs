@@ -4995,7 +4995,6 @@ fn tool_cascade_update(state: &AppState, args: JsonObject) -> Result<CallToolRes
 
 fn tool_enrich(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
         file_path: String,
         query: Option<String>,
@@ -5063,7 +5062,6 @@ fn tool_enrich(state: &AppState, args: JsonObject) -> Result<CallToolResult, Err
 
 fn tool_retention_score(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Input {
         memory_id: String,
     }
@@ -8260,6 +8258,28 @@ mod tests {
             json!({ "start_room": "unknown", "max_hops": 2.0 }),
         );
         assert!(result.is_ok(), "traverse failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_enrich_accepts_schema_file_path_param() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_enrich",
+            json!({ "file_path": "src/main.rs" }),
+        );
+        assert!(result.is_ok(), "enrich failed: {:?}", result);
+    }
+
+    #[test]
+    fn test_retention_score_accepts_schema_memory_id_param() {
+        let state = test_state();
+        let result = dispatch(
+            &state,
+            "mempalace_retention_score",
+            json!({ "memory_id": "mem-test" }),
+        );
+        assert!(result.is_ok(), "retention_score failed: {:?}", result);
     }
 
     // ---------------------------------------------------------------------
