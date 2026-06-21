@@ -49,10 +49,14 @@ jobs:
         with:
           tool: cross
 
+      # Linux musl targets use --no-default-features --features http-server because
+      # fastembed (ort/C++ ONNX Runtime) cannot cross-compile to musl. Linux users
+      # get the HTTP API server + remote embedding providers. macOS/Windows get all
+      # default features including local fastembed embeddings.
       - name: Build
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} -p mempalace
+            cross build --release --target ${{ matrix.target }} -p mempalace --no-default-features --features http-server
           else
             cargo build --release --target ${{ matrix.target }} -p mempalace
           fi
