@@ -756,11 +756,13 @@ fn save_project_config(
     project_name: &str,
     rooms: &[RoomMapping],
 ) -> Result<PathBuf> {
-    let config_path = project_dir.join("mempalace.json");
+    let palace_dir = project_dir.join(".mempalace");
+    let config_path = palace_dir.join("mempalace.json");
     let config = json!({
         "wing": project_name,
         "rooms": rooms,
     });
+    fs::create_dir_all(&palace_dir)?;
     fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
     Ok(config_path)
 }
@@ -799,7 +801,7 @@ fn cmd_init(
     // default to the project directory (project-dir-as-palace, existing behavior).
     let palace_path = match palace_arg {
         Some(_) => resolve_palace_path(palace_arg)?,
-        None => target_dir.clone(),
+        None => target_dir.join(".mempalace"),
     };
 
     // Idempotency check: if palace already exists at the resolved palace path,
@@ -3831,7 +3833,7 @@ mod tests {
         .unwrap();
         std::env::remove_var("XDG_CONFIG_HOME");
 
-        let config_path = project_dir.join("mempalace.json");
+        let config_path = project_dir.join(".mempalace").join("mempalace.json");
         assert!(config_path.exists());
         let (wing, rooms) = crate::miner::load_config(&project_dir).unwrap();
         assert_eq!(wing, "sample_project");
@@ -3871,7 +3873,7 @@ mod tests {
         std::env::remove_var("XDG_CONFIG_HOME");
         result.unwrap();
 
-        let config_path = project_dir.join("mempalace.json");
+        let config_path = project_dir.join(".mempalace").join("mempalace.json");
         assert!(
             config_path.exists(),
             "interactive init should still write mempalace.json so `mpr mine` works"
@@ -3928,7 +3930,7 @@ mod tests {
 
         // Project config still lives in the project directory; only palace_path
         // in the global config should point at the custom palace location.
-        assert!(project_dir.join("mempalace.json").exists());
+        assert!(project_dir.join(".mempalace").join("mempalace.json").exists());
     }
 
     /// Counterpart to `test_cmd_init_honours_explicit_palace_flag`: when no
@@ -3967,8 +3969,8 @@ mod tests {
 
         assert_eq!(
             std::fs::canonicalize(saved_palace_path).unwrap(),
-            std::fs::canonicalize(&project_dir).unwrap(),
-            "without --palace, init keeps existing project-dir-as-palace behavior"
+            std::fs::canonicalize(project_dir.join(".mempalace")).unwrap(),
+            "without --palace, palace data goes in .mempalace/ subdirectory"
         );
     }
 

@@ -1139,9 +1139,9 @@ struct Config {
 
 pub fn load_config(project_dir: &Path) -> anyhow::Result<(String, Vec<RoomMapping>)> {
     let config_paths = [
-        project_dir.join("mempalace.json"),
-        project_dir.join("mempalace.yaml"),
-        project_dir.join("mempalace.yml"),
+        project_dir.join(".mempalace").join("mempalace.json"),
+        project_dir.join(".mempalace").join("mempalace.yaml"),
+        project_dir.join(".mempalace").join("mempalace.yml"),
         project_dir.join("mempal.yaml"),
         project_dir.join("mempal.yml"),
     ];
@@ -1812,7 +1812,8 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
         let canonical_root = root.canonicalize().unwrap();
-        std::fs::write(root.join("mempalace.json"), "{}\n").unwrap();
+        std::fs::create_dir_all(root.join(".mempalace")).unwrap();
+        std::fs::write(root.join(".mempalace").join("mempalace.json"), "{}\n").unwrap();
         std::fs::write(root.join("main.rs"), "fn main() {}\n".repeat(20)).unwrap();
 
         let files = scan_project(root, false, None);
@@ -1839,8 +1840,9 @@ mod tests {
             "JWT authentication uses bearer tokens\n".repeat(30),
         )
         .unwrap();
+        std::fs::create_dir_all(project.join(".mempalace")).unwrap();
         std::fs::write(
-            project.join("mempalace.yaml"),
+            project.join(".mempalace").join("mempalace.yaml"),
             "wing: project\nrooms:\n  - name: backend\n    description: Backend code\n    keywords: [JWT, authentication]\n",
         )
         .unwrap();
