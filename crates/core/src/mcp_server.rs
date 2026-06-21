@@ -916,7 +916,7 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "mempalace_lesson_save",
             "Lesson Save",
             "Save a lesson learned from this session.",
-            serde_json::json!({ "type": "object", "properties": { "title": { "type": "string", "description": "Title of the lesson" }, "content": { "type": "string", "description": "Detailed lesson content" }, "context": { "type": "string", "description": "Context where this lesson was learned (optional)" }, "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for this lesson (optional)" } }, "required": ["title", "content"] }),
+            serde_json::json!({ "type": "object", "properties": { "lesson": { "type": "string", "description": "The lesson content" }, "context": { "type": "string", "description": "Context where this lesson was learned (optional)" }, "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for this lesson (optional)" }, "confidence": { "type": "number", "description": "Confidence level 0.0-1.0 (optional, default 0.8)" }, "project": { "type": "string", "description": "Project name (optional)" } }, "required": ["lesson"] }),
         ),
         tool(
             "mempalace_lesson_recall",
@@ -3949,7 +3949,8 @@ fn tool_lesson_save(state: &AppState, args: JsonObject) -> Result<CallToolResult
     #[serde(rename_all = "camelCase")]
     struct Input {
         lesson: String,
-        context: String,
+        #[serde(default)]
+        context: Option<String>,
         #[serde(default)]
         tags: Option<Vec<String>>,
         #[serde(default)]
@@ -3972,7 +3973,7 @@ fn tool_lesson_save(state: &AppState, args: JsonObject) -> Result<CallToolResult
     let lesson = crate::palace_db::LessonRecord {
         id: lesson_id.clone(),
         content: input.lesson.clone(),
-        context: input.context.clone(),
+        context: input.context.unwrap_or_default(),
         confidence: input.confidence.unwrap_or(0.8),
         project: project.clone(),
         tags: input.tags.clone().unwrap_or_default().join(","),

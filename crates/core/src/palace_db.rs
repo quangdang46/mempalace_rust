@@ -2505,6 +2505,18 @@ impl PalaceDb {
                 .as_mut()
                 .expect("bm25 should be initialized")
                 .upsert(bm25::Document::new(id.to_string(), redacted.clone()));
+
+            // Persist to SQLite DrawerStore so new drawers are visible
+            // when fresh_db() opens a new PalaceDb connection.
+            if let Some(ref store) = self.drawer_store {
+                let wing = meta_map.get("wing").and_then(|v| v.as_str()).unwrap_or("");
+                let room = meta_map.get("room").and_then(|v| v.as_str()).unwrap_or("");
+                let source_file = meta_map.get("source_file").and_then(|v| v.as_str());
+                let source_mtime = meta_map.get("source_mtime").and_then(|v| v.as_f64());
+                if let Err(e) = store.insert(&id_str, &redacted, &meta_map, wing, room, source_file, source_mtime) {
+                    tracing::warn!("Failed to persist drawer to SQLite: {}", e);
+                }
+            }
         }
 
         // Don't auto-save on every add - caller should call flush() when done batching
