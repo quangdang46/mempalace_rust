@@ -1247,52 +1247,67 @@ impl PalaceDb {
         let docs_path = palace_path.join(format!("{}.json", collection_name));
 
         // Try SQLite first — faster open, no JSON parsing
-        let (drawer_store, documents) = match DrawerStore::open(palace_path) {
-            Ok(store) if store.len() > 0 => {
-                info!("opening palace from SQLite ({} drawers)", store.len());
-                let documents = store
-                    .load_all_to_hashmap()
-                    .with_context(|| "failed to load drawers from SQLite")?;
-                (Some(store), documents)
-            }
-            Ok(store) => {
-                // SQLite is empty — check for JSON file to migrate
-                if docs_path.exists() {
-                    info!("SQLite store empty, attempting migration from JSON");
-                    let content = std::fs::read_to_string(&docs_path)
-                        .with_context(|| format!("failed to read {}", docs_path.display()))?;
-                    let docs: HashMap<String, DocumentEntry> = serde_json::from_str(&content)
-                        .with_context(|| {
+        let (drawer_store, documents) = if collection_name == DEFAULT_COLLECTION_NAME {
+            // For the default collection, prefer SQLite-based DrawerStore with
+            // automatic JSON migration. This is the primary data path.
+            match DrawerStore::open(palace_path) {
+                Ok(store) if store.len() > 0 => {
+                    info!("opening palace from SQLite ({} drawers)", store.len());
+                    let documents = store
+                        .load_all_to_hashmap()
+                        .with_context(|| "failed to load drawers from SQLite")?;
+                    (Some(store), documents)
+                }
+                Ok(store) => {
+                    if docs_path.exists() {
+                        info!("SQLite store empty, attempting migration from JSON");
+                        let content = std::fs::read_to_string(&docs_path)
+                            .with_context(|| format!("failed to read {}", docs_path.display()))?;
+                        let docs: HashMap<String, DocumentEntry> = serde_json::from_str(&content)
+                            .with_context(|| {
                             format!("failed to parse collection at {}", docs_path.display())
                         })?;
 
-                    if !docs.is_empty() {
-                        info!("migrating {} drawers from JSON to SQLite", docs.len());
-                        store.migrate_from_json(&docs_path)?;
-                        // Reload from SQLite to be consistent
-                        let documents = store.load_all_to_hashmap()?;
-                        (Some(store), documents)
+                        if !docs.is_empty() {
+                            info!("migrating {} drawers from JSON to SQLite", docs.len());
+                            store.migrate_from_json(&docs_path)?;
+
+                            let documents = store.load_all_to_hashmap()?;
+                            (Some(store), documents)
+                        } else {
+                            (Some(store), HashMap::new())
+                        }
                     } else {
                         (Some(store), HashMap::new())
                     }
-                } else {
-                    // New palace — store SQLite for future use
-                    (Some(store), HashMap::new())
+                }
+                Err(_) => {
+                    warn!("SQLite drawer store not available, falling back to JSON");
+                    let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
+                        let content = std::fs::read_to_string(&docs_path)?;
+                        serde_json::from_str(&content).with_context(|| {
+                            format!("failed to parse collection at {}", docs_path.display())
+                        })?
+                    } else {
+                        HashMap::new()
+                    };
+                    (None, documents)
                 }
             }
-            Err(_) => {
-                // SQLite not available — fall back to JSON
-                warn!("SQLite drawer store not available, falling back to JSON");
-                let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
-                    let content = std::fs::read_to_string(&docs_path)?;
-                    serde_json::from_str(&content).with_context(|| {
-                        format!("failed to parse collection at {}", docs_path.display())
-                    })?
-                } else {
-                    HashMap::new()
-                };
-                (None, documents)
-            }
+        } else {
+            // For non-default collections (e.g. compressed), always use JSON-only
+            // loading to avoid cross-collection data contamination through the shared
+            // DrawerStore SQLite database. The DrawerStore is opened for write
+            // compatibility but data is never loaded from it.
+            let documents: HashMap<String, DocumentEntry> = if docs_path.exists() {
+                let content = std::fs::read_to_string(&docs_path)?;
+                serde_json::from_str(&content).with_context(|| {
+                    format!("failed to parse collection at {}", docs_path.display())
+                })?
+            } else {
+                HashMap::new()
+            };
+            (DrawerStore::open(palace_path).ok(), documents)
         };
 
         let file_source_index = build_file_source_index(&documents);
