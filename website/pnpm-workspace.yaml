@@ -1,0 +1,5 @@
+# pnpm 10+ stores "approve-builds" decisions here. We allow esbuild
+# (VitePress's bundler dep) to run its postinstall build script so
+# `pnpm install --frozen-lockfile` succeeds in CI.
+allowBuilds:
+  esbuild: true
