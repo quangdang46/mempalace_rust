@@ -3518,6 +3518,12 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn test_open_with_embedder_rejects_dim_change() {
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // SAFETY: serialised via test_env_lock; no concurrent env access.
+        unsafe { std::env::remove_var(SKIP_MANIFEST_CHECK_ENV) };
+
         let temp = tempfile::tempdir().unwrap();
         let palace = temp.path().join("palace");
         std::fs::create_dir_all(&palace).unwrap();
