@@ -2,7 +2,7 @@
 
 ## Context
 
-Project `quangdang46/mempalace_rust` (v0.4.0) is a Rust rewrite of the `mempalace/mempalace` (Python v3.4.1) memory palace tool. The good news: **~85% of the backend code already exists** across `crates/core/src/` (~72,604 lines, 103+ modules, 12 coordination stores, 12 embedding providers, 7 LLM providers, 8 search modules, 4 vision modules). The bad news: **10 CLI commands are still stubs** (`println!("Feature coming soon: ...")`) even though the backend modules they need are fully implemented.
+Project `quangdang46/mempalace_rust` (v0.6.5) is a Rust rewrite of the `mempalace/mempalace` (Python v3.4.1) memory palace tool. The good news: **~85% of the backend code already exists** across `crates/core/src/` (~72,604 lines, 103+ modules, 12 coordination stores, 12 embedding providers, 7 LLM providers, 8 search modules, 4 vision modules). **All 10 CLI stubs have now been wired to real backends (v0.5.0).** This plan is preserved for historical reference; see CHANGELOG.md for the current state.
 
 This plan covers:
 1. Wire 10 CLI stubs to existing backend code

@@ -85,15 +85,13 @@ irm https://raw.githubusercontent.com/quangdang46/mempalace_rust/main/install.ps
 Installs to `%USERPROFILE%\.mempalace\bin\mpr.exe` and adds to PATH. Supports env overrides:
 
 ```powershell
-$env:MPR_VERSION = "v0.4.0"   # pin a specific version
+$env:MPR_VERSION = "v0.6.5"   # pin a specific version
 $env:MPR_PREFIX  = "D:\tools" # custom install directory
 ```
 
 Or [download manually from releases](https://github.com/quangdang46/mempalace_rust/releases): grab `mpr-windows-x86_64.zip`, extract, run `mpr.exe`.
 
 Runs natively on Windows 10/11 x86_64. ARM requires WSL2 (no native ARM build yet).
-
-### From source
 
 ### From source
 

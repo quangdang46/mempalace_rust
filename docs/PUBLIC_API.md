@@ -1,5 +1,10 @@
 # Public API surface
 
+
+> **⚠️ Outdated:** This snapshot was taken at v0.1.x baseline (May 2026).
+> The project is now at **v0.6.5** (June 2026). The API has evolved significantly.
+> See `CHANGELOG.md` or `cargo doc --open` for the current public API.
+
 Public API surface — snapshot at commit `8c66350e3ee3cb8229ae60708424d866482e8036` on 2026-05-25. This is the v0.1.x baseline. Phase 2 will replace this with a curated `Palace` facade; this file documents what consumers depend on TODAY.
 
 The crate is `mempalace-core` (workspace crate at `crates/core`). The library entry point is `crates/core/src/lib.rs`.
