@@ -40,7 +40,12 @@ fn mempalace_mcp_block() -> serde_json::Value {
 /// * `path`         — target config file (e.g. `~/.cline/mcp.json`)
 /// * `server_name`  — key inside the wrapper object (e.g. `"mempalace"`)
 /// * `wrapper_key`  — top-level key (default `"mcpServers"`; Zed uses `"context_servers"`)
-pub fn write_mcp_config(path: &Path, server_name: &str, wrapper_key: &str, dry_run: bool) -> ConnectResult {
+pub fn write_mcp_config(
+    path: &Path,
+    server_name: &str,
+    wrapper_key: &str,
+    dry_run: bool,
+) -> ConnectResult {
     let adapter = server_name.to_string();
     let config_path = path.to_path_buf();
 
@@ -96,7 +101,8 @@ pub fn write_mcp_config(path: &Path, server_name: &str, wrapper_key: &str, dry_r
     if dry_run {
         tracing::info!(
             "connect [dry-run] would write {} entry to {:?}",
-            server_name, path
+            server_name,
+            path
         );
         return ConnectResult {
             adapter: server_name.to_string(),
