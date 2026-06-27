@@ -1,6 +1,24 @@
 # Changelog
 
-## v0.6.2 (2026-06-21)
+## v0.6.6 (2026-06-27)
+
+### Features
+- **LLM-based query expansion**: Wired `query_expansion.rs` into the search pipeline. When `use_query_expansion=true`, the configured LLM generates reformulations, temporal concretizations, and entity extractions — each variant is searched independently and results are deduplicated by (source_file, text) (ported from agentmemory `query-expansion.ts`)
+- **CJK-aware BM25 tokenization**: `Bm25Scorer::tokenize()` now detects CJK characters and runs them through `segment_cjk()` for script-boundary segmentation, improving recall on mixed-script and multilingual queries
+- **`delete_by_source` MCP tool**: New `mempalace_delete_by_source` tool wrapping `DrawerStore::delete_by_source()` — deletes all drawers originating from a given source_file with graph cache invalidation
+
+### Fixes
+- **CI catalog test**: Added `mempalace_delete_by_source` to `test_catalog_matches_python_surface` position-sensitive tool list
+
+## v0.6.5 (2026-06-24)
+
+### Features
+- **Homebrew-style auto-detect**: `mpr` now auto-detects the palace path from the workspace root when `--palace` is not provided
+- **`mpr init` idempotency**: Re-running `mpr init` on an already-initialized palace is a no-op instead of failing
+- **Demo sentinel check**: `mpr demo --dir` validates the target directory before seeding
+
+### Fixes
+- **Build**: Linux release now cross-compiles with `http-server` feature (musl, `--no-default-features --features http-server`)
 
 ### Fixes
 - **Collection isolation**: Non-default collections (e.g. compressed) now load from their own JSON file instead of the shared SQLite DrawerStore — prevents cross-collection data contamination
