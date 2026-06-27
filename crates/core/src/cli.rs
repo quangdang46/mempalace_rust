@@ -1477,6 +1477,7 @@ fn cmd_search(
         bm25,
         None,
         fusion,
+        false,
     )?;
     if json_output {
         searcher::print_search_response_json(&response);
@@ -3351,6 +3352,7 @@ fn cmd_vision(query: &str, limit: usize, palace_arg: Option<&str>) -> Result<()>
         false, // no BM25
         None,  // no max_per_session
         None,  // no fusion mode
+        false, // no query expansion
     )?;
     searcher::print_search_response(&response);
     Ok(())

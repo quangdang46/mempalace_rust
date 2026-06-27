@@ -38,6 +38,7 @@ impl SearchStrategy for EmbeddingStrategy {
             false,
             None,
             Some(crate::palace::FusionMode::Vector),
+            false,
         )?;
         Ok(response
             .results

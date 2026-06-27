@@ -1,6 +1,10 @@
+use crate::llm::create_llm_provider_from_env;
 use crate::palace::FusionMode;
 use crate::palace_db::{self, PalaceDb, PalaceState, QueryResult};
 use crate::palace_graph::cached_graph;
+use crate::search::query_expansion::{
+    build_search_entities, build_search_queries, expand_query_sync,
+};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -168,6 +172,7 @@ pub fn search_memories(
         false,
         None,
         None,
+        false, // use_query_expansion
     )
 }
 
@@ -189,11 +194,27 @@ pub fn search_memories_with_rerank(
     use_bm25: bool,
     max_per_session: Option<usize>,
     fusion_mode: Option<FusionMode>,
+    use_query_expansion: bool,
 ) -> anyhow::Result<SearchResponse> {
     #[cfg(feature = "telemetry")]
     let _telemetry_start = std::time::Instant::now();
 
     let sanitized = crate::query_sanitizer::sanitize_query(query);
+
+    // ── LLM-based query expansion ────────────────────────────────────────────
+    // When enabled, runs the query through the configured LLM to generate
+    // diverse reformulations, temporal concretizations, and entity extraction.
+    // All variants (original + reformulations + temporal) are searched and
+    // the results are deduplicated. This is analogous to agentmemory's
+    // query-expansion.ts and the upstream Python's query expansion path.
+    let mut expansion_queries: Vec<String> = Vec::new();
+    let mut expansion_entities: Vec<String> = Vec::new();
+    if use_query_expansion {
+        let provider = create_llm_provider_from_env();
+        let expansion = expand_query_sync(&provider, &sanitized.clean_query, Some(5));
+        expansion_queries = build_search_queries(&sanitized.clean_query, &expansion);
+        expansion_entities = build_search_entities(&sanitized.clean_query, &expansion);
+    }
 
     // #1498: stratify so the caller's error message tells the user the
     // *next* step (init / mine) rather than a generic "no palace" hint that
@@ -217,12 +238,50 @@ pub fn search_memories_with_rerank(
     // When `use_bm25` is true, request a wider candidate set so the BM25
     // reranking step considers more than just the top RRF results.
     let fetch_count = if use_bm25 { n_results * 3 } else { n_results };
-    let results = palace_db
-        .hybrid_search(&sanitized.clean_query, fetch_count, wing, room)
-        .map_err(|e| SearchError::Query(e.to_string()))?;
-
-    let mut search_results: Vec<SearchResult> =
-        results.into_iter().map(SearchResult::from).collect();
+    let mut search_results: Vec<SearchResult> = if expansion_queries.is_empty() {
+        // Single-query path — no expansion.
+        let results = palace_db
+            .hybrid_search(&sanitized.clean_query, fetch_count, wing, room)
+            .map_err(|e| SearchError::Query(e.to_string()))?;
+        results.into_iter().map(SearchResult::from).collect()
+    } else {
+        // Multi-query path — search each reformulation + temporal variant,
+        // deduplicate by (source_file, text), keep the highest similarity.
+        let mut seen = std::collections::HashSet::new();
+        let mut all = Vec::new();
+        for variant in &expansion_queries {
+            if let Ok(results) = palace_db.hybrid_search(variant, fetch_count, wing, room) {
+                for qr in results {
+                    let sr = SearchResult::from(qr);
+                    let key = (sr.source_file.clone(), sr.text.clone());
+                    if seen.insert(key) {
+                        all.push(sr);
+                    }
+                }
+            }
+        }
+        // Additionally search for entity names (lightweight KG-style)
+        for entity in &expansion_entities {
+            let entity_query = format!("What is {entity}?");
+            if let Ok(results) = palace_db.hybrid_search(&entity_query, fetch_count / 2, wing, room)
+            {
+                for qr in results {
+                    let sr = SearchResult::from(qr);
+                    let key = (sr.source_file.clone(), sr.text.clone());
+                    if seen.insert(key) {
+                        all.push(sr);
+                    }
+                }
+            }
+        }
+        all.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all.truncate(fetch_count);
+        all
+    };
 
     // BM25 reranking: build a BM25 scorer from the (wider) candidate set
     // returned by hybrid_search and re-rank. This only fires when requested

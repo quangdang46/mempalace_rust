@@ -258,6 +258,7 @@ const TOOLS_ACCEPTING_EXTRAS: &[&str] = &["mempalace_add_drawer"];
 const MUTATION_TOOLS: &[&str] = &[
     "mempalace_add_drawer",
     "mempalace_delete_drawer",
+    "mempalace_delete_by_source",
     "mempalace_kg_add",
     "mempalace_kg_invalidate",
     "mempalace_diary_write",
@@ -378,6 +379,7 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 "mempalace_check_duplicate" => tool_check_duplicate(&state, args),
                 "mempalace_add_drawer" => tool_add_drawer(&state, args),
                 "mempalace_delete_drawer" => tool_delete_drawer(&state, args),
+                "mempalace_delete_by_source" => tool_delete_by_source(&state, args),
                 "mempalace_kg_query" => tool_kg_query(&state, args),
                 "mempalace_kg_add" => tool_kg_add(&state, args),
                 "mempalace_kg_invalidate" => tool_kg_invalidate(&state, args),
@@ -501,6 +503,7 @@ pub(crate) fn make_dispatch(state: Arc<AppState>) -> impl Fn(String, JsonObject)
                 "memory_check_duplicate" => tool_check_duplicate(&state, args),
                 "memory_add" | "memory_add_drawer" => tool_add_drawer(&state, args),
                 "memory_delete" | "memory_delete_drawer" => tool_delete_drawer(&state, args),
+                "memory_delete_by_source" => tool_delete_by_source(&state, args),
                 "memory_kg_query" | "memory_graph_query" => tool_kg_query(&state, args),
                 "memory_kg_add" | "memory_graph_add" => tool_kg_add(&state, args),
                 "memory_kg_invalidate" | "memory_graph_invalidate" => {
@@ -730,6 +733,12 @@ fn make_tools() -> Vec<rmcp::model::Tool> {
             "Delete Drawer",
             "Delete a drawer by ID. Irreversible.",
             serde_json::json!({ "type": "object", "properties": { "drawer_id": { "type": "string", "description": "ID of the drawer to delete" } }, "required": ["drawer_id"] }),
+        ),
+        tool(
+            "mempalace_delete_by_source",
+            "Delete By Source",
+            "Delete all drawers originating from a given source_file. Returns count of deleted rows. Irreversible — use with care.",
+            serde_json::json!({ "type": "object", "properties": { "source_file": { "type": "string", "description": "Source file path — deletes every drawer mined from this file" } }, "required": ["source_file"] }),
         ),
         tool(
             "mempalace_diary_write",
@@ -2104,6 +2113,40 @@ fn tool_delete_drawer(state: &AppState, args: JsonObject) -> Result<CallToolResu
         ok_json(
             serde_json::json!({ "success": false, "error": format!("Drawer not found: {}", input.drawer_id) }),
         )
+    }
+}
+
+fn tool_delete_by_source(state: &AppState, args: JsonObject) -> Result<CallToolResult, ErrorData> {
+    read_only_guard(state)?;
+    if collection_missing(state) {
+        return ok_json(no_palace());
+    }
+    #[derive(Deserialize)]
+    struct Input {
+        source_file: String,
+    }
+    let input: Input = parse_args(args)?;
+    match crate::drawer_store::DrawerStore::open(&state.palace_path) {
+        Ok(store) => match store.delete_by_source(&input.source_file) {
+            Ok(count) => {
+                if count > 0 {
+                    crate::palace_graph::invalidate_cache(&state.palace_path);
+                }
+                ok_json(serde_json::json!({
+                    "success": true,
+                    "deleted_count": count,
+                    "source_file": input.source_file,
+                }))
+            }
+            Err(e) => ok_json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to delete by source: {e}"),
+            })),
+        },
+        Err(e) => ok_json(serde_json::json!({
+            "success": false,
+            "error": format!("Failed to open drawer store: {e}"),
+        })),
     }
 }
 

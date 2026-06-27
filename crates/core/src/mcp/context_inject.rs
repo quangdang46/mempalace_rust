@@ -54,6 +54,7 @@ pub fn inject_session_context(
         false,   // no BM25 reranking
         Some(3), // max_per_session
         None,    // fusion mode
+        false,   // no query expansion
     );
 
     match result {
@@ -107,6 +108,7 @@ pub async fn inject_context_async(
         false,
         Some(3),
         None,
+        false,
     )
     .map_err(|e| e.to_string())?;
 

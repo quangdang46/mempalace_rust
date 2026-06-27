@@ -144,6 +144,33 @@ fn extract_xml_tag(content: &str, tag: &str) -> Option<String> {
     Some(content[start..end].to_string())
 }
 
+/// Synchronous wrapper for expand_query — spins up a temp tokio Runtime
+/// when one is not already active, avoiding `async` in the caller.
+pub fn expand_query_sync(
+    provider: &Arc<dyn crate::llm::LlmProvider>,
+    query: &str,
+    max_reformulations: Option<usize>,
+) -> QueryExpansion {
+    let max = max_reformulations;
+    let query = query.to_string();
+    let p = Arc::clone(provider);
+    if tokio::runtime::Handle::try_current().is_ok() {
+        // Already inside a runtime — spawn and block.
+        let rt = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| rt.block_on(expand_query(&p, &query, max)))
+    } else {
+        // No runtime active — build a one-shot current-thread runtime.
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(r) => r,
+            Err(_) => return QueryExpansion::default(),
+        };
+        rt.block_on(expand_query(&p, &query, max))
+    }
+}
+
 /// Expand a query using LLM.
 ///
 /// Calls the LLM with the query expansion prompt and parses the XML response.

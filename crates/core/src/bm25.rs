@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use crate::search::cjk_segmenter::segment_cjk;
+
 /// BM25 ranking parameters.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
@@ -69,12 +71,30 @@ impl Bm25Scorer {
         }
     }
 
-    /// Tokenize text into terms (simple whitespace-based tokenization).
+    /// Tokenize text into terms (whitespace-based with CJK-aware segmentation).
+    ///
+    /// When the text contains CJK characters (Han, Hiragana, Katakana, Hangul),
+    /// the tokenizer also runs the CJK script segmenter which splits CJK script
+    /// runs at script boundaries (e.g. "中文hello" → ["中文", "hello"]).
+    /// This improves BM25 recall on mixed-script queries common in multilingual
+    /// codebases and documentation.
     fn tokenize(text: &str) -> Vec<String> {
-        text.to_lowercase()
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect()
+        let lower = text.to_lowercase();
+        let mut tokens: Vec<String> = Vec::new();
+
+        // First pass: whitespace splitting (covers Latin/Other/whitespace-separated text)
+        for word in lower.split_whitespace() {
+            // If the word contains CJK characters, use the CJK segmenter
+            // so that Han/Hiragana/Katakana/Hangul runs produce distinct
+            // tokens instead of being treated as one opaque string.
+            if crate::search::cjk_segmenter::has_cjk(word) {
+                tokens.extend(segment_cjk(word));
+            } else {
+                tokens.push(word.to_string());
+            }
+        }
+
+        tokens
     }
 
     /// Calculate BM25 score for a document given a query.
