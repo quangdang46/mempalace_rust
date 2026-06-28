@@ -27,29 +27,26 @@
 **Paste this prompt into Hermes** and it does the whole setup for you:
 
 ```text
-Install mempalace for Hermes. Run `npx @mempalace/mempalace` in a
-separate terminal to start the memory server on localhost:3111. Then
-add this to `~/.hermes/config.yaml` so Hermes can use mempalace as
-an MCP server with all 43 memory tools:
-
-mcp_servers:
-  mempalace:
-    command: npx
-    args: ["-y", "@mempalace/mcp"]
+Install mempalace for Hermes. Run `mpr serve` in a separate terminal to
+start the memory server. Then add this to `~/.hermes/config.yaml` so Hermes
+can use mempalace as a memory provider:
 
 memory:
   provider: mempalace
 
-Verify it's working with
-`curl http://localhost:3111/mempalace/health` — it should return
-{"status":"healthy"}. Open the real-time viewer at
-http://localhost:3113 to watch memories being captured live.
+mcp_servers:
+  mempalace:
+    command: mpr
+    args: ["serve"]
+
+Verify it's working with `hermes memory status` — it should return
+Provider: mempalace.
 
 If I want deeper integration — pre-LLM context injection, turn-level
-capture, memory-write mirroring to MEMORY.md, and system prompt block
-injection — copy `integrations/hermes` from the mempalace repo to
-`~/.hermes/plugins/mempalace` instead. That gives me the
-6-hook memory provider plugin on top of the MCP server.
+capture, memory-write mirroring, and system prompt block injection — copy
+`integrations/hermes` from the mempalace repo to `~/.hermes/plugins/mempalace`
+instead. That gives me the 6-hook memory provider plugin on top of the MCP
+server.
 ```
 
 That's it. Hermes handles the rest.
@@ -63,17 +60,17 @@ Add to `~/.hermes/config.yaml`:
 ```yaml
 mcp_servers:
   mempalace:
-    command: npx
-    args: ["-y", "@mempalace/mcp"]
+    command: mpr
+    args: ["serve"]
 
 memory:
   provider: mempalace
 ```
 
-This gives Hermes access to all 43 MCP tools and enables the mempalace memory provider. Start the server separately:
+This gives Hermes access to all MCP tools and enables the mempalace memory provider. Start the server separately:
 
 ```bash
-npx @mempalace/mempalace
+mpr serve
 ```
 
 ### Option 2: Memory provider plugin (deeper integration)
@@ -87,7 +84,7 @@ cp -r integrations/hermes ~/.hermes/plugins/mempalace
 Start the mempalace server:
 
 ```bash
-npx @mempalace/mempalace
+mpr serve --http
 ```
 
 The plugin auto-detects the running server and hooks into the Hermes agent loop. Make sure `memory.provider` is set to `mempalace` in `~/.hermes/config.yaml`:
@@ -105,9 +102,9 @@ The plugin auto-detects the running server and hooks into the Hermes agent loop.
 |---|---|---|
 | `MEMPALACE_URL` | `http://localhost:3111` | mempalace server URL |
 | `MEMPALACE_SECRET` | (none) | Auth token for protected instances |
-| `MEMPALACE_REQUIRE_HTTPS` | (off) | When set to `1`, refuse to send the bearer token over plaintext HTTP to a non-loopback host. Sends only when `MEMPALACE_URL` is `https://...` or points at `localhost`/`127.0.0.1`/`::1`. With this off, the plugin warns once on stderr but still sends. |
+| `MEMPALACE_REQUIRE_HTTPS` | (off) | When set to `1`, refuse to send the bearer token over plaintext HTTP |
 
-The plugin reads `~/.mempalace/.env` (or `$XDG_CONFIG_HOME/mempalace/.env`) at import time and populates any missing values into the process environment via `os.environ.setdefault`. Anything you set in the shell takes precedence; the file is only used to fill gaps. This means `hermes memory status` reports the plugin as available even when the mempalace service is launched by systemd or another process manager that loads `~/.mempalace/.env` directly without exporting it to the Hermes CLI shell (#250).
+The plugin reads `~/.mempalace/.env` (or `$XDG_CONFIG_HOME/mempalace/.env`) at import time and populates any missing values into the process environment via `os.environ.setdefault`. Anything you set in the shell takes precedence; the file is only used to fill gaps. This means `hermes memory status` reports the plugin as available even when the mempalace service is launched by systemd or another process manager that loads `~/.mempalace/.env` directly without exporting it to the Hermes CLI shell.
 
 ## What Hermes gets
 

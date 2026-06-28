@@ -4,7 +4,7 @@ mempalace memory provider for Hermes Agent.
 Drop this folder into ~/.hermes/plugins/mempalace/
 or install via: hermes plugin install mempalace
 
-Requires mempalace server running: npx @mempalace/mempalace
+Requires the Rust mempalace server running: mpr serve --http
 """
 
 from __future__ import annotations

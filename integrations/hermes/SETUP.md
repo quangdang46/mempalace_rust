@@ -6,7 +6,7 @@ binary (`mpr`).
 
 ## Prerequisites
 
-Build or install `mpr`:
+Build or install `mpr` with the HTTP server feature:
 
 ```bash
 cargo build --release --features http-server
@@ -45,6 +45,10 @@ memory:
   provider: mempalace
 ```
 
+> **Required:** `memory.provider: mempalace` activates MemPalace as the active
+> memory provider. Without this line, Hermes falls back to built-in memory
+> (MEMORY.md / USER.md) and MemPalace hooks will not fire.
+
 This gives Hermes the full tool surface immediately. The memory provider plugin
 (Layer 2) is optional — it adds prefetch, turn-level sync, and system-prompt
 block injection on top of the MCP tools.
@@ -60,6 +64,10 @@ block injection on top of the MCP tools.
 
 ```bash
 hermes memory status
+# Expected output:
+#   Provider:  mempalace
+#   Plugin:    installed ✓
+#   Status:    available ✓
 ```
 
 ### Layer 2: Memory provider plugin (deep integration)
@@ -83,11 +91,32 @@ mpr serve --http
 This starts the axum-based REST API on `http://0.0.0.0:3111` (port configurable
 via `MEMPALACE_HTTP_PORT`).
 
-**Hermes config:**
+**Hermes config (`~/.hermes/config.yaml`):**
 
 ```yaml
 memory:
   provider: mempalace
+```
+
+> **Critical:** `memory.provider: mempalace` is the activation switch.
+> Without it, the plugin is discovered but not activated. Hermes will not
+> inject prefetch context, will not call sync_turn, and will not fire any
+> of the 6 lifecycle hooks.
+
+Verify it's working:
+
+```bash
+# Start the server
+mpr serve --http
+
+# Verify server health
+curl http://localhost:3111/mempalace/health
+# → {"status":"healthy"}
+
+# Verify Hermes sees the provider
+hermes memory status
+# → Provider:  mempalace
+# → Status:    available ✓
 ```
 
 The plugin provides these hooks:
@@ -101,6 +130,38 @@ The plugin provides these hooks:
 
 ---
 
+## How `memory.provider` works
+
+Hermes discovers memory provider plugins automatically from the
+`plugins/memory/` directory. Discovery is filesystem-based — any directory
+containing a class that implements `MemoryProvider` is picked up.
+
+However, **discovery ≠ activation**. The `memory.provider` config key
+selects which discovered provider is active:
+
+| Config value | Behavior |
+|---|---|
+| `memory.provider: mempalace` | MemPalace is active; hooks fire, tools are injected |
+| `memory.provider:` (empty/missing) | No external provider; built-in MEMORY.md/USER.md only |
+| `memory.provider: hindsight` | Hindsight is active instead of MemPalace |
+
+Only one external memory provider can be active at a time. To switch:
+
+```bash
+hermes memory setup mempalace   # switch to MemPalace
+hermes memory setup hindsight   # switch to Hindsight
+hermes memory off               # disable all external providers
+```
+
+Or edit `~/.hermes/config.yaml` directly:
+
+```yaml
+memory:
+  provider: mempalace  # or "hindsight" or "" to disable
+```
+
+---
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -109,6 +170,10 @@ The plugin provides these hooks:
 | `MEMPALACE_URL` | `http://localhost:3111` | Hermes plugin server URL — automatically derived from `MEMPALACE_HTTP_PORT` if not set |
 | `MEMPALACE_SECRET` | (none) | Auth token for protected instances |
 | `MEMPALACE_REQUIRE_HTTPS` | (off) | When set to `1`, refuse to send the bearer token over plaintext HTTP to a non-loopback host |
+
+The plugin reads `~/.mempalace/.env` (or `$XDG_CONFIG_HOME/mempalace/.env`)
+at import time and populates any missing values into the process environment
+via `os.environ.setdefault`. Anything you set in the shell takes precedence.
 
 ---
 
@@ -136,10 +201,11 @@ insights, lessons, etc.) are available but not required by the Hermes plugin.
 ## Quick-start checklist
 
 1. [ ] Build: `cargo build --release --features http-server`
-2. [ ] Start HTTP server: `mpr serve --http`
+2. [ ] Start server: `mpr serve --http` (Layer 2) or `mpr serve` (Layer 1)
 3. [ ] Copy plugin: `cp -r integrations/hermes ~/.hermes/plugins/mempalace`
-4. [ ] Set memory provider in `~/.hermes/config.yaml`
-5. [ ] Verify: `hermes memory status`
+4. [ ] **Set `memory.provider: mempalace` in `~/.hermes/config.yaml`**
+5. [ ] Verify: `hermes memory status` → `Provider: mempalace`
+6. [ ] Verify server: `curl http://localhost:3111/mempalace/health`
 
 ---
 
@@ -178,6 +244,10 @@ Ensure `mpr serve --http` is running and reachable on the port matching
 curl http://localhost:3111/mempalace/health
 ```
 
+**`hermes memory status` shows `Provider:` is empty or not mempalace:**
+Check that `memory.provider: mempalace` is set in `~/.hermes/config.yaml`.
+Without this config line, the plugin is discovered but not activated.
+
 **No results from smart-search:**
 The Rust port defaults to the `naive` embedding model on first run. Mine some
 content first:
@@ -185,3 +255,12 @@ content first:
 mpr mine /path/to/project
 ```
 Then re-run the search.
+
+**Hooks not firing (prefetch, sync_turn, etc.):**
+Verify the config:
+```bash
+grep -A2 'memory:' ~/.hermes/config.yaml
+# Should show:
+# memory:
+#   provider: mempalace
+```
